@@ -34,6 +34,9 @@ def _connect() -> sqlite3.Connection:
     path = get_settings().database_path
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    # per-connection pragma; pairs with WAL (set in init_db) to reduce
+    # reader/writer lock contention under concurrent traffic.
+    conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 
@@ -42,6 +45,9 @@ def init_db() -> None:
 
     Path(get_settings().database_path).parent.mkdir(parents=True, exist_ok=True)
     with _lock, _connect() as conn:
+        # WAL: readers don't block the writer under concurrent /v1/* traffic
+        # + /stats polling (avoids 'database is locked').
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(_SCHEMA)
 
 
@@ -129,6 +135,19 @@ def aggregate_stats() -> dict[str, Any]:
             )
         ]
 
+        by_model = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT model, COUNT(*) AS requests,"
+                " SUM(input_tokens_before) AS input_before,"
+                " SUM(input_tokens_after) AS input_after,"
+                " SUM(output_tokens) AS output_tokens,"
+                " SUM(est_cost_before) AS cost_before,"
+                " SUM(est_cost_after) AS cost_after"
+                " FROM requests GROUP BY model ORDER BY requests DESC"
+            )
+        ]
+
     t = dict(totals)
     input_saved = t["input_before"] - t["input_after"]
     t["input_tokens_saved"] = input_saved
@@ -139,4 +158,4 @@ def aggregate_stats() -> dict[str, Any]:
     t["cost_before"] = round(t["cost_before"], 6)
     t["cost_after"] = round(t["cost_after"], 6)
     t["avg_latency_ms"] = round(t["avg_latency_ms"], 1)
-    return {"totals": t, "by_route": by_route, "by_day": by_day}
+    return {"totals": t, "by_route": by_route, "by_model": by_model, "by_day": by_day}

@@ -1,0 +1,179 @@
+"""Regression tests for sprint fixes T1-T10 and gaps T11-T15.
+
+Covers: embeddings passthrough (T3), route uniqueness (T4), metrics format
+and content-type (T5), startup cleanliness / no rate-limiter code path (T2),
+stats HTML dashboard states (T10, T14, T15), /v1/models logging (T12).
+"""
+from __future__ import annotations
+
+import importlib
+import os
+import sqlite3
+import sys
+import tempfile
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+os.environ.setdefault("DATABASE_PATH", tempfile.mktemp(suffix=".db"))
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from proxy import stats  # noqa: E402
+from proxy.main import app  # noqa: E402
+
+
+@pytest.fixture()
+def client():
+    # fresh temp DB per test so counts/empty-states are deterministic
+    os.environ["DATABASE_PATH"] = tempfile.mktemp(suffix=".db")
+    stats.get_settings.cache_clear()
+    stats.init_db()
+    with TestClient(app) as c:
+        yield c
+
+
+# ---------------------------------------------------------------- T2: clean startup
+
+def test_startup_has_no_rate_limiter_code_path():
+    """T2: rate_limit module is gone; app lifespan starts without NameError."""
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("proxy.rate_limit")
+    assert not hasattr(app.state, "rate_limiter")
+
+
+# ---------------------------------------------------------------- T3: embeddings
+
+def test_embeddings_forwards_upstream_error_body(client):
+    """T3: a valid embeddings POST reaches upstream; upstream error body is
+    relayed cleanly (no NameError / 500 from the proxy itself)."""
+    r = client.post("/v1/embeddings", json={"model": "x", "input": "hi"})
+    # No real key configured -> upstream responds with its own 401 error JSON.
+    assert r.status_code in (200, 401)
+    if r.status_code == 401:
+        assert "error" in r.json()
+
+
+# ---------------------------------------------------------------- T4: route uniqueness
+
+def test_routes_are_unique():
+    """T4: /health and every other path is registered exactly once."""
+    paths = [getattr(r, "path", None) for r in app.routes if getattr(r, "path", None)]
+    dupes = {p for p in paths if paths.count(p) > 1}
+    assert dupes == set(), f"duplicate routes: {dupes}"
+
+
+# ---------------------------------------------------------------- T5: metrics
+
+def test_metrics_is_prometheus_text(client):
+    r = client.get("/metrics")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    text = r.text
+    assert "\n" in text and "\\n" not in text  # real newlines, not escaped
+    assert "# HELP token_saver_requests_total" in text
+    assert "# TYPE token_saver_requests_total counter" in text
+    # values are unquoted numerics on series lines
+    for line in text.splitlines():
+        if line and not line.startswith("#"):
+            name, value = line.rsplit(" ", 1)
+            float(value)  # raises if quoted/garbage
+
+
+def test_metrics_json_summary(client):
+    r = client.get("/metrics?format=json")
+    assert r.status_code == 200
+    body = r.json()
+    assert {"requests", "tokens_saved", "cost_saved"} <= set(body)
+
+
+# ---------------------------------------------------------------- T12: /v1/models logging
+
+def test_models_request_is_logged(client):
+    """T12: proxied /v1/models requests are logged with zero token/cost."""
+    before = stats.aggregate_stats()["totals"]["requests"]
+    client.get("/v1/models")
+    after = stats.aggregate_stats()["totals"]["requests"]
+    assert after == before + 1
+    with sqlite3.connect(os.environ["DATABASE_PATH"]) as conn:
+        row = conn.execute(
+            "SELECT route, input_tokens_before, output_tokens, est_cost_before"
+            " FROM requests ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert row[0] == "models"
+    assert row[1:] == (0, 0, 0)
+
+
+# ---------------------------------------------------------------- T10/T14/T15: dashboard
+
+def _log_one():
+    stats.log_request(model="m", route="compress", input_tokens_before=1000,
+                      input_tokens_after=600, output_tokens=50,
+                      est_cost_before=0.0001, est_cost_after=0.00006,
+                      latency_ms=150.0, compressed=True, status=200)
+
+
+def test_stats_html_empty_state(client):
+    r = client.get("/stats?format=html")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert "No requests yet" in r.text
+
+
+def test_stats_html_first_run_flip(client):
+    """Empty state -> first request -> non-zero savings render (first-run AC)."""
+    assert client.get("/stats?format=html").text.count("Tokens saved (") == 0
+    _log_one()
+    r = client.get("/stats?format=html")
+    assert r.text.count("Tokens saved (40.0%)") == 1  # rendered band, not the JS template
+    assert "Est. cost saved" in r.text
+
+
+def test_stats_html_has_tabs_and_chips(client):
+    _log_one()
+    r = client.get("/stats?format=html")
+    assert 'data-tab="by_day"' in r.text
+    assert 'data-tab="by_route"' in r.text
+    assert 'data-tab="by_model"' in r.text
+    # T14: route rows render clickable filter chips
+    assert 'class="chip" data-chip="compress"' in r.text
+    assert "setChipFilter" in r.text
+
+
+def test_stats_html_has_skeleton_loader(client):
+    """T15: loading state renders skeleton rows, not spinner-in-a-void."""
+    r = client.get("/stats?format=html")
+    assert "showSkeleton" in r.text
+    assert "skel-row" in r.text
+    assert "shimmer" in r.text
+
+
+def test_stats_html_error_state(client):
+    """Error state: inline message + retry button, no blank page."""
+    r = client.get("/stats?format=html")
+    assert "showError" in r.text
+    assert "Couldn" in r.text and "Retry" in r.text
+
+
+def test_stats_by_model_breakdown(client):
+    _log_one()
+    data = client.get("/stats").json()
+    assert data["by_model"][0]["model"] == "m"
+    assert data["by_model"][0]["requests"] == 1
+
+
+# ---------------------------------------------------------------- suite still green
+
+def test_original_suite_still_passes():
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent
+    r = subprocess.run(
+        [sys.executable, "-m", "pytest", str(root / "test_proxy.py"), "-q"],
+        capture_output=True, text=True,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr

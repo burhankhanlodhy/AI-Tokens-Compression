@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 
 from . import stats
 from .classifier import classify
@@ -28,15 +28,7 @@ from .counting import (
     extract_output_text_from_sse_chunk,
     inject_conciseness,
 )
-from .rate_limit import (
-    CircuitBreaker,
-    CircuitState,
-    RequestQueue,
-    get_event_loop,
-    get_request_queue,
-    run_rate_limit_loop,
-    stop_rate_limit_loop,
-)
+from .dashboard import _render_stats_html
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("token-saver")
@@ -61,11 +53,7 @@ async def lifespan(app: FastAPI) -> Iterator[None]:
         base_url=s.upstream_base_url.rstrip("/"),
         timeout=s.upstream_timeout_seconds,
     )
-    # Start rate limiting / circuit breaker in a background thread
-    run_rate_limit_loop()
     yield
-    # Stop rate limiting on shutdown
-    stop_rate_limit_loop()
     await app.state.http.aclose()
 
 
@@ -144,7 +132,7 @@ async def chat_completions(request: Request):
                 for a, b in zip(messages, new_messages)
             ) or len(new_messages) != len(messages)
             body = {**body, "messages": new_messages}
-        route = "compress" if compressed else "compress"  # route stays for stats
+        route = "compress"  # route stays for stats
 
     # --- Reasoning-token cost control ---
     # Only add this if the client didn't already specify their own
@@ -277,76 +265,63 @@ def _log(model, route, in_before, in_after, output_tokens,
 
 @app.get("/v1/models")
 async def list_models(request: Request):
+    started = time.perf_counter()
     client = _get_http(request)
     resp = await client.get("/models", headers=_forward_headers(request))
+    _log("unknown", "models", 0, 0, 0,
+         (time.perf_counter() - started) * 1000, False, resp.status_code)
     return JSONResponse(resp.json(), status_code=resp.status_code)
 
 
 @app.post("/v1/embeddings")
 async def embeddings(request: Request):
     raw = await request.body()
-    url = "/embeddings"
-    client = _get_http(request)
-    req = client.build_request("POST", url, content=raw,
-                              headers=_forward_headers(request))
-    resp = await client.send(req, stream=True)
-
-    if resp.status_code == 200:
-        try:
-            content = await resp.aread()
-        except:
-            content = b""
-        await resp.aclose()
-    else:
-        # upstream failure — forward the error
-        content = await resp.aread()
-        await resp.aclose()
-
-    try:
-        resp = httpx.Response(resp.status_code, content=content, headers=resp.headers)
-    except:
-        resp = httpx.Response(resp.status_code, headers=resp.headers, content=b"")
-
-    return JSONResponse(resp.json() if content else {}
-                       , status_code=resp.status_code, headers=out_headers)
+    resp = await _forward(request, raw, "embeddings")
+    return await _relay(resp, time.perf_counter(), model="unknown",
+                        route="passthrough", in_before=0, in_after=0,
+                        compressed=False)
 
 
 # Metrics & health endpoints for monitoring systems.
-from .prometheus import prometheus_metrics, health
 
 
 @app.get("/metrics")
 async def metrics(format: str = "text"):
-    """Return Prometheus-format metrics as plaintext."""
-    lines: list[str] = []
-    t = stats.aggregate_stats()["totals"]
-    lines.append(f"# HELP token_saver_requests_total total requests")
-    lines.append(f"# TYPE token_saver_requests_total counter")
-    lines.append(f'token_saver_requests_total "{t["requests"]}"')
-    lines.append(f"# HELP token_saver_cost_saved cumulative cost saved")
-    lines.append(f"# TYPE token_saver_cost_saved gauge")
-    lines.append(f'token_saver_cost_saved "{t["cost_saved"]}"')
-    try:
-        lines.append(f"# HELP token_saver_upstream_up upstream reachable")
-        lines.append(f"# TYPE token_saver_upstream_up gauge")
-        up = float(1.0)
-    except:
-        up = float(0.5)
-    lines.append(f'token_saver_upstream_up {up}')
-
-    return '\\n'.join(lines)
+    """Return Prometheus text-format metrics (or a JSON summary)."""
+    data = stats.aggregate_stats()
+    t = data["totals"]
+    if format != "text":
+        return {
+            "requests": t["requests"],
+            "tokens_saved": t["input_tokens_saved"],
+            "cost_saved": round(t["cost_saved"], 4),
+            "avg_latency_ms": round(t["avg_latency_ms"], 1),
+        }
+    lines: list[str] = [
+        "# HELP token_saver_requests_total total requests logged",
+        "# TYPE token_saver_requests_total counter",
+        f'token_saver_requests_total {t["requests"]}',
+        "# HELP token_saver_tokens_saved tokens saved via compression",
+        "# TYPE token_saver_tokens_saved counter",
+        f'token_saver_tokens_saved {t["input_tokens_saved"]}',
+        "# HELP token_saver_cost_saved estimated dollar cost saved",
+        "# TYPE token_saver_cost_saved gauge",
+        f'token_saver_cost_saved {t["cost_saved"]:.4f}',
+        "# HELP token_saver_latency_ms average latency ms",
+        "# TYPE token_saver_latency_ms gauge",
+        f'token_saver_latency_ms {t["avg_latency_ms"]:.1f}',
+    ]
+    for r in data["by_route"]:
+        lines.append(f'token_saver_requests_by_route{{route="{r["route"]}"}} {r["requests"]}')
+    for d in data.get("by_day") or []:
+        lines.append(f'token_saver_requests_by_day{{day="{d["day"]}"}} {d["requests"]}')
+    return PlainTextResponse("\n".join(lines), media_type="text/plain; version=0.0.4; charset=utf-8")
 
 
 @app.get("/health")
 async def health_ok():
     """Simple health check; return 200."""
-    return {"status": "healthy"}
-async def embeddings(request: Request):
-    raw = await request.body()
-    resp = await _forward(request, raw, "embeddings")
-    return await _relay(resp, time.perf_counter(), model="unknown",
-                        route="passthrough", in_before=0, in_after=0,
-                        compressed=False)
+    return {"status": "ok"}
 
 
 @app.get("/stats")
@@ -364,9 +339,6 @@ async def stats_endpoint(format: str = "json"):
             f"(saved ${t['cost_saved']:.4f})\n"
             f"Avg latency: {t['avg_latency_ms']} ms\n"
         )
+    if format == "html":
+        return HTMLResponse(_render_stats_html(data))
     return data
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
