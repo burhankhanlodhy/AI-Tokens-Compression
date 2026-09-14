@@ -1,0 +1,20 @@
+services:
+  proxy:
+    build:
+      context: .
+      dockerfile: proxy/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Override in .env if targeting another OpenAI-compatible provider.
+      UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL:-https://api.openai.com/v1}
+    volumes:
+      - stats-data:/app/data          # SQLite stats survive restarts
+      - hf-cache:/root/.cache/huggingface  # LLMLingua-2 model weights cache
+    restart: unless-stopped
+
+volumes:
+  stats-data:
+  hf-cache:
