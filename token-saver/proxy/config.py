@@ -45,6 +45,25 @@ class Settings(BaseSettings):
     # --- PA-4: exact-prefix cache detection ---
     cache_enabled: bool = True
 
+    # --- PA-1: multi-provider routing ---
+    # "off" (default): legacy single-upstream behavior — everything goes to
+    # UPSTREAM_BASE_URL in OpenAI shape. "on": model string routes through
+    # the provider registry; each provider gets its own base_url, auth
+    # header placement, and wire shape (Anthropic /v1/messages etc).
+    provider_routing: bool = False
+
+    # Per-provider base URLs used when provider_routing is on (mirror of the
+    # providers table seed set; the table is the eventual source of truth).
+    provider_base_urls: dict[str, str] = {
+        "anthropic": "https://api.anthropic.com",
+        "openai": "https://api.openai.com/v1",
+        "openrouter": "https://openrouter.ai/api/v1",
+        "xai": "https://api.x.ai/v1",
+        "google": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "vllm": "http://localhost:8001/v1",
+        "ollama": "http://localhost:11434/v1",
+    }
+
     # --- Compression (LLMLingua-2) ---
     # Smaller/faster BERT variant first for CPU; swap for
     # "microsoft/llmlingua-2-xlm-roberta-large-meetingbank" if quality demands.

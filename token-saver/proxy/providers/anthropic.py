@@ -100,7 +100,9 @@ class AnthropicAdapter:
             ]
         if req.stream:
             body["stream"] = True
-        body.update(req.extra)
+        # `reasoning` is OpenAI/OpenRouter-shaped; Anthropic has no such param.
+        extra = {k: v for k, v in req.extra.items() if k != "reasoning"}
+        body.update(extra)
         return AdapterRequest(path=self.messages_path, headers={}, json_body=body)
 
     # ---- response translation (C4, C8, C9) ----

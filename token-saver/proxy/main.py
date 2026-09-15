@@ -33,7 +33,8 @@ from .dashboard import _render_stats_html
 from .dashboard_v2 import render_shell
 from .kpis import kpis_endpoint
 from . import caching
-from .providers.registry import PREFIX_ROUTES, DEFAULT_REGISTRY
+from .providers.model import ProviderError
+from .providers.registry import PREFIX_ROUTES, DEFAULT_REGISTRY, ProviderRegistry
 
 
 def _provider_for_model(model: str) -> str | None:
@@ -70,7 +71,9 @@ async def lifespan(app: FastAPI) -> Iterator[None]:
         timeout=s.upstream_timeout_seconds,
     )
     yield
-    await app.state.http.aclose()
+    for client in [app.state.http, *getattr(app.state, "http_clients", {}).values()]:
+        if client:
+            await client.aclose()
 
 
 app = FastAPI(title="token-saver proxy", lifespan=lifespan)
@@ -87,16 +90,118 @@ def _forward_headers(request: Request) -> dict[str, str]:
 
 def _get_http(request: Request) -> httpx.AsyncClient:
     """Return the shared upstream client, creating it lazily if needed
-    (e.g. when the app is used without running its lifespan)."""
+    (e.g. when the app is used without running its lifespan). Honors the
+    same `_client_factory` test hook as `_get_http_for`."""
     client = getattr(request.app.state, "http", None)
     if client is None:
         s = get_settings()
-        client = httpx.AsyncClient(
-            base_url=s.upstream_base_url.rstrip("/"),
-            timeout=s.upstream_timeout_seconds,
-        )
+        factory = globals().get("_client_factory")
+        if factory:
+            client = factory(s.upstream_base_url, s.upstream_timeout_seconds)
+        else:
+            client = httpx.AsyncClient(
+                base_url=s.upstream_base_url.rstrip("/"),
+                timeout=s.upstream_timeout_seconds,
+            )
         request.app.state.http = client
     return client
+
+
+def _get_http_for(request: Request, base_url: str) -> httpx.AsyncClient:
+    """Per-provider upstream client, cached on app.state by base URL.
+
+    A module-level `_client_factory` hook lets tests inject a transport
+    (real calls use the default httpx.AsyncClient).
+    """
+    cache = getattr(request.app.state, "http_clients", None)
+    if cache is None:
+        cache = {}
+        request.app.state.http_clients = cache
+    client = cache.get(base_url)
+    if client is None:
+        s = get_settings()
+        factory = globals().get("_client_factory")
+        if factory:
+            client = factory(base_url.rstrip("/"), s.upstream_timeout_seconds)
+        else:
+            client = httpx.AsyncClient(base_url=base_url.rstrip("/"),
+                                       timeout=s.upstream_timeout_seconds)
+        cache[base_url] = client
+    return client
+
+
+async def _forward_via_adapter(
+    request: Request,
+    model: str,
+    payload: bytes,
+    adapter: ProviderAdapter,
+    base_url: str,
+    stream: bool,
+) -> httpx.Response:
+    """PA-1 live path: translate the (already-processed) OpenAI-shaped body to
+    the provider's wire shape, send it to that provider's base URL, and return
+    the raw provider response (re-emitted to the client unchanged — the client
+    spoke OpenAI shape, so responses are relayed as the provider returned them
+    until response re-shaping lands with the contract-matrix suite)."""
+    client = _get_http_for(request, base_url)
+    wire = adapter.translate_request(_to_normalized(model, payload))
+    fwd = {k: v for k, v in _forward_headers(request).items()
+           if k.lower() not in ("authorization", "x-api-key")}
+    headers = {**adapter.auth_headers(_upstream_credential(request)),
+               **fwd, **wire.headers}
+    req = client.build_request(
+        "POST", wire.path, json=wire.json_body, headers=headers
+    )
+    resp = await client.send(req, stream=stream)
+    return resp
+
+
+def _upstream_credential(request: Request) -> str:
+    """BYOK: extract the caller's credential (Authorization bearer or x-api-key)."""
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        return auth[7:]
+    return request.headers.get("x-api-key", "")
+
+
+def _to_normalized(model: str, payload: bytes):
+    """OpenAI-shaped request body -> NormalizedRequest for the adapters."""
+    import json as _json
+
+    from .providers.model import ContentPart, Message, NormalizedRequest
+
+    body = _json.loads(payload)
+    messages = []
+    system = None
+    for m in body.get("messages") or []:
+        if m.get("role") == "system" and system is None:
+            system = m.get("content")
+            continue
+        content = m.get("content")
+        if isinstance(content, list):
+            content = [
+                ContentPart(type=p.get("type", "text"),
+                            text=p.get("text"),
+                            source=(p.get("source") or p.get("image_url")
+                                    and {"url": p["image_url"]["url"]}) or None)
+                for p in content
+            ]
+        messages.append(Message(role=m.get("role", "user"), content=content,
+                                tool_calls=m.get("tool_calls"),
+                                tool_call_id=m.get("tool_call_id"),
+                                name=m.get("name")))
+    return NormalizedRequest(
+        model=model,
+        messages=messages,
+        system=system,
+        tools=body.get("tools"),
+        stream=bool(body.get("stream")),
+        max_tokens=body.get("max_tokens"),
+        temperature=body.get("temperature"),
+        extra={k: v for k, v in body.items()
+               if k not in ("model", "messages", "tools", "stream",
+                            "max_tokens", "temperature")},
+    )
 
 
 async def _forward(request: Request, body: bytes, path: str):
@@ -108,6 +213,26 @@ async def _forward(request: Request, body: bytes, path: str):
     )
     resp = await client.send(req, stream=True)
     return resp
+
+
+async def _forward_routed(request: Request, model: str, payload: bytes,
+                          stream: bool) -> tuple[httpx.Response, str]:
+    """PA-1 live-path dispatch: adapter + provider base URL for a model.
+
+    Returns (response, provider_name). Falls back to legacy single-upstream
+    _forward when provider_routing is off or the model maps to no provider.
+    """
+    s = get_settings()
+    provider = _provider_for_model(model)
+    if not s.provider_routing or not provider:
+        resp = await _forward(request, payload, "chat/completions")
+        return resp, (provider or "legacy")
+    registry = ProviderRegistry()
+    adapter = registry.route(model)
+    base_url = s.provider_base_urls.get(provider, s.upstream_base_url)
+    resp = await _forward_via_adapter(request, model, payload, adapter,
+                                      base_url, stream)
+    return resp, provider
 
 
 @app.post("/v1/chat/completions")
@@ -181,9 +306,9 @@ async def chat_completions(request: Request):
     in_after = count_messages(body.get("messages") or [], model)
     payload = json.dumps(body).encode()
 
-    resp = await _forward(request, payload, "chat/completions")
+    resp, provider = await _forward_routed(request, model, payload, stream=True)
 
-    if injected_reasoning and resp.status_code == 400:
+    if injected_reasoning and resp.status_code == 400 and provider in ("openrouter", "openai", "legacy"):
         err_content = await resp.aread()
         await resp.aclose()
         try:
