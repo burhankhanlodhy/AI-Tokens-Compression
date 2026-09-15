@@ -15,18 +15,34 @@ request, asserting:
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
 
 import httpx
 import pytest
+import psycopg
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
 from proxy.config import get_settings  # noqa: E402
+
+PG_ADMIN_DSN = os.environ.get(
+    "TOKEN_SAVER_PG_BASE", "postgresql://postgres:REDACTED@localhost:5433"
+)
+_CACHE_DB = "ts_live_cache_test"
+
+
+def _seed_cache_db(dsn: str) -> None:
+    schema = (Path(__file__).resolve().parent.parent.parent
+              / "postgres-schema-v2.sql").read_text()
+    with psycopg.connect(dsn, autocommit=True) as pg:
+        pg.execute(schema)
+        pg.execute("INSERT INTO tenants (id, name) VALUES "
+                   "('00000000-0000-0000-0000-000000000000','default')")
 
 
 class _CaptureTransport(httpx.AsyncBaseTransport):
@@ -57,6 +73,17 @@ def routed_env(monkeypatch):
     """Routing on + capture transport wired through the _client_factory hook."""
     monkeypatch.setenv("PROVIDER_ROUTING", "true")
     monkeypatch.setenv("DATABASE_PATH", tempfile.mktemp(suffix=".db"))
+    # dedicated throwaway PG database for cache state so tests don't pollute
+    # (or inherit) the dev token_saver cache
+    try:
+        with psycopg.connect(PG_ADMIN_DSN, autocommit=True, connect_timeout=3) as pg:
+            pg.execute(f"DROP DATABASE IF EXISTS {_CACHE_DB}")
+            pg.execute(f"CREATE DATABASE {_CACHE_DB}")
+    except psycopg.OperationalError:
+        pytest.skip("Postgres unavailable for cache fixture", allow_module_level=False)
+    monkeypatch.setenv("TOKEN_SAVER_PG_DSN", f"{PG_ADMIN_DSN}/{_CACHE_DB}")
+    # seed schema + tenant/providers in the throwaway db
+    _seed_cache_db(f"{PG_ADMIN_DSN}/{_CACHE_DB}")
     get_settings.cache_clear()
     from proxy import main as main_mod
 
@@ -69,7 +96,13 @@ def routed_env(monkeypatch):
         yield c, cap
     main_mod._client_factory = None
     monkeypatch.delenv("PROVIDER_ROUTING", raising=False)
+    monkeypatch.delenv("TOKEN_SAVER_PG_DSN", raising=False)
     get_settings.cache_clear()
+    try:
+        with psycopg.connect(PG_ADMIN_DSN, autocommit=True) as pg:
+            pg.execute(f"DROP DATABASE IF EXISTS {_CACHE_DB}")
+    except psycopg.OperationalError:
+        pass
 
 
 def _post_chat(client, model, system="You are helpful", user="hi", extra=None):
@@ -140,5 +173,99 @@ def test_routing_off_is_legacy_passthrough(monkeypatch):
         assert cap.requests[0].url.path.endswith("/chat/completions")
         body = json.loads(cap.requests[0].content)
         assert body["messages"][0]["role"] == "system"
+    main_mod._client_factory = None
+    get_settings.cache_clear()
+
+
+# ---------------------------------------------- response normalization (C4/C8)
+
+def test_anthropic_response_reshaped_to_openai(routed_env):
+    """QA blocker 1: Anthropic response must come back as OpenAI choices shape."""
+    client, cap = routed_env
+    r = _post_chat(client, "anthropic/claude-sonnet-5")
+    assert r.status_code == 200
+    data = r.json()
+    assert "choices" in data, f"client got non-OpenAI shape: {data}"
+    choice = data["choices"][0]
+    assert choice["message"]["role"] == "assistant"
+    assert choice["message"]["content"] == "ok"
+    assert data["object"] == "chat.completion"
+    assert data["usage"]["prompt_tokens"] == 5
+    assert data["usage"]["completion_tokens"] == 2
+
+
+def test_openai_response_untouched(routed_env):
+    client, cap = routed_env
+    r = _post_chat(client, "openai/gpt-4o")
+    data = r.json()
+    assert "choices" in data and data["choices"][0]["message"]["content"] == "ok"
+
+
+def test_anthropic_error_relayed_with_normalized_kind(routed_env):
+    """Errors keep the provider's body but the ledger gets a normalized kind."""
+    client, cap = routed_env
+    # force an error response from the mock
+    class ErrTransport(_CaptureTransport):
+        async def handle_async_request(self, request):
+            self.requests.append(request)
+            return httpx.Response(429, json={"error": {"type": "rate_limit_error",
+                                                       "message": "slow down"}})
+    from proxy import main as main_mod
+    err_cap = ErrTransport()
+    main_mod._client_factory = lambda base_url, timeout: httpx.AsyncClient(
+        base_url=base_url, timeout=timeout, transport=err_cap)
+    try:
+        r = _post_chat(client, "anthropic/claude-sonnet-5")
+        assert r.status_code == 429
+        assert "error" in r.json()
+    finally:
+        main_mod._client_factory = lambda b, t: httpx.AsyncClient(
+            base_url=b, timeout=t, transport=cap)
+
+
+# ---------------------------------------------- cache-status propagation
+
+def test_cache_status_reaches_ledger(routed_env, monkeypatch):
+    """QA blocker 2: second identical request logs cache_status='exact_hit'."""
+    client, cap = routed_env
+    import proxy.stats as stats_mod
+    from proxy import caching
+
+    seen = []
+    real_log = stats_mod.log_request
+
+    def spy(**kwargs):
+        seen.append(kwargs.get("cache_status", "MISSING"))
+        # don't actually write (test db not seeded); just capture
+        return None
+
+    monkeypatch.setattr(stats_mod, "log_request", spy)
+    _post_chat(client, "anthropic/claude-sonnet-5", user="q1")
+    _post_chat(client, "anthropic/claude-sonnet-5", user="q1")  # identical prefix
+    assert len(seen) == 2, seen
+    assert seen[0] == "miss"
+    assert seen[1] == "exact_hit", f"second identical request must be exact_hit, got {seen}"
+
+
+def test_non_routed_cache_status_defaults_miss(monkeypatch):
+    monkeypatch.delenv("PROVIDER_ROUTING", raising=False)
+    monkeypatch.setenv("DATABASE_PATH", tempfile.mktemp(suffix=".db"))
+    get_settings.cache_clear()
+    from proxy import main as main_mod
+    import proxy.stats as stats_mod
+
+    seen = []
+    monkeypatch.setattr(stats_mod, "log_request",
+                        lambda **kw: seen.append(kw.get("cache_status", "MISSING")))
+    cap = _CaptureTransport()
+    main_mod._client_factory = lambda base_url, timeout: httpx.AsyncClient(
+        base_url=base_url, timeout=timeout, transport=cap)
+    with TestClient(main_mod.app) as c:
+        main_mod.app.state.http = None
+        main_mod.app.state.http_clients = {}
+        c.post("/v1/chat/completions", headers={"Authorization": "Bearer sk-x"},
+               json={"model": "anthropic/claude-sonnet-5",
+                     "messages": [{"role": "user", "content": "hi"}]})
+    assert seen == ["miss"]
     main_mod._client_factory = None
     get_settings.cache_clear()

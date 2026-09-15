@@ -62,10 +62,45 @@ HOP_BY_HOP = {
 _reasoning_mandatory_models: set[str] = set()
 
 
+def _ensure_cache_seed_rows() -> None:
+    """Bootstrap default tenant + provider rows in Postgres so cache
+    record/lookup FKs resolve. Idempotent; failures swallowed (cache must
+    never break the proxy)."""
+    import os as _os
+
+    import psycopg
+
+    if not _os.environ.get("TOKEN_SAVER_PG_DSN"):
+        return
+    try:
+        with psycopg.connect(
+            _os.environ["TOKEN_SAVER_PG_DSN"], connect_timeout=3
+        ) as conn:
+            conn.execute(
+                "INSERT INTO tenants (id, name, plan) VALUES "
+                "('00000000-0000-0000-0000-000000000000', 'default', 'self_host') "
+                "ON CONFLICT (id) DO NOTHING"
+            )
+            for row in DEFAULT_REGISTRY:
+                conn.execute(
+                    "INSERT INTO providers (name, base_url, adapter_class, auth_style) "
+                    "VALUES (%s, %s, %s, %s) ON CONFLICT (name) DO NOTHING",
+                    (row.name, row.base_url, row.adapter_class, row.auth_style),
+                )
+            conn.execute(
+                "INSERT INTO providers (name, base_url, adapter_class, auth_style) "
+                "VALUES ('legacy', 'https://openrouter.ai/api/v1', "
+                "'OpenAICompatAdapter', 'bearer') ON CONFLICT (name) DO NOTHING"
+            )
+    except Exception:
+        logger.exception("cache seed bootstrap failed; continuing")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> Iterator[None]:
     stats.init_db()
     s = get_settings()
+    _ensure_cache_seed_rows()
     app.state.http = httpx.AsyncClient(
         base_url=s.upstream_base_url.rstrip("/"),
         timeout=s.upstream_timeout_seconds,
@@ -259,7 +294,7 @@ async def chat_completions(request: Request):
     provider = _provider_for_model(model)
     cache_status = "miss"
     try:
-        if s.cache_enabled and provider:
+        if s.cache_enabled and s.provider_routing and provider:
             if caching.lookup(provider, model, body):
                 cache_status = "exact_hit"
             else:
@@ -377,7 +412,8 @@ async def _relay(
                 await resp.aclose()
                 output_tokens = count_text("".join(collected), model)
                 _log(model, route, in_before, in_after, output_tokens,
-                     latency_ms, compressed, resp.status_code)
+                     latency_ms, compressed, resp.status_code,
+                     cache_status=cache_status)
 
         return StreamingResponse(
             streamer(), status_code=resp.status_code,
@@ -386,18 +422,60 @@ async def _relay(
 
     content = await resp.aread()
     await resp.aclose()
+
+    # --- Response normalization (C4/C8): provider shape -> client shape ---
+    # The client always spoke OpenAI shape. Provider-routed responses must be
+    # re-shaped before relay; OpenAI-compat providers pass through as-is.
+    s2 = get_settings()
+    reshaped = content
+    if s2.provider_routing:
+        provider = _provider_for_model(model)
+        if provider and provider not in (None, "legacy") and resp.status_code == 200:
+            try:
+                reshaped = _normalize_to_openai(json.loads(content), model)
+            except (json.JSONDecodeError, AttributeError, KeyError, TypeError):
+                reshaped = content  # never break the relay on reshaping
+
     output_tokens = 0
     try:
-        output_tokens = count_output(json.loads(content), model)
+        output_tokens = count_output(reshaped if isinstance(reshaped, dict)
+                                     else json.loads(reshaped), model)
     except (json.JSONDecodeError, AttributeError):
         pass
     _log(model, route, in_before, in_after, output_tokens,
-         latency_ms, compressed, resp.status_code)
+         latency_ms, compressed, resp.status_code,
+         cache_status=cache_status)
     return JSONResponse(
-        content=json.loads(content) if content else {},
+        content=json.loads(reshaped) if isinstance(reshaped, (str, bytes)) and reshaped else reshaped,
         status_code=resp.status_code,
         headers=out_headers,
     )
+
+
+def _normalize_to_openai(data: dict, model: str) -> dict:
+    """Anthropic /v1/messages response -> OpenAI chat.completion shape (C4)."""
+    if "choices" in data:  # already OpenAI shape (or unknown) — pass through
+        return data
+    blocks = data.get("content") or []
+    text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+    u = data.get("usage") or {}
+    return {
+        "id": data.get("id", ""),
+        "object": "chat.completion",
+        "created": 0,
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": text},
+            "finish_reason": "stop",
+        }],
+        "usage": {
+            "prompt_tokens": int(u.get("input_tokens", 0)),
+            "completion_tokens": int(u.get("output_tokens", 0)),
+            # cache fields surface natively in OpenAI detail shape (AC-A6)
+            "prompt_tokens_details": {"cached_tokens": int(u.get("cache_read_input_tokens", 0))},
+        },
+    }
 
 
 def _log(model, route, in_before, in_after, output_tokens,
