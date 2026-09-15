@@ -29,6 +29,7 @@ from .counting import (
     inject_conciseness,
 )
 from .dashboard import _render_stats_html
+from .kpis import kpis_endpoint
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("token-saver")
@@ -322,6 +323,20 @@ async def metrics(format: str = "text"):
 async def health_ok():
     """Simple health check; return 200."""
     return {"status": "ok"}
+
+
+@app.get("/api/kpis")
+async def api_kpis(
+    bucket: str = "day",
+    from_ts: str | None = None,
+    to_ts: str | None = None,
+):
+    """PA-2: time-bucketed KPI aggregation over the Postgres ledger.
+
+    Single source of truth for the dashboard and Prometheus path; all math
+    is SQL-side over `requests` (AC-A5/A12 — no client-side aggregation).
+    """
+    return await kpis_endpoint(bucket=bucket, from_ts=from_ts, to_ts=to_ts)
 
 
 @app.get("/stats")
