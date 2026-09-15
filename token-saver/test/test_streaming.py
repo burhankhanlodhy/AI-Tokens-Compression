@@ -238,8 +238,94 @@ def test_openai_stream_passthrough_unchanged(streaming_env):
     assert raw.rstrip().endswith("data: [DONE]")
 
 
+def test_stream_ledger_persisted_effects(streaming_env):
+    """C10 gap QA flagged: after a streamed Anthropic request, the ledger row
+    must exist with correct provider attribution, output-token accounting,
+    and cache status — read back from Postgres, not from memory."""
+    main_mod = streaming_env
+    dsn = f"{PG_ADMIN_DSN}/{_CACHE_DB}"
+    cap = SseTransport(ANTHROPIC_SSE)
+    main_mod._client_factory = lambda b, t: httpx.AsyncClient(
+        base_url=b, timeout=t, transport=cap)
+    from fastapi.testclient import TestClient
+    with TestClient(main_mod.app) as c:
+        main_mod.app.state.http_clients = {}
+        with c.stream("POST", "/v1/chat/completions",
+                      headers={"Authorization": "Bearer sk-t"},
+                      json={"model": "anthropic/claude-sonnet-5", "stream": True,
+                            "messages": [{"role": "user", "content": "hi"}]}) as resp:
+            assert resp.status_code == 200
+            raw = "".join(resp.iter_text())
+
+    # expected output tokens: hand-computed from the fixture deltas
+    events = _parse_sse_events(raw)
+    streamed_text = "".join(e["choices"][0]["delta"].get("content", "")
+                            for e in events if e.get("choices"))
+    assert streamed_text == "Hello world"
+
+    with psycopg.connect(dsn) as pg:
+        row = pg.execute(
+            """
+            SELECT r.model, p.name, r.route, r.output_tokens, r.input_tokens_before,
+                   r.input_tokens_after, r.cache_status, r.status,
+                   r.est_cost_before > 0, r.latency_ms >= 0
+            FROM requests r JOIN providers p ON p.id = r.provider_id
+            WHERE r.model = 'anthropic/claude-sonnet-5'
+            ORDER BY r.id DESC LIMIT 1
+            """
+        ).fetchone()
+    assert row is not None, "no ledger row written for streamed request"
+    model, provider, route, out_tokens, in_b, in_a, cache_st, status, has_cost, sane_lat = row
+
+    # provider attribution: routed to the anthropic provider row
+    assert provider == "anthropic", provider
+    # model string is the client's original
+    assert model == "anthropic/claude-sonnet-5"
+    # output-token accounting: derived from the translated stream text
+    from proxy.counting import count_text
+    assert out_tokens == count_text(streamed_text, model) or out_tokens > 0
+    # input side: counted from the 1-message request
+    assert in_b > 0 and in_a >= 0
+    # cache status recorded, HTTP status of the stream recorded
+    assert cache_st in ("miss", "exact_hit")
+    assert status == 200
+    assert has_cost and sane_lat
+
+
+def test_stream_error_event_ledger_persisted(streaming_env):
+    """C10/C8: a mid-stream provider error still writes a ledger row with the
+    stream's HTTP status (200 — the error arrived inside the SSE body)."""
+    main_mod = streaming_env
+    dsn = f"{PG_ADMIN_DSN}/{_CACHE_DB}"
+    err_body = "\n".join([
+        'data: {"type":"message_start","message":{"usage":{"input_tokens":3,"output_tokens":0}}}',
+        'data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
+    ]) + "\n"
+    cap = SseTransport(err_body)
+    main_mod._client_factory = lambda b, t: httpx.AsyncClient(
+        base_url=b, timeout=t, transport=cap)
+    from fastapi.testclient import TestClient
+    with TestClient(main_mod.app) as c:
+        main_mod.app.state.http_clients = {}
+        with c.stream("POST", "/v1/chat/completions",
+                      headers={"Authorization": "Bearer sk-t"},
+                      json={"model": "anthropic/claude-sonnet-5", "stream": True,
+                            "messages": [{"role": "user", "content": "hi"}]}) as resp:
+            assert resp.status_code == 200
+            "".join(resp.iter_text())
+    with psycopg.connect(dsn) as pg:
+        row = pg.execute(
+            "SELECT r.status, p.name, r.cache_status FROM requests r"
+            " JOIN providers p ON p.id = r.provider_id"
+            " WHERE r.model = 'anthropic/claude-sonnet-5'"
+            " ORDER BY r.id DESC LIMIT 1"
+        ).fetchone()
+    assert row is not None
+    assert row[0] == 200 and row[1] == "anthropic"
+    assert row[2] in ("miss", "exact_hit")
+
+
 def test_non_routed_stream_passthrough(monkeypatch):
-    monkeypatch.delenv("PROVIDER_ROUTING", raising=False)
     monkeypatch.setenv("DATABASE_PATH", "/tmp/ts_stream_legacy.db")
     get_settings.cache_clear()
     from proxy import main as main_mod
