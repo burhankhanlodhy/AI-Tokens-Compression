@@ -227,15 +227,28 @@ def _to_normalized(model: str, payload: bytes):
         if m.get("role") == "system" and system is None:
             system = m.get("content")
             continue
-        content = m.get("content")
-        if isinstance(content, list):
-            content = [
-                ContentPart(type=p.get("type", "text"),
-                            text=p.get("text"),
-                            source=(p.get("source") or p.get("image_url")
-                                    and {"url": p["image_url"]["url"]}) or None)
-                for p in content
-            ]
+        content_src = m.get("content")
+        if isinstance(content_src, list):
+            content = []
+            for p in content_src:
+                ptype = p.get("type", "text")
+                if ptype == "image_url":  # OpenAI client shape -> normalized "image"
+                    src = p.get("image_url") or {}
+                    url = src.get("url", "")
+                    if url.startswith("data:"):
+                        # data URI: media_type + base64 payload
+                        head, _, data = url.partition(",")
+                        media = head.removeprefix("data:").partition(";")[0]
+                        norm = ContentPart(type="image", source={"media_type": media, "data": data})
+                    else:
+                        norm = ContentPart(type="image", source={"url": url})
+                elif ptype == "image":
+                    norm = ContentPart(type="image", source=p.get("source"))
+                else:
+                    norm = ContentPart(type="text", text=p.get("text"))
+                content.append(norm)
+        else:
+            content = content_src
         messages.append(Message(role=m.get("role", "user"), content=content,
                                 tool_calls=m.get("tool_calls"),
                                 tool_call_id=m.get("tool_call_id"),
@@ -356,7 +369,27 @@ async def chat_completions(request: Request):
     in_after = count_messages(body.get("messages") or [], model)
     payload = json.dumps(body).encode()
 
-    resp, provider = await _forward_routed(request, model, payload, stream=True)
+    # --- C7: upstream transport failures surface as normalized errors ---
+    try:
+        resp, provider = await _forward_routed(request, model, payload, stream=True)
+    except httpx.TimeoutException as exc:
+        _log(model, route or "passthrough", in_before, in_after, 0,
+             (time.perf_counter() - started) * 1000, compressed, 504,
+             cache_status=cache_status)
+        return JSONResponse(
+            status_code=504,
+            content={"error": {"message": f"upstream timeout: {exc}",
+                               "type": "upstream_timeout", "code": 504}},
+        )
+    except httpx.ConnectError as exc:
+        _log(model, route or "passthrough", in_before, in_after, 0,
+             (time.perf_counter() - started) * 1000, compressed, 502,
+             cache_status=cache_status)
+        return JSONResponse(
+            status_code=502,
+            content={"error": {"message": f"upstream unreachable: {exc}",
+                               "type": "upstream_unreachable", "code": 502}},
+        )
 
     if injected_reasoning and resp.status_code == 400 and provider in ("openrouter", "openai", "legacy"):
         err_content = await resp.aread()
