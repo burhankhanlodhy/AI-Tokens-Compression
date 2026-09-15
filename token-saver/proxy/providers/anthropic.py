@@ -143,19 +143,28 @@ class AnthropicAdapter:
     # ---- streaming (C4) ----
 
     def translate_stream_chunk(self, line: str, req: NormalizedRequest) -> StreamEvent:
+        """Anthropic SSE line -> StreamEvent.
+
+        In translated mode the caller re-emits ONLY OpenAI chunks, so
+        non-translatable lines (event:, ping, malformed) return raw_line=""
+        meaning "drop" — the caller decides whether to pass through.
+        """
         # Anthropic SSE uses "event: X" lines followed by the "data:" line;
         # translate only on the data line (event name is embedded in the payload).
         if line.startswith("event: "):
-            return StreamEvent(kind="delta", raw_line="")
+            return StreamEvent(kind="drop", raw_line="")
         if not line.startswith("data: "):
-            return StreamEvent(kind="delta", raw_line=line)
+            if line.strip() == "":
+                return StreamEvent(kind="drop", raw_line="")
+            return StreamEvent(kind="drop", raw_line="")  # comments/pings dropped
         payload = line[6:]
         if payload == "[DONE]":
             return StreamEvent(kind="done", raw_line=line)
         try:
             data = json.loads(payload)
         except json.JSONDecodeError:
-            return StreamEvent(kind="delta", raw_line=line)
+            # malformed data line: surface as a drop-able event, never a crash
+            return StreamEvent(kind="malformed", raw_line=line)
 
         etype = data.get("type")
         if etype == "content_block_delta":
@@ -184,4 +193,4 @@ class AnthropicAdapter:
                 retry_after_s=None, status=500,
             ), raw_line=line)
         # ping / content_block_start / content_block_stop / others
-        return StreamEvent(kind="delta", raw_line=line)
+        return StreamEvent(kind="drop", raw_line="")

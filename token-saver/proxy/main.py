@@ -34,7 +34,13 @@ from .dashboard_v2 import render_shell
 from .kpis import kpis_endpoint
 from . import caching
 from .providers.model import ProviderError
+from .providers.anthropic import AnthropicAdapter
 from .providers.registry import PREFIX_ROUTES, DEFAULT_REGISTRY, ProviderRegistry
+
+
+# Providers whose wire shape differs from the client's OpenAI shape — only
+# these need response/stream translation. OpenAI-compat providers pass through.
+_RESHAPE_PROVIDERS = {"anthropic"}
 
 
 def _provider_for_model(model: str) -> str | None:
@@ -404,9 +410,17 @@ async def _relay(
     }
 
     if streaming:
+        # Provider-routed streaming needs SSE translation to the client's
+        # OpenAI shape (C4); OpenAI-compat/legacy streams pass through raw.
+        needs_stream_translation = (
+            s.provider_routing
+            and (p := _provider_for_model(model)) in _RESHAPE_PROVIDERS
+            and resp.status_code == 200
+            and "text/event-stream" in resp.headers.get("content-type", "")
+        )
         collected: list[str] = []
 
-        async def streamer():
+        async def raw_streamer():
             try:
                 async for line in resp.aiter_lines():
                     if line.startswith("data: ") and line != "data: [DONE]":
@@ -424,9 +438,89 @@ async def _relay(
                      latency_ms, compressed, resp.status_code,
                      cache_status=cache_status)
 
+        async def translated_streamer():
+            """Anthropic SSE -> OpenAI chat.completion.chunk SSE (C4).
+
+            Every upstream event is handled explicitly: content deltas become
+            OpenAI delta chunks, usage events are preserved, [DONE] terminates,
+            and malformed/unknown events are surfaced as comment lines rather
+            than silently dropped. The client's original `model` string is
+            echoed in every chunk.
+            """
+            anthropic = AnthropicAdapter()
+            usage_acc: dict = {}
+            done_sent = False
+            try:
+                async for line in resp.aiter_lines():
+                    if not line.strip():
+                        continue
+                    ev = anthropic.translate_stream_chunk(line, None)
+                    if ev.kind == "drop":
+                        continue  # anthropic framing lines never reach the client
+                    if ev.kind == "malformed":
+                        # surfaced as an SSE comment so nothing is silently lost
+                        yield (f": tokensaver: unparseable upstream event dropped\n\n").encode()
+                        continue
+                    if ev.kind == "delta" and ev.delta_text:
+                        collected.append(ev.delta_text)
+                        chunk = {
+                            "id": "chatcmpl-tokensaver",
+                            "object": "chat.completion.chunk",
+                            "model": model,
+                            "choices": [{"index": 0,
+                                         "delta": {"content": ev.delta_text},
+                                         "finish_reason": None}],
+                        }
+                        yield f"data: {json.dumps(chunk)}\n\n".encode()
+                    elif ev.kind == "usage" and ev.usage:
+                        # merge without zeroing: message_delta only carries
+                        # output_tokens; message_start only input_tokens
+                        if ev.usage.input_tokens:
+                            usage_acc["prompt_tokens"] = ev.usage.input_tokens
+                        if ev.usage.output_tokens:
+                            usage_acc["completion_tokens"] = ev.usage.output_tokens
+                        if ev.usage.cache_read_tokens:
+                            usage_acc.setdefault("prompt_tokens_details", {})
+                            usage_acc["prompt_tokens_details"]["cached_tokens"] = \
+                                ev.usage.cache_read_tokens
+                    elif ev.kind == "error" and ev.error:
+                        # provider error events are surfaced, never dropped (C4/C8)
+                        err_chunk = {
+                            "id": "chatcmpl-tokensaver",
+                            "object": "chat.completion.chunk",
+                            "model": model,
+                            "choices": [{"index": 0, "delta": {},
+                                         "finish_reason": "stop"}],
+                            "error": {"message": ev.error.message,
+                                      "type": ev.error.kind, "code": None},
+                        }
+                        yield f"data: {json.dumps(err_chunk)}\n\n".encode()
+                    elif ev.kind == "done" and not done_sent:
+                        final = {"id": "chatcmpl-tokensaver",
+                                 "object": "chat.completion.chunk",
+                                 "model": model,
+                                 "choices": [{"index": 0, "delta": {},
+                                              "finish_reason": "stop"}]}
+                        if usage_acc:
+                            final["usage"] = usage_acc
+                        yield f"data: {json.dumps(final)}\n\n".encode()
+                        yield b"data: [DONE]\n\n"
+                        done_sent = True
+                if not done_sent:
+                    # upstream ended without message_stop: still terminate cleanly
+                    yield b"data: [DONE]\n\n"
+            finally:
+                await resp.aclose()
+                output_tokens = count_text("".join(collected), model)
+                _log(model, route, in_before, in_after, output_tokens,
+                     latency_ms, compressed, resp.status_code,
+                     cache_status=cache_status)
+
         return StreamingResponse(
-            streamer(), status_code=resp.status_code,
-            headers=out_headers, media_type=resp.headers.get("content-type"),
+            translated_streamer() if needs_stream_translation else raw_streamer(),
+            status_code=resp.status_code,
+            headers=out_headers,
+            media_type=resp.headers.get("content-type"),
         )
 
     content = await resp.aread()
@@ -439,7 +533,7 @@ async def _relay(
     reshaped = content
     if s2.provider_routing:
         provider = _provider_for_model(model)
-        if provider and provider not in (None, "legacy") and resp.status_code == 200:
+        if provider in _RESHAPE_PROVIDERS and resp.status_code == 200:
             try:
                 reshaped = _normalize_to_openai(json.loads(content), model)
             except (json.JSONDecodeError, AttributeError, KeyError, TypeError):
