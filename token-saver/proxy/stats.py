@@ -1,6 +1,7 @@
 """SQLite logging of token counts and estimated costs per request."""
 from __future__ import annotations
 
+import os
 import sqlite3
 import threading
 import time
@@ -73,7 +74,29 @@ def log_request(
     latency_ms: float,
     compressed: bool,
     status: int,
+    cache_status: str = "miss",
+    cache_savings: float = 0.0,
 ) -> None:
+    """Append to the request ledger.
+
+    Ledger selection is explicit, not reachability-probed:
+    - TOKEN_SAVER_PG_DSN set -> Postgres (Phase A production path, includes
+      cache columns)
+    - otherwise -> local SQLite (single-user mode and the unit-test fixture)
+
+    This keeps the two ledgers deterministic for tests and deployment.
+    """
+    import os
+
+    if os.environ.get("TOKEN_SAVER_PG_DSN"):
+        _log_postgres(
+            model=model, route=route, input_tokens_before=input_tokens_before,
+            input_tokens_after=input_tokens_after, output_tokens=output_tokens,
+            est_cost_before=est_cost_before, est_cost_after=est_cost_after,
+            latency_ms=latency_ms, compressed=compressed, status=status,
+            cache_status=cache_status, cache_savings=cache_savings,
+        )
+        return
     with _lock, get_conn() as conn:
         conn.execute(
             "INSERT INTO requests (ts, model, route, input_tokens_before, "
@@ -91,6 +114,47 @@ def log_request(
                 latency_ms,
                 int(compressed),
                 status,
+            ),
+        )
+
+
+def _log_postgres(
+    *, model, route, input_tokens_before, input_tokens_after, output_tokens,
+    est_cost_before, est_cost_after, latency_ms, compressed, status,
+    cache_status, cache_savings,
+) -> None:
+    import psycopg
+
+    dsn = os.environ["TOKEN_SAVER_PG_DSN"]
+    with psycopg.connect(dsn, connect_timeout=3) as conn:
+        # default tenant + routed provider (legacy/OpenAICompat by default);
+        # provider resolution uses the same prefix table as the cache layer.
+        from .providers.registry import PREFIX_ROUTES, DEFAULT_REGISTRY
+
+        lowered = model.lower()
+        provider = next(
+            (p for pre, p in PREFIX_ROUTES.items() if lowered.startswith(pre)
+             and any(r.name == p for r in DEFAULT_REGISTRY)),
+            None,
+        )
+        conn.execute(
+            """
+            INSERT INTO requests (tenant_id, provider_id, model, route,
+                input_tokens_before, input_tokens_after, output_tokens,
+                est_cost_before, est_cost_after, cache_status, cache_savings,
+                latency_ms, compressed, status)
+            SELECT '00000000-0000-0000-0000-000000000000',
+                   COALESCE((SELECT id FROM providers WHERE name = %s),
+                            (SELECT id FROM providers WHERE name = 'legacy')),
+                   %s, %s, %s, %s, %s, %s::numeric, %s::numeric, %s,
+                   %s::numeric, %s::numeric, %s, %s
+            """,
+            (
+                provider or "legacy", model, route,
+                input_tokens_before, input_tokens_after, output_tokens,
+                str(est_cost_before), str(est_cost_after),
+                cache_status, str(cache_savings), latency_ms,
+                compressed, status,
             ),
         )
 

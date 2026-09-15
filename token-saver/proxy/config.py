@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # `reasoning` field in the request body is always respected instead.
     disable_reasoning_by_default: bool = True
 
+    # --- PA-4: exact-prefix cache detection ---
+    cache_enabled: bool = True
+
     # --- Compression (LLMLingua-2) ---
     # Smaller/faster BERT variant first for CPU; swap for
     # "microsoft/llmlingua-2-xlm-roberta-large-meetingbank" if quality demands.

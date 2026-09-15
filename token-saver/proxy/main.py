@@ -30,6 +30,19 @@ from .counting import (
 )
 from .dashboard import _render_stats_html
 from .kpis import kpis_endpoint
+from . import caching
+from .providers.registry import PREFIX_ROUTES, DEFAULT_REGISTRY
+
+
+def _provider_for_model(model: str) -> str | None:
+    """Route a model string to a provider name via the registry prefixes."""
+    lowered = model.lower()
+    for prefix, provider in PREFIX_ROUTES.items():
+        if lowered.startswith(prefix) and any(
+            r.name == provider for r in DEFAULT_REGISTRY
+        ):
+            return provider
+    return None
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("token-saver")
@@ -113,6 +126,21 @@ async def chat_completions(request: Request):
     messages = body.get("messages") or []
     streaming = bool(body.get("stream"))
 
+    # --- PA-4: exact-prefix cache detection ---
+    # Determined on the *original* (pre-compression) body so the cache key is
+    # stable regardless of compression settings.
+    provider = _provider_for_model(model)
+    cache_status = "miss"
+    try:
+        if s.cache_enabled and provider:
+            if caching.lookup(provider, model, body):
+                cache_status = "exact_hit"
+            else:
+                caching.record(provider, model, body)
+    except Exception:  # noqa: BLE001 — cache must never break the proxy path
+        logger.exception("cache lookup failed; continuing with cache_status=miss")
+        cache_status = "miss"
+
     # --- Phase 4: task-aware routing ---
     route = classify(messages) if s.compression_enabled else "passthrough"
 
@@ -180,6 +208,7 @@ async def chat_completions(request: Request):
     return await _relay(
         resp, started, model=model, route=route, in_before=in_before,
         in_after=in_after, compressed=compressed, streaming=streaming,
+        cache_status=cache_status,
     )
 
 
@@ -193,6 +222,7 @@ async def _relay(
     in_after: int,
     compressed: bool,
     streaming: bool = False,
+    cache_status: str = "miss",
 ):
     """Stream or buffer the upstream response back, then log stats."""
     s = get_settings()
@@ -244,7 +274,8 @@ async def _relay(
 
 
 def _log(model, route, in_before, in_after, output_tokens,
-         latency_ms, compressed, status):
+         latency_ms, compressed, status, cache_status="miss",
+         cache_savings=0.0):
     try:
         cost_before = estimate_cost(model, in_before, output_tokens)
         cost_after = estimate_cost(model, in_after, output_tokens)
@@ -253,6 +284,7 @@ def _log(model, route, in_before, in_after, output_tokens,
             input_tokens_after=in_after, output_tokens=output_tokens,
             est_cost_before=cost_before, est_cost_after=cost_after,
             latency_ms=latency_ms, compressed=compressed, status=status,
+            cache_status=cache_status, cache_savings=cache_savings,
         )
         saved = in_before - in_after
         if saved > 0:
