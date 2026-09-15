@@ -1,0 +1,56 @@
+{
+  "timestamp": "2026-09-15T23:44:26.575919+00:00",
+  "purpose": "P1-1 audit step 1: output-token SD measurement (PM-mandated before harness rebuild)",
+  "model": "z-ai/glm-5.3-flash",
+  "prompt": "REST API explanation, ~330 chars, temperature=0.0, n=5 baseline-arm calls through live proxy (port 8010)",
+  "temperature": 0.0,
+  "n": 5,
+  "raw": {
+    "provider_completion_tokens": [
+      1002,
+      5925,
+      4908,
+      4376,
+      4396
+    ],
+    "reasoning_tokens": [
+      37,
+      4785,
+      4025,
+      3573,
+      3622
+    ],
+    "visible_non_reasoning_tokens": [
+      965,
+      1140,
+      883,
+      803,
+      774
+    ]
+  },
+  "stats": {
+    "completion_tokens": {
+      "mean": 4121.4,
+      "sd": 1853.6,
+      "cv": 0.45
+    },
+    "visible_non_reasoning": {
+      "mean": 913,
+      "sd": 147.1,
+      "cv": 0.161
+    },
+    "reasoning_share_of_billed_pct": [
+      3.7,
+      80.8,
+      82.0,
+      81.6,
+      82.4
+    ]
+  },
+  "findings": [
+    "CV=0.45 on billed completion_tokens: above the audit's CV=0.35 unmeasurable threshold",
+    "reasoning ('thinking') tokens always on, 3.7%-82.4% of billed output (mean ~66%)",
+    "billed-output savings from an answer-instruction are near-null by construction on this model",
+    "visible (non-reasoning) output CV=0.161 \u2014 measurable, but not what the bill reflects"
+  ]
+}
