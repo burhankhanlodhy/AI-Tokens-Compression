@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 
 from . import stats
@@ -184,8 +184,17 @@ async def _forward_via_adapter(
            if k.lower() not in ("authorization", "x-api-key")}
     headers = {**adapter.auth_headers(_upstream_credential(request)),
                **fwd, **wire.headers}
+    # URL join: base URLs may or may not end in /v1 (config), adapter paths
+    # may or may not start with /v1 — join without ever doubling the segment.
+    base = base_url.rstrip("/")
+    path = wire.path.lstrip("/")
+    if base.endswith("/v1") and path.startswith("v1/"):
+        path = path[3:]
+    elif base.endswith("/v1") and path == "v1":
+        path = ""
     req = client.build_request(
-        "POST", wire.path, json=wire.json_body, headers=headers
+        "POST", f"{base}/{path}".rstrip("/") if path else base,
+        json=wire.json_body, headers=headers
     )
     resp = await client.send(req, stream=stream)
     return resp
@@ -437,19 +446,23 @@ async def _relay(
                 reshaped = content  # never break the relay on reshaping
 
     output_tokens = 0
+    reshaped_obj: dict | list | None = None
     try:
-        output_tokens = count_output(reshaped if isinstance(reshaped, dict)
-                                     else json.loads(reshaped), model)
+        parsed = json.loads(reshaped) if isinstance(reshaped, (str, bytes)) else reshaped
+        reshaped_obj = parsed
+        output_tokens = count_output(parsed, model)
     except (json.JSONDecodeError, AttributeError):
-        pass
+        pass  # non-JSON body (e.g. HTML error page): relay raw, 0 tokens
     _log(model, route, in_before, in_after, output_tokens,
          latency_ms, compressed, resp.status_code,
          cache_status=cache_status)
-    return JSONResponse(
-        content=json.loads(reshaped) if isinstance(reshaped, (str, bytes)) and reshaped else reshaped,
-        status_code=resp.status_code,
-        headers=out_headers,
-    )
+    if reshaped_obj is not None:
+        return JSONResponse(content=reshaped_obj, status_code=resp.status_code,
+                            headers=out_headers)
+    # non-JSON body: pass through raw with the provider's content-type
+    media = resp.headers.get("content-type", "application/octet-stream")
+    return Response(content=reshaped or b"", status_code=resp.status_code,
+                    headers=out_headers, media_type=media)
 
 
 def _normalize_to_openai(data: dict, model: str) -> dict:

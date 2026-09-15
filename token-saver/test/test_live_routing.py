@@ -223,7 +223,94 @@ def test_anthropic_error_relayed_with_normalized_kind(routed_env):
             base_url=b, timeout=t, transport=cap)
 
 
-# ---------------------------------------------- cache-status propagation
+# ---------------------------------------------- URL joining (QA blocker 3)
+
+def test_openai_base_url_with_v1_does_not_double(routed_env):
+    """openai base ends in /v1 and adapter path starts with /v1 — must not
+    produce /v1/v1/chat/completions (QA-found 404 regression)."""
+    client, cap = routed_env
+    r = _post_chat(client, "openai/gpt-4o")
+    assert r.status_code == 200
+    assert "/v1/v1/" not in str(cap.requests[0].url)
+    assert cap.requests[0].url.path == "/v1/chat/completions"
+
+
+def test_anthropic_base_path_exact(routed_env):
+    client, cap = routed_env
+    _post_chat(client, "anthropic/claude-sonnet-5")
+    assert str(cap.requests[0].url) == "https://api.anthropic.com/v1/messages"
+
+
+main_mod_test_cap = [None]  # indirection used by the /v1-less base test
+
+
+def test_base_without_v1_keeps_adapter_path(routed_env, monkeypatch):
+    """A base URL with no /v1 suffix must still yield the full adapter path."""
+    from proxy import main as main_mod
+    custom_cap = _CaptureTransport()
+    main_mod_test_cap[0] = custom_cap
+    main_mod._client_factory = lambda base_url, timeout: httpx.AsyncClient(
+        base_url=base_url, timeout=timeout, transport=custom_cap)
+    try:
+        client, _ = routed_env
+        monkeypatch.setenv("OPENAI_BASE_URL_OVERRIDE", "")
+        # directly override the settings dict used by _forward_routed
+        s = get_settings()
+        monkeypatch.setattr(s, "provider_base_urls",
+                            {**s.provider_base_urls,
+                             "openai": "https://custom.example.com"})
+        r = _post_chat(client, "openai/gpt-4o")
+        assert r.status_code == 200
+        urls = [str(q.url) for q in custom_cap.requests]
+        assert any(u.startswith("https://custom.example.com/v1/chat/completions")
+                   for u in urls), urls
+    finally:
+        main_mod._client_factory = None
+        main_mod_test_cap[0] = None
+
+
+# ---------------------------------------------- non-2xx relay (QA blocker 3b)
+
+def test_non_json_error_body_relayed_without_500(routed_env):
+    """A non-JSON upstream error (e.g. HTML 502) must relay raw, not 500."""
+    client, cap = routed_env
+    class HtmlErrTransport(_CaptureTransport):
+        async def handle_async_request(self, request):
+            self.requests.append(request)
+            return httpx.Response(502, text="<html>Bad Gateway</html>",
+                                  headers={"content-type": "text/html"})
+    from proxy import main as main_mod
+    err_cap = HtmlErrTransport()
+    main_mod._client_factory = lambda base_url, timeout: httpx.AsyncClient(
+        base_url=base_url, timeout=timeout, transport=err_cap)
+    try:
+        r = _post_chat(client, "openai/gpt-4o")
+        assert r.status_code == 502
+        assert "Bad Gateway" in r.text
+        assert "text/html" in r.headers.get("content-type", "")
+    finally:
+        main_mod._client_factory = lambda b, t: httpx.AsyncClient(
+            base_url=b, timeout=t, transport=cap)
+
+
+def test_json_error_body_relayed_cleanly(routed_env):
+    """A JSON upstream error must relay its body with the provider's status."""
+    client, cap = routed_env
+    class JsonErrTransport(_CaptureTransport):
+        async def handle_async_request(self, request):
+            self.requests.append(request)
+            return httpx.Response(429, json={"error": {"message": "slow down"}})
+    from proxy import main as main_mod
+    err_cap = JsonErrTransport()
+    main_mod._client_factory = lambda base_url, timeout: httpx.AsyncClient(
+        base_url=base_url, timeout=timeout, transport=err_cap)
+    try:
+        r = _post_chat(client, "openai/gpt-4o")
+        assert r.status_code == 429
+        assert r.json()["error"]["message"] == "slow down"
+    finally:
+        main_mod._client_factory = lambda b, t: httpx.AsyncClient(
+            base_url=b, timeout=t, transport=cap)
 
 def test_cache_status_reaches_ledger(routed_env, monkeypatch):
     """QA blocker 2: second identical request logs cache_status='exact_hit'."""
