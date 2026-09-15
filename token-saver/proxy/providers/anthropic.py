@@ -167,8 +167,21 @@ class AnthropicAdapter:
             return StreamEvent(kind="malformed", raw_line=line)
 
         etype = data.get("type")
+        if etype == "content_block_start":
+            block = data.get("content_block") or {}
+            if block.get("type") == "tool_use":
+                # tool_use header: id + name travel in the event payload
+                return StreamEvent(kind="tool_start",
+                                   delta_text=block.get("id", ""),
+                                   raw_line=block.get("name", ""))
+            return StreamEvent(kind="drop", raw_line="")
         if etype == "content_block_delta":
             d = data.get("delta") or {}
+            if d.get("type") == "input_json_delta":
+                # tool-call argument deltas: partial JSON string
+                return StreamEvent(kind="tool_delta",
+                                   delta_text=d.get("partial_json", ""),
+                                   raw_line=line)
             return StreamEvent(kind="delta", delta_text=d.get("text", ""), raw_line=line)
         if etype == "message_start":
             u = (data.get("message") or {}).get("usage") or {}

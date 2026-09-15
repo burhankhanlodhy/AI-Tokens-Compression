@@ -42,6 +42,10 @@ ANTHROPIC_SSE = "\n".join([
     "",
     'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"lo world"}}',
     "",
+    'data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"get_weather"}}',
+    "",
+    'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"city\\": \\"Paris\\"}"}}',
+    "",
     'event: message_delta',
     'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":9}}',
     "",
@@ -129,6 +133,18 @@ def test_anthropic_stream_translated_to_openai_chunks(streaming_env):
     text = "".join(e["choices"][0]["delta"].get("content", "")
                    for e in events if e.get("choices"))
     assert text == "Hello world", repr(text)
+
+    # tool-call deltas survive as OpenAI tool_calls fragments (C4)
+    tool_headers = [tc for e in events for tc in
+                    (e.get("choices") or [{}])[0].get("delta", {}).get("tool_calls", [])
+                    if tc.get("id")]
+    assert tool_headers and tool_headers[0]["id"] == "toolu_1"
+    assert tool_headers[0]["function"]["name"] == "get_weather"
+    tool_args = "".join(tc["function"].get("arguments", "")
+                        for e in events for tc in
+                        (e.get("choices") or [{}])[0].get("delta", {}).get("tool_calls", [])
+                        if "function" in tc and "arguments" in tc.get("function", {}))
+    assert tool_args == '{"city": "Paris"}', repr(tool_args)
 
     # exactly one [DONE] terminator, at the end
     done_count = sum(1 for blk in raw.split("\n\n")

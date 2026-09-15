@@ -450,6 +450,7 @@ async def _relay(
             anthropic = AnthropicAdapter()
             usage_acc: dict = {}
             done_sent = False
+            openai_tool_index = 0  # OpenAI tool_calls index counter
             try:
                 async for line in resp.aiter_lines():
                     if not line.strip():
@@ -460,6 +461,36 @@ async def _relay(
                     if ev.kind == "malformed":
                         # surfaced as an SSE comment so nothing is silently lost
                         yield (f": tokensaver: unparseable upstream event dropped\n\n").encode()
+                        continue
+                    if ev.kind == "tool_start":
+                        # content_block_start with tool_use -> OpenAI tool_call header
+                        chunk = {
+                            "id": "chatcmpl-tokensaver",
+                            "object": "chat.completion.chunk",
+                            "model": model,
+                            "choices": [{"index": 0, "delta": {
+                                "tool_calls": [{"index": openai_tool_index,
+                                                 "id": ev.delta_text or "",
+                                                 "type": "function",
+                                                 "function": {"name": ev.raw_line or "",
+                                                              "arguments": ""}}]},
+                                "finish_reason": None}],
+                        }
+                        openai_tool_index += 1
+                        yield f"data: {json.dumps(chunk)}\n\n".encode()
+                        continue
+                    if ev.kind == "tool_delta" and ev.delta_text is not None:
+                        # argument fragment -> OpenAI tool_calls arguments delta
+                        chunk = {
+                            "id": "chatcmpl-tokensaver",
+                            "object": "chat.completion.chunk",
+                            "model": model,
+                            "choices": [{"index": 0, "delta": {
+                                "tool_calls": [{"index": max(openai_tool_index - 1, 0),
+                                                 "function": {"arguments": ev.delta_text}}]},
+                                "finish_reason": None}],
+                        }
+                        yield f"data: {json.dumps(chunk)}\n\n".encode()
                         continue
                     if ev.kind == "delta" and ev.delta_text:
                         collected.append(ev.delta_text)
