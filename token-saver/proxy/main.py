@@ -12,6 +12,7 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Request
@@ -29,6 +30,7 @@ from .counting import (
     inject_conciseness,
 )
 from .dashboard import _render_stats_html
+from .dashboard_v2 import render_shell
 from .kpis import kpis_endpoint
 from . import caching
 from .providers.registry import PREFIX_ROUTES, DEFAULT_REGISTRY
@@ -355,6 +357,20 @@ async def metrics(format: str = "text"):
 async def health_ok():
     """Simple health check; return 200."""
     return {"status": "ok"}
+
+
+# --- PA-3: 4-tab dashboard (server-rendered shell + Chart.js) ---
+
+@app.get("/dashboard")
+async def dashboard():
+    """Four-tab dashboard shell; data loaded client-side from /api/kpis only."""
+    return HTMLResponse(render_shell())
+
+
+@app.get("/static/dashboard.js")
+async def dashboard_js():
+    js_path = Path(__file__).resolve().parent / "static" / "dashboard.js"
+    return PlainTextResponse(js_path.read_text(), media_type="application/javascript")
 
 
 @app.get("/api/kpis")
