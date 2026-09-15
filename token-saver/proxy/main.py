@@ -120,11 +120,17 @@ async def lifespan(app: FastAPI) -> Iterator[None]:
 app = FastAPI(title="token-saver proxy", lifespan=lifespan)
 
 
+PROXY_CONTROL_HEADERS = {
+    "x-token-saver-conciseness",  # P1-1 benchmark A/B control — internal only
+}
+
+
 def _forward_headers(request: Request) -> dict[str, str]:
-    """Pass through auth + content type; drop hop-by-hop headers."""
+    """Pass through auth + content type; drop hop-by-hop and proxy-control
+    headers (control headers must never leak upstream, C2)."""
     headers = {}
     for name, value in request.headers.items():
-        if name.lower() not in HOP_BY_HOP:
+        if name.lower() not in HOP_BY_HOP and name.lower() not in PROXY_CONTROL_HEADERS:
             headers[name] = value
     return headers
 
@@ -331,6 +337,15 @@ async def chat_completions(request: Request):
         logger.exception("cache lookup failed; continuing with cache_status=miss")
         cache_status = "miss"
 
+    # --- Output-conciseness control (P1-1) ---
+    # Precedence: per-request header (benchmark A/B arms) > config default.
+    # The benchmark arms MUST be able to force baseline (off) vs treatment (on)
+    # regardless of the deployment default; the header never leaks upstream.
+    conciseness_on = s.output_conciseness_enabled
+    hdr = request.headers.get("x-token-saver-conciseness")
+    if hdr is not None:
+        conciseness_on = hdr.strip().lower() in ("1", "true", "yes", "on")
+
     # --- Phase 4: task-aware routing ---
     route = classify(messages) if s.compression_enabled else "passthrough"
 
@@ -343,7 +358,7 @@ async def chat_completions(request: Request):
         # --- Phase 5: output-side conciseness ---
         # Only worth the extra system-message tokens when there's actually
         # compressible content — otherwise it's pure input-token overhead.
-        if s.output_conciseness_enabled and has_compressible_content(messages):
+        if conciseness_on and has_compressible_content(messages):
             new_messages = inject_conciseness(new_messages)
         if new_messages != messages:
             compressed = any(
