@@ -81,5 +81,5 @@ def test_no_header_keeps_config_default(routed):
                          "messages": [{"role": "user", "content": LONG_USER}]})
         assert r.status_code == 200
     body = json.loads(cap.requests[0].content)
-    # default config: output_conciseness_enabled=true -> instruction present
-    assert "concisely" in json.dumps(body["messages"]).lower()
+    # default config after P1-1: output_conciseness_enabled=false -> absent
+    assert "concisely" not in json.dumps(body["messages"]).lower()
