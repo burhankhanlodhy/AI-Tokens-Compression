@@ -79,6 +79,10 @@ class Settings(BaseSettings):
         "summarize what you are about to say, and do not add filler or "
         "unnecessary caveats. Skip preamble and postamble."
     )
+    # P1-1 category/length-aware gate: the benchmark (run 20260915T040955Z)
+    # showed injection is net-negative on short prompts. Only inject when the
+    # last user message is at least this many characters.
+    conciseness_min_user_chars: int = 400
 
     # --- Classifier thresholds ---
     code_symbol_density_threshold: float = 0.05  # ratio of code-ish chars to trigger passthrough

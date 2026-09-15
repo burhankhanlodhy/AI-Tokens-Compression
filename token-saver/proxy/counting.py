@@ -67,6 +67,32 @@ def extract_output_text_from_sse_chunk(chunk_json: dict[str, Any]) -> str:
     return "".join(parts)
 
 
+def should_inject_conciseness(messages: list[dict]) -> bool:
+    """Category/length-aware gate (P1-1 fix, evidence: run 20260915T040955Z).
+
+    The benchmark showed conciseness injection is net-negative on short
+    prompts — for short user questions the injected instruction (plus the
+    model elaborating) costs more output than it saves. Gate:
+
+    - The LAST user message must be long enough that output dominates the
+      fixed instruction overhead (>= CONCISENESS_MIN_USER_CHARS chars).
+    - Short factual-style questions (heuristic: ends with '?' AND under a
+      hard length cap) are excluded — the data showed QA-style short prompts
+      get LONGER with the instruction attached.
+    """
+    user_msgs = [m for m in messages if m.get("role") == "user"]
+    if not user_msgs:
+        return False
+    last = user_msgs[-1].get("content", "")
+    if not isinstance(last, str):
+        return False
+    s = get_settings()
+    if len(last) < s.conciseness_min_user_chars:
+        return False
+    is_short_question = last.strip().endswith("?") and len(last) < 400
+    return not is_short_question
+
+
 def inject_conciseness(messages: list[dict]) -> list[dict]:
     """Prepend (or merge into) a system message discouraging padding.
 

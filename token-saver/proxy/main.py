@@ -28,6 +28,7 @@ from .counting import (
     count_text,
     extract_output_text_from_sse_chunk,
     inject_conciseness,
+    should_inject_conciseness,
 )
 from .dashboard import _render_stats_html
 from .dashboard_v2 import render_shell
@@ -356,9 +357,10 @@ async def chat_completions(request: Request):
         # --- Phase 3: input compression ---
         new_messages = compress_messages(messages)
         # --- Phase 5: output-side conciseness ---
-        # Only worth the extra system-message tokens when there's actually
-        # compressible content — otherwise it's pure input-token overhead.
-        if conciseness_on and has_compressible_content(messages):
+        # Category/length-aware gate (P1-1 evidence): inject only when the
+        # user's actual request is long enough for the instruction to pay
+        # for itself; short prompts are net-negative.
+        if conciseness_on and should_inject_conciseness(new_messages):
             new_messages = inject_conciseness(new_messages)
         if new_messages != messages:
             compressed = any(
