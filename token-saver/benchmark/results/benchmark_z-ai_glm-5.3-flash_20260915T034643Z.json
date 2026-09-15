@@ -1,0 +1,382 @@
+{
+  "timestamp": "2026-09-15T03:46:43.226133+00:00",
+  "fixture_checksum": "102d1081cc4285ba6787a87ccb5a8964f0510b882d0717f948f3935943fc07d9",
+  "n_fixture": 40,
+  "n_valid": 0,
+  "model": "z-ai/glm-5.3-flash",
+  "mean_output_reduction_pct": 0.0,
+  "ci95_halfwidth": 0.0,
+  "ci95_interval": [
+    0.0,
+    0.0
+  ],
+  "meets_15pct": false,
+  "quality_parity": {
+    "n_judged": 0,
+    "n_regressions_over_1pt": 0,
+    "parity_holds": false
+  },
+  "ac_p1c_floor_note": "If >= 15% at parity is unachievable, the honest achieved number >= 10% ships instead (AC-P1c).",
+  "results": [
+    {
+      "id": "conv-001",
+      "category": "conversational",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "conv-002",
+      "category": "conversational",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "conv-003",
+      "category": "conversational",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "conv-004",
+      "category": "conversational",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "conv-005",
+      "category": "conversational",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "conv-006",
+      "category": "conversational",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "conv-007",
+      "category": "conversational",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "conv-008",
+      "category": "conversational",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "conv-009",
+      "category": "conversational",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "conv-010",
+      "category": "conversational",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "qa-011",
+      "category": "qa",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "qa-012",
+      "category": "qa",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "qa-013",
+      "category": "qa",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "qa-014",
+      "category": "qa",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "qa-015",
+      "category": "qa",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "qa-016",
+      "category": "qa",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "qa-017",
+      "category": "qa",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "qa-018",
+      "category": "qa",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "qa-019",
+      "category": "qa",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "qa-020",
+      "category": "qa",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "rag-021",
+      "category": "rag",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "rag-022",
+      "category": "rag",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "rag-023",
+      "category": "rag",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "rag-024",
+      "category": "rag",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "rag-025",
+      "category": "rag",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "rag-026",
+      "category": "rag",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "rag-027",
+      "category": "rag",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "rag-028",
+      "category": "rag",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "rag-029",
+      "category": "rag",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "rag-030",
+      "category": "rag",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "code-031",
+      "category": "code",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "code-032",
+      "category": "code",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "code-033",
+      "category": "code",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "code-034",
+      "category": "code",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "code-035",
+      "category": "code",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "code-036",
+      "category": "code",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "code-037",
+      "category": "code",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "code-038",
+      "category": "code",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "code-039",
+      "category": "code",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    },
+    {
+      "id": "code-040",
+      "category": "code",
+      "baseline_tokens": 0,
+      "treatment_tokens": 0,
+      "baseline_ok": false,
+      "treatment_ok": false,
+      "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
+    }
+  ]
+}
