@@ -117,14 +117,14 @@
 
   function renderProviders(d) {
     var rows = d.by_provider.map(function (p) {
-      var hitPct = p.requests ? Math.round(100 * p.cache_hits / p.requests) : 0;
-      var errPct = p.requests ? Math.round(100 * p.errors / p.requests) : 0;
+      var errBadge = p.error_pct > 0 ? '<span class="badge red">' + p.error_pct + "%</span>"
+                                     : '<span class="badge green">0%</span>';
       return '<div class="card span6"><h3>' + p.provider + "</h3>" +
         '<div class="kpi-num">' + fmt(p.requests) + ' <span style="font-size:.9rem;color:var(--muted)">requests</span></div>' +
         "<p>Tokens saved: <strong>" + fmt(p.tokens_saved) + "</strong><br>" +
         "Cost saved: <strong>" + money(p.cost_saved) + "</strong><br>" +
-        'Cache hits: <strong>' + p.cache_hits + "</strong> (" + hitPct + "%) " +
-        (errPct > 0 ? 'Errors: <span class="badge red">' + errPct + "%</span>" : 'Errors: <span class="badge green">0%</span>') +
+        "Cache hits: <strong>" + p.cache_hits + "</strong> (" + p.cache_hit_pct + "%) " +
+        "Errors: " + errBadge +
         "</p></div>";
     });
     content.innerHTML = '<div class="grid">' +

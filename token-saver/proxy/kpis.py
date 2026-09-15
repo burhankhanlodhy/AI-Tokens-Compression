@@ -138,7 +138,10 @@ def _fetch_kpis(bucket: str, from_iso: str | None, to_iso: str | None) -> dict[s
         by_provider = [
             {"provider": r[0], "requests": int(r[1]),
              "tokens_saved": int(r[2] or 0), "cost_saved": float(r[3] or 0),
-             "cache_hits": int(r[4] or 0), "errors": int(r[5] or 0)}
+             "cache_hits": int(r[4] or 0),
+             "cache_hit_pct": round(100 * int(r[4] or 0) / r[1], 2) if r[1] else 0.0,
+             "errors": int(r[5] or 0),
+             "error_pct": round(100 * int(r[5] or 0) / r[1], 2) if r[1] else 0.0}
             for r in cur.fetchall()
         ]
 
