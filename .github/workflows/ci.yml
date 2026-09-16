@@ -51,7 +51,19 @@ jobs:
         env:
           TOKEN_SAVER_PG_BASE: postgresql://postgres:ci-password@localhost:5432
           TOKEN_SAVER_PG_DSN: postgresql://postgres:ci-password@localhost:5432/postgres
-        run: python -m pytest -q
+        run: |
+          python -m pytest -q --junitxml=/tmp/pytest-standard.xml
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse('/tmp/pytest-standard.xml').getroot()
+          totals = {key: sum(int(s.attrib.get(key, 0)) for s in root.findall('.//testsuite'))
+                    for key in ('tests', 'failures', 'errors', 'skipped')}
+          executed = totals['tests'] - totals['skipped']
+          print(f"standard suite: executed={executed} passed={totals['tests'] - totals['failures'] - totals['errors'] - totals['skipped']} skipped={totals['skipped']} failures={totals['failures']} errors={totals['errors']}")
+          if executed < 213 or totals['skipped']:
+              raise SystemExit('executed test floor violated: expected at least 213 non-skipped tests')
+          PY
 
       - name: Run reverse-order suite
         working-directory: token-saver
@@ -59,5 +71,16 @@ jobs:
           TOKEN_SAVER_PG_BASE: postgresql://postgres:ci-password@localhost:5432
           TOKEN_SAVER_PG_DSN: postgresql://postgres:ci-password@localhost:5432/postgres
         run: |
-          mapfile -t tests < <(find test -maxdepth 1 -type f -name 'test_*.py' -printf '%p\n' | sort -r)
-          python -m pytest -q "${tests[@]}"
+          mapfile -t tests < <(printf '%s\n' test/test_*.py | sort -r)
+          python -m pytest -q --junitxml=/tmp/pytest-reverse.xml "${tests[@]}"
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse('/tmp/pytest-reverse.xml').getroot()
+          totals = {key: sum(int(s.attrib.get(key, 0)) for s in root.findall('.//testsuite'))
+                    for key in ('tests', 'failures', 'errors', 'skipped')}
+          executed = totals['tests'] - totals['skipped']
+          print(f"reverse suite: executed={executed} passed={totals['tests'] - totals['failures'] - totals['errors'] - totals['skipped']} skipped={totals['skipped']} failures={totals['failures']} errors={totals['errors']}")
+          if executed < 213 or totals['skipped']:
+              raise SystemExit('executed test floor violated: expected at least 213 non-skipped tests')
+          PY
