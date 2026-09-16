@@ -207,33 +207,76 @@ def test_passthrough_reaches_upstream_byte_identical(
     assert captured["body"]["messages"][0]["content"] == content
 
 
+# ---------------------------------------------------------------- B2 P1 (QA):
+# L1 is lossless and therefore has its own eligibility gate. It must run on
+# the real production path even when the raw request is classified passthrough;
+# the route gate remains responsible for lossy compression only. These are
+# deliberately pinned corpus rows, not hand-written helper fixtures, so a
+# route-gating regression makes the production yield visibly return to zero.
+PINNED_PRODUCTION_CASES = (
+    ("rag-001", "rag"),
+    ("json_doc-001", "json_doc"),
+    ("system_dup-001", "system_dup"),
+)
+
+
+def _pinned_production_case(fixture_id: str, category: str) -> dict:
+    import hashlib
+
+    fixtures = Path(__file__).resolve().parent.parent / "benchmark" / "fixtures"
+    fixture_file = fixtures / "l1_prompts.json"
+    checksum_file = fixtures / "l1_prompts.json.sha256"
+    expected = checksum_file.read_text().split()[0].strip()
+    actual = hashlib.sha256(fixture_file.read_bytes()).hexdigest()
+    assert actual == expected, "pinned L1 fixture checksum mismatch"
+    prompts = json.loads(fixture_file.read_text())["prompts"]
+    matches = [p for p in prompts if p["id"] == fixture_id]
+    assert len(matches) == 1, f"expected exactly one pinned fixture: {fixture_id}"
+    prompt = matches[0]
+    assert prompt["category"] == category
+    return prompt
+
+
 @pytest.mark.asyncio
-async def test_l1_still_runs_for_compress_route(l1_env, monkeypatch):
-    """Guard: the passthrough gate must not kill L1 on compress routes."""
-    monkeypatch.setenv("L1_ENABLED", "true")
-    get_settings.cache_clear()
-    captured: dict = {}
+@pytest.mark.parametrize(
+    ("fixture_id", "category"),
+    PINNED_PRODUCTION_CASES,
+    ids=[fixture_id for fixture_id, _ in PINNED_PRODUCTION_CASES],
+)
+async def test_l1_reduces_pinned_corpus_on_real_production_path(
+        capturing, fixture_id, category):
+    """AC-P1e/f guard: each representative passthrough corpus row is reduced.
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["body"] = json.loads(request.content)
-        return httpx.Response(200, json=UPSTREAM_RESPONSE)
+    The request is sent through the ASGI handler and checked at the captured
+    upstream boundary. This must not be replaced by a direct clean_messages()
+    assertion: that was the false-green gap which hid zero customer-facing
+    yield on the pinned corpus.
+    """
+    from proxy.classifier import classify
+    from proxy.counting import count_messages
+    from proxy.l1_clean import clean_messages
 
-    app = _app(handler)
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
-    ) as c:
-        # conversational prose with duplicate system blocks -> compress route
-        resp = await c.post(
-            "/v1/chat/completions",
-            headers={"Authorization": "Bearer test-key-123"},
-            json={"model": "gpt-4o-mini", "messages": [
-                {"role": "system", "content": "You are terse."},
-                {"role": "system", "content": "You are terse."},
-                {"role": "user", "content": "Summarize the meeting notes for me please."},
-            ]},
-        )
-    await app.state.http.aclose()
+    prompt = _pinned_production_case(fixture_id, category)
+    messages = prompt["messages"]
+    assert classify(messages) == "passthrough", fixture_id
+    before = count_messages(messages, "gpt-4o")
+    expected_messages = clean_messages(messages)
+    expected_after = count_messages(expected_messages, "gpt-4o")
+    assert expected_after < before, f"fixture has no L1 reduction: {fixture_id}"
+
+    from proxy import stats
+    stats.init_db()
+    c, captured = capturing
+    resp = await c.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-key-123"},
+        json={"model": "gpt-4o", "messages": messages},
+    )
     assert resp.status_code == 200
-    contents = [m["content"] for m in captured["body"]["messages"]]
-    assert contents == ["You are terse.",
-                        "Summarize the meeting notes for me please."]
+    sent_messages = captured["body"]["messages"]
+
+    # Wire-level production assertion: upstream receives the L1-cleaned
+    # payload, and its real tokenizer count is lower than the raw request.
+    assert sent_messages == expected_messages, fixture_id
+    assert count_messages(sent_messages, "gpt-4o") < before, fixture_id
+    assert count_messages(sent_messages, "gpt-4o") == expected_after, fixture_id
