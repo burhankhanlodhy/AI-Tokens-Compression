@@ -162,6 +162,52 @@
       }
     }
   },
+  "production_path": {
+    "ordering": "classify(raw) -> route gate -> clean_messages",
+    "strippable4": {
+      "before": 44483,
+      "after": 13184,
+      "reduction_pct": 70.4,
+      "routed_compress": 0
+    },
+    "control": {
+      "before": 155,
+      "after": 155,
+      "reduction_pct": 0.0
+    },
+    "per_category": {
+      "control": {
+        "before": 155,
+        "after": 155,
+        "reduction_pct": 0.0,
+        "routed_compress": 6
+      },
+      "json_doc": {
+        "before": 1682,
+        "after": 1166,
+        "reduction_pct": 30.7,
+        "routed_compress": 0
+      },
+      "log_trace": {
+        "before": 5362,
+        "after": 4354,
+        "reduction_pct": 18.8,
+        "routed_compress": 0
+      },
+      "rag": {
+        "before": 22050,
+        "after": 4415,
+        "reduction_pct": 80.0,
+        "routed_compress": 0
+      },
+      "system_dup": {
+        "before": 15389,
+        "after": 3249,
+        "reduction_pct": 78.9,
+        "routed_compress": 0
+      }
+    }
+  },
   "customer_facing_claim": {
     "conservative": "C1 JSON-whitespace compaction only: 29.9% input-token reduction on RAG/JSON-heavy categories",
     "upside": "full cleaner (C1+C2+C3): 70.4%; C3 dead-metadata drop is the dominant driver and is stated separately, not blended into the published claim"

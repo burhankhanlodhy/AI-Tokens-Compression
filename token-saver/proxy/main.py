@@ -347,11 +347,15 @@ async def chat_completions(request: Request):
     # entry with an identical clean prompt. l1_tokens_stripped is the
     # tokenizer delta of the clean step only (never blended with cache or
     # compression savings; DBA B3 attributes it separately in the ledger).
+    # Taxonomy v1.2 §5 (ruling A): L1 has its OWN eligibility gate
+    # (l1_eligible, shared with the benchmark harness) — independent of the
+    # lossy router. The route variable governs lossy compression only.
     from .l1_clean import clean_messages as _l1_clean_messages
+    from .l1_clean import l1_eligible as _l1_eligible
 
     l1_tokens_stripped = 0
     l1_applied = False
-    if s.l1_enabled and messages and route != "passthrough":
+    if s.l1_enabled and _l1_eligible(messages, route):
         l1_before = count_messages(messages, model)
         l1_messages = _l1_clean_messages(messages)
         l1_after = count_messages(l1_messages, model)

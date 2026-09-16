@@ -70,17 +70,20 @@ def measure(prompts: list[dict], c1: bool, c2: bool, c3: bool) -> dict:
 
 
 def measure_production_path(prompts: list[dict]) -> dict:
-    """End-to-end column: classify(raw) -> route gate -> clean, mirroring
-    main.py's ordering. passthrough routes reach upstream byte-identical,
-    so their 'after' is the untouched before-count (L1 never runs there)."""
+    """End-to-end column: classify(raw) -> l1_eligible gate -> clean,
+    mirroring main.py's ordering via the SHARED predicate (taxonomy v1.2
+    §5, ruling A — no hardcoded route shortcut here; re-introducing the
+    route gate inside proxy.l1_clean.l1_eligible alone must zero this
+    column)."""
     from proxy.classifier import classify
+    from proxy.l1_clean import l1_eligible
 
     per_cat: dict[str, list[int]] = {}
     routed: dict[str, int] = {}
     for p in prompts:
         route = classify(p["messages"])
         b = count_messages(p["messages"], MODEL)
-        if route == "passthrough":
+        if not l1_eligible(p["messages"], route):
             a = b
         else:
             a = count_messages(clean_messages(p["messages"]), MODEL)

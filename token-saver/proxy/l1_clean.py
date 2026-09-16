@@ -240,3 +240,22 @@ def clean_messages(
         out.append({**msg, "content": cleaned} if cleaned is not content
                    else msg)
     return out
+
+
+def l1_eligible(messages: list[dict] | None, route: str) -> bool:
+    """Taxonomy v1.2 §5 (ruling A): L1's own eligibility gate, independent
+    of the lossy compress/passthrough router.
+
+    L1 is a LOSSLESS transform, so it may run on passthrough-classified
+    content — byte-identity to upstream is only guaranteed for lossy
+    compression on all content and for L1 on CODE content; L1 on JSON/RAG
+    carries the round-trip reversibility guarantee instead (AC-P1f).
+    `route` is accepted (and asserted compress/passthrough) so callers pass
+    the classifier output they already hold; re-introducing the route gate
+    HERE (e.g. `and route != "passthrough"`) must drop --production-path
+    end-to-end yield to 0.0% — that sensitivity is the point of the shared
+    predicate: one gate, imported by main.py AND the benchmark harness.
+    """
+    if route not in ("compress", "passthrough"):
+        return False
+    return bool(messages)
