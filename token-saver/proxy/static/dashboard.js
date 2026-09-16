@@ -32,6 +32,36 @@
     return '<div class="card ' + span + '"><h3>' + title + "</h3>" + inner + "</div>";
   }
 
+  /* ---------------- Savings breakdown (a1eae90 decomposition contract) ------
+   * Headline = cost_saved ALONE. L1 and cache render only as contained
+   * annotations OF that total — separate tiles, never merged, never summed.
+   * Every value is read 1:1 from /api/kpis (AC-A8); the only client-side
+   * computation is the bar width (geometry), never a displayed number. */
+  function l1SubTile(ov) {
+    if (!ov.l1_tokens_stripped) {
+      return '<div class="subtile l1-zero"><span class="zero-dash">—</span> ' +
+        "No structural (L1) savings this window</div>";
+    }
+    var width = ov.cost_saved > 0 ? Math.min(100, 100 * ov.l1_cost_saved / ov.cost_saved) : 0;
+    return '<div class="subtile">' +
+      '<div class="lead">of which L1 structural</div>' +
+      '<div class="subrow"><span>Tokens stripped</span><strong>' + fmt(ov.l1_tokens_stripped) + " tokens</strong></div>" +
+      '<div class="subrow"><span>Cost saved</span><strong>' + money(ov.l1_cost_saved) + '</strong> <span class="muted-note">portion of total</span></div>' +
+      '<div class="bar-total" title="L1 portion of total cost saved"><div class="bar-l1" style="width:' + width + '%"></div></div>' +
+      "</div>";
+  }
+
+  function cacheSubTile(ov) {
+    if (!ov.cache_savings) {
+      return '<div class="subtile l1-zero"><span class="zero-dash">—</span> ' +
+        "No exact-prefix cache savings this window</div>";
+    }
+    return '<div class="subtile">' +
+      '<div class="lead">of which exact-prefix cache</div>' +
+      '<div class="subrow"><span>Cache savings</span><strong>' + money(ov.cache_savings) + '</strong> <span class="muted-note">reported separately (AC-A6)</span></div>' +
+      "</div>";
+  }
+
   function lineChart(id, labels, data, label, color) {
     var el = document.getElementById(id);
     if (!el) return;
@@ -75,13 +105,25 @@
   function renderOverview(d) {
     var ov = d.overview;
     var labels = d.series.map(function (s) { return s.bucket; });
+    var last = d.series.length ? d.series[d.series.length - 1] : null;
+    var prev = d.series.length > 1 ? d.series[d.series.length - 2] : null;
+    var deltaHtml = null, deltaDir = "";
+    if (last && prev) {
+      var diff = last.cost_saved - prev.cost_saved;
+      deltaDir = diff >= 0 ? "up" : "down";
+      deltaHtml = (diff >= 0 ? "▲ " : "▼ ") + money(Math.abs(diff)) + " vs prior bucket";
+    }
     var html = '<div class="grid">' +
       kpiCard("Requests", fmt(ov.requests), null, null, null) +
       kpiCard("Tokens saved", fmt(ov.input_tokens_saved), ov.savings_pct + "% of input", "up", "sp-tokens") +
-      kpiCard("Est. cost saved", money(ov.cost_saved), "cache: " + money(ov.cache_savings) + " (separate)", "up", "sp-cost") +
+      kpiCard("Est. cost saved", money(ov.cost_saved), deltaHtml, deltaDir, "sp-cost") +
       kpiCard("Effective savings %", ov.savings_pct + "%", "cache hit " + ov.cache_hit_pct + "%", "up", null) +
+      '<div class="card span6"><h3>Savings breakdown</h3>' +
+        '<p class="breakdown-note">Headline total is cost saved; the tiles below are labeled portions of it — never added to it.</p>' +
+        l1SubTile(ov) + cacheSubTile(ov) +
+      "</div>" +
       chartCard("Savings over time", "span6", '<div class="chart-wrap"><canvas id="c-savings"></canvas></div>') +
-      chartCard("Spend per model (cost before)", "span6", '<div class="chart-wrap"><canvas id="c-models"></canvas></div>') +
+      chartCard("Spend per model (cost before)", "span12", '<div class="chart-wrap"><canvas id="c-models"></canvas></div>') +
       '<div class="card span12"><h3>Recent buckets</h3><table><thead><tr><th>Bucket</th><th>Requests</th><th>Tokens saved</th><th>Cost saved</th><th>Cache savings</th><th>Errors</th></tr></thead><tbody>' +
       d.series.slice(-25).map(function (s) {
         return "<tr><td>" + s.bucket + "</td><td>" + fmt(s.requests) + "</td><td>" +
@@ -119,10 +161,15 @@
     var rows = d.by_provider.map(function (p) {
       var errBadge = p.error_pct > 0 ? '<span class="badge red">' + p.error_pct + "%</span>"
                                      : '<span class="badge green">0%</span>';
+      var l1Line = p.l1_tokens_stripped
+        ? "L1 structural: <strong>" + fmt(p.l1_tokens_stripped) + " tokens</strong>, " +
+          money(p.l1_cost_saved) + ' <span class="muted-note">portion of cost saved</span>'
+        : 'L1 structural: <span class="zero-dash">—</span>';
       return '<div class="card span6"><h3>' + p.provider + "</h3>" +
         '<div class="kpi-num">' + fmt(p.requests) + ' <span style="font-size:.9rem;color:var(--muted)">requests</span></div>' +
         "<p>Tokens saved: <strong>" + fmt(p.tokens_saved) + "</strong><br>" +
         "Cost saved: <strong>" + money(p.cost_saved) + "</strong><br>" +
+        l1Line + "<br>" +
         "Cache hits: <strong>" + p.cache_hits + "</strong> (" + p.cache_hit_pct + "%) " +
         "Errors: " + errBadge +
         "</p></div>";

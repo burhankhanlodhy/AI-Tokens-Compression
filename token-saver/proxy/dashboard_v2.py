@@ -64,6 +64,22 @@ th { color: var(--muted); font-size: .75rem; text-transform: uppercase; }
          font-size: .75rem; }
 .badge.red { background: rgba(229,72,77,.15); color: var(--red); }
 .badge.green { background: rgba(53,194,143,.15); color: var(--green); }
+/* Savings breakdown panel (a1eae90 decomposition contract): L1 and cache
+   render as contained sub-tiles of the cost_saved total — never summed. */
+.breakdown-note { color: var(--muted); font-size: .8rem; margin: 0 0 .6rem; }
+.subtile { border: 1px solid var(--border); border-radius: 8px;
+           padding: .6rem .8rem; margin-top: .6rem; }
+.subtile.l1-zero { color: var(--muted); }
+.subtile .lead { color: var(--muted); font-size: .72rem; font-weight: 600;
+                 text-transform: uppercase; letter-spacing: .04em; margin-bottom: .35rem; }
+.subrow { display: flex; align-items: baseline; gap: .5rem; padding: .1rem 0; }
+.subrow span:first-child { color: var(--muted); flex: 0 0 9rem; }
+.muted-note { color: var(--muted); font-size: .75rem; }
+.zero-dash { font-weight: 700; }
+.bar-total { position: relative; height: 10px; border-radius: 999px;
+             background: var(--accent); overflow: hidden; margin-top: .55rem; }
+.bar-l1 { position: absolute; left: 0; top: 0; bottom: 0;
+          background: var(--gold); }
 @media (max-width: 900px) { .span3 { grid-column: span 6; } .span6 { grid-column: span 12; } }
 </style>
 </head>
