@@ -1,13 +1,9 @@
 """L1 lossless structural cleanup (Phase B, B2).
 
-Pure deterministic transform per l1-taxonomy.md (B1, commit c0b3565) with the
-PM-ruled amendment: provenance fields (source/title/url/path/filename/page/
-page_number/collection/index_name/chunk_id/doc_id/passage_id/source_id) are on
-the NEGATIVE list — never stripped — because they are answer-bearing whenever
-the question asks for attribution (PM ruling on rag-005, PM-verified 83.2%
-vs 86.0% tradeoff).
+Pure deterministic transform per l1-taxonomy.md **v1.1** (B1, commits
+c0b3565 + 105a832). Implements the v1.1 §4 dead list and §5 negative list
+exactly:
 
-Rules implemented (taxonomy §4):
 - C1: JSON whitespace compaction — eligible blocks (whole content parses as
   JSON object/array, or every non-empty line is a JSON object = JSON-lines)
   re-serialized compact, key order preserved, values byte-unchanged.
@@ -15,9 +11,17 @@ Rules implemented (taxonomy §4):
   empty/whitespace-only systems).
 - C3: dead retrieval/RAG metadata drop — shape-gated: only inside objects
   that have a reserved content sibling (content/text/answer/passage/doc).
+  Dead list (v1.1): scoring math, embedding/float-arrays >32, char/token
+  locators, harness/query-log plumbing, and empty containers.
 
-Negative list (§5) holds: prose, tool defs, images, non-RAG JSON fields,
-key order, non-adjacent systems, passthrough routes are never touched.
+Negative list (§5, v1.1 — L1 MUST NOT strip): prose, tool defs, images,
+key order, non-adjacent systems, passthrough routes, fields inside
+non-RAG-shaped JSON, the user's literal `query` field, timestamps
+(created_at/updated_at/modified_at/expires_at/retrieved_at — a question may
+ask which is newest), provenance/citation fields (source/title/url/path/
+filename/bucket/collection/index_name/page/page_number/chunk_id/chunk_index/
+block_id/doc_id/passage_id/source_id/id), and object-valued wrappers
+(metadata/attributes/tags/custom/raw) capable of carrying them.
 
 Contract (§6): output depends only on input bytes; clean is idempotent;
 clean(x) == y reproducible across runs/processes. No clocks, RNG, config
@@ -29,41 +33,42 @@ import json
 from typing import Any
 
 # Reserved answer-bearing keys (taxonomy §4) — never dropped, never recursed.
-RESERVED_KEYS = {"content", "text", "answer", "passage", "doc"}
+RESERVED_KEYS = {"content", "text", "answer", "passage", "doc", "query"}
 
-# C3 dead fields (exact-name match) — AMENDED list: provenance moved to the
-# negative list per PM ruling (audit note pending in l1-taxonomy.md §4/§5).
+# C3 dead fields (exact-name match), taxonomy v1.1 §4 — narrower than v1.0:
+# provenance, identifiers, and timestamps were moved to the negative list.
 DEAD_FIELDS = {
-    # retrieval plumbing
+    # scoring math
     "score", "relevance", "relevance_score", "similarity", "distance",
     "cosine", "rerank_score",
-    # locators (page/page_number are PROVENANCE now, not here)
-    "offset", "length", "char_start", "char_end", "token_start",
-    # bookkeeping
-    "timestamp", "created_at", "updated_at", "modified_at", "expires_at",
-    "retrieved_at",
-    # vectors / non-human-readable
-    "embedding", "vector", "vector_score",
-    # harness / query plumbing
+    # internal char/token locators (page locators are PROVENANCE, not here)
+    "char_start", "char_end", "token_start", "length", "offset",
+    # harness / query-log plumbing
     "retrieval", "pagination", "total", "limit", "next_page", "has_more",
     "request_id", "session_id", "generation", "query_id", "trace",
-    "span_id", "trace_id", "top_k", "latency_ms", "metric", "ts", "level",
+    "span_id", "latency_ms", "ts", "level",
 }
 
-# Provenance — NEGATIVE LIST (PM amendment): answer-bearing on attribution
-# questions; L1 must never strip these even inside RAG-shaped objects.
+# Provenance / citation fields — NEGATIVE LIST (v1.1 §5): conserved even
+# inside RAG-shaped objects; a question may ask the model to cite them.
 PROVENANCE_FIELDS = {
-    "source", "title", "url", "path", "filename", "page", "page_number",
-    "collection", "index_name", "chunk_id", "doc_id", "passage_id",
-    "source_id",
+    "source", "title", "url", "path", "filename", "bucket", "collection",
+    "index_name", "page", "page_number", "chunk_id", "chunk_index",
+    "block_id", "doc_id", "passage_id", "source_id", "id",
 }
 
-# Nested dead wrappers: dropped only when object-valued and empty after
-# cleaning their children (all leaves were dead).
+# Timestamps — NEGATIVE LIST (v1.1 §5): "which is newest" is answer-bearing.
+TIMESTAMP_FIELDS = {
+    "timestamp", "created_at", "updated_at", "modified_at", "expires_at",
+    "retrieved_at",
+}
+
+# Object-valued wrappers — NEGATIVE LIST (v1.1 §5): capable of carrying
+# provenance; never stripped, never recursed for dead drops.
 WRAPPER_FIELDS = {"metadata", "attributes", "tags", "custom", "raw"}
 
-# Float-array threshold: fields whose value is a >32-element all-numeric
-# array (embeddings) are dropped in RAG-shaped objects (taxonomy §4).
+# Float-array threshold: any float-array field with >32 numeric elements is
+# dead (taxonomy v1.1 §4 row 2).
 _FLOAT_ARRAY_MIN_LEN = 32
 
 _COMPACT = {"separators": (",", ":"), "ensure_ascii": False}
@@ -88,7 +93,8 @@ def _is_rag_shaped(obj: dict) -> bool:
 
 def _clean_obj(obj: Any, rag_scope: bool, c3: bool) -> Any:
     """Recursive C3 clean. rag_scope=True once inside a RAG-shaped object —
-    dead fields drop anywhere in that object graph (taxonomy §4)."""
+    dead fields drop anywhere in that object graph (taxonomy §4).
+    Negative-list fields are conserved even in RAG scope (v1.1)."""
     if isinstance(obj, list):
         return [_clean_obj(x, rag_scope, c3) for x in obj]
     if not isinstance(obj, dict):
@@ -101,16 +107,18 @@ def _clean_obj(obj: Any, rag_scope: bool, c3: bool) -> Any:
             out[k] = v  # reserved: byte-for-byte, no recursion, no drop
             continue
         if scope:
-            if k in PROVENANCE_FIELDS:
+            if k in PROVENANCE_FIELDS or k in TIMESTAMP_FIELDS:
                 out[k] = _clean_obj(v, scope, c3)
                 continue
-            if k in DEAD_FIELDS or k == "id":
-                continue  # id drops only with sibling content == scope
+            if k in WRAPPER_FIELDS:
+                # v1.1: wrappers conserved whole (may carry provenance)
+                out[k] = v
+                continue
+            if k in DEAD_FIELDS:
+                continue
             cv = _clean_obj(v, scope, c3)
             if _is_empty(cv) or _is_big_float_array(cv):
                 continue
-            if k in WRAPPER_FIELDS and cv in ({}, []):
-                continue  # all leaves were dead
             out[k] = cv
         else:
             out[k] = _clean_obj(v, False, c3)

@@ -76,11 +76,13 @@ async def test_upstream_receives_clean_messages(capturing):
     )
     assert resp.status_code == 200
     sent = captured["body"]["messages"][0]["content"]
+    # v1.1: retrieved_at is negative-list (timestamps conserved)
     assert sent == json.dumps(
-        {"content": "TTL default is 3600 seconds."}, separators=(",", ":"))
+        {"content": "TTL default is 3600 seconds.", "retrieved_at": "2026-09-14"},
+        separators=(",", ":"))
     # dead fields gone, reserved content intact
     obj = json.loads(sent)
-    assert "score" not in obj and "retrieved_at" not in obj
+    assert "score" not in obj
     assert obj["content"] == "TTL default is 3600 seconds."
 
 

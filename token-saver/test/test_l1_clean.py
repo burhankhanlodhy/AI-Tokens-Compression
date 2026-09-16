@@ -79,7 +79,7 @@ RAG_BLOCK = json.dumps({
     "source": "spec.md",
 }, indent=2)
 
-DEAD_GONE = {"score", "embedding", "retrieved_at"}
+DEAD_GONE = {"score", "embedding"}  # v1.1: retrieved_at is NEGATIVE-list (timestamps conserved)
 
 
 def test_c3_drops_dead_fields_in_rag_shaped_object():
