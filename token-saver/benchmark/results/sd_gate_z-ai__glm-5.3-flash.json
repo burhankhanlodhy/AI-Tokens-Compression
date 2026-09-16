@@ -1,0 +1,63 @@
+{
+  "schema": "sd_gate_v1",
+  "generated_at": "2026-09-16T00:08:22.109016+00:00",
+  "model": "z-ai/glm-5.3-flash",
+  "n_requested": 5,
+  "n_successful": 5,
+  "temperature": 0.0,
+  "conciseness": "disabled",
+  "base_url": "http://127.0.0.1:8010",
+  "samples": [
+    {
+      "completion_tokens": 3104,
+      "reasoning_tokens": 2438,
+      "words": 475,
+      "chars": 2780
+    },
+    {
+      "completion_tokens": 4558,
+      "reasoning_tokens": 3643,
+      "words": 629,
+      "chars": 3719
+    },
+    {
+      "completion_tokens": 3698,
+      "reasoning_tokens": 2919,
+      "words": 543,
+      "chars": 3282
+    },
+    {
+      "completion_tokens": 5254,
+      "reasoning_tokens": 4233,
+      "words": 732,
+      "chars": 4225
+    },
+    {
+      "completion_tokens": 3073,
+      "reasoning_tokens": 2142,
+      "words": 665,
+      "chars": 3841
+    }
+  ],
+  "summary": {
+    "mean": 3937.4,
+    "sd": 951.0041009375301,
+    "cv": 0.2415309851520115,
+    "n_for_80pct_at_0.15": 4.508578389504215,
+    "n_for_80pct_at_0.22": 3.0740307201165096,
+    "n_for_80pct_at_0.4": 1.6907168960640802
+  },
+  "reasoning_tokens_samples": [
+    2438,
+    3643,
+    2919,
+    4233,
+    2142
+  ],
+  "reasoning_separately_reported": true,
+  "c2_gate": {
+    "billed_cv": 0.2415309851520115,
+    "cv_lt_0.35": true,
+    "qualifies": true
+  }
+}
