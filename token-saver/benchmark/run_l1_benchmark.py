@@ -12,7 +12,15 @@ AC-P1e measurement + taxonomy §6 contract checks. Hard requirements:
   field preservation, provenance preservation (PM amendment).
 
 Usage: .venv/bin/python benchmark/run_l1_benchmark.py [--out results/]
+                                                    [--production-path]
 Exits non-zero on any contract violation or checksum mismatch.
+
+--production-path additionally measures the REAL production ordering:
+classify(raw) -> route gate -> clean_messages, exactly as main.py runs it.
+The results JSON then carries both transform-level and end-to-end columns,
+and the run FAILS if the two diverge beyond tolerance — production yield
+returning to zero while the transform-level number stays ~30% is exactly
+the silent divergence this mode exists to catch (B2 P1, PM board task).
 """
 from __future__ import annotations
 
@@ -61,9 +69,36 @@ def measure(prompts: list[dict], c1: bool, c2: bool, c3: bool) -> dict:
     return per_cat
 
 
+def measure_production_path(prompts: list[dict]) -> dict:
+    """End-to-end column: classify(raw) -> route gate -> clean, mirroring
+    main.py's ordering. passthrough routes reach upstream byte-identical,
+    so their 'after' is the untouched before-count (L1 never runs there)."""
+    from proxy.classifier import classify
+
+    per_cat: dict[str, list[int]] = {}
+    routed: dict[str, int] = {}
+    for p in prompts:
+        route = classify(p["messages"])
+        b = count_messages(p["messages"], MODEL)
+        if route == "passthrough":
+            a = b
+        else:
+            a = count_messages(clean_messages(p["messages"]), MODEL)
+        per_cat.setdefault(p["category"], [0, 0])
+        per_cat[p["category"]][0] += b
+        per_cat[p["category"]][1] += a
+        routed[p["category"]] = routed.get(p["category"], 0) + \
+            (1 if route == "compress" else 0)
+    return {"per_cat": per_cat, "routed_compress": routed}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(ROOT / "results"))
+    ap.add_argument("--production-path", action="store_true",
+                    help="also measure the end-to-end production ordering "
+                         "(classify -> route gate -> clean) and fail if the "
+                         "transform-level and end-to-end numbers diverge")
     args = ap.parse_args()
 
     fail_on_checksum_mismatch()
@@ -164,6 +199,50 @@ def main() -> int:
     full = results["full"]["strippable4"]["reduction_pct"]
     c1_only = results["c1_only"]["strippable4"]["reduction_pct"]
 
+    # ---- production-path (end-to-end) measurement ----
+    production = None
+    if args.production_path:
+        pp = measure_production_path(prompts)
+        per_cat, routed = pp["per_cat"], pp["routed_compress"]
+        sb = sum(per_cat[c][0] for c in STRIPTABLE_CATS)
+        sa = sum(per_cat[c][1] for c in STRIPTABLE_CATS)
+        cb, ca = per_cat.get(CONTROL_CAT, [0, 0])
+        pp_red = round(reduction(sb, sa), 1)
+        print(f"\nproduction path (classify -> route gate -> clean):")
+        for c in sorted(per_cat):
+            b, a = per_cat[c]
+            print(f"  {c:<12} {b:>7} -> {a:<7} "
+                  f"{reduction(b, a):>6.1f}%  routed_compress={routed.get(c, 0)}")
+        print(f"  strippable-4 END-TO-END reduction: {pp_red}%")
+        production = {
+            "ordering": "classify(raw) -> route gate -> clean_messages",
+            "strippable4": {"before": sb, "after": sa,
+                            "reduction_pct": pp_red,
+                            "routed_compress": sum(routed.get(c, 0)
+                                                   for c in STRIPTABLE_CATS)},
+            "control": {"before": cb, "after": ca,
+                        "reduction_pct": round(reduction(cb, ca), 1)},
+            "per_category": {
+                c: {"before": b, "after": a,
+                    "reduction_pct": round(reduction(b, a), 1),
+                    "routed_compress": routed.get(c, 0)}
+                for c, (b, a) in sorted(per_cat.items())
+            },
+        }
+        # Divergence gate: end-to-end yield must not silently collapse while
+        # the transform-level number holds. Tolerance 5pts absorbs the
+        # small (6 control) prompts that legitimately skip L1.
+        if abs(full - pp_red) > 5.0:
+            violations.append(
+                f"production-path divergence: transform-level {full}% vs "
+                f"end-to-end {pp_red}% (>5pts) — L1 yield is being lost to "
+                f"the route gate on strippable traffic")
+        if production["control"]["reduction_pct"] != 0.0:
+            violations.append(
+                "production-path FAIL: control category modified via "
+                "compress route (negative-list breach end-to-end)")
+
+
     # ---- AC gates ----
     if full < 15.0:
         violations.append(f"AC-P1e FAIL: full-cleaner reduction {full}% < 15%")
@@ -177,6 +256,7 @@ def main() -> int:
         "tokenizer": "tiktoken (proxy.counting), not len//4",
         "taxonomy_version": "1.0 + PM provenance amendment (negative list)",
         "decomposition": results,
+        "production_path": production,
         "customer_facing_claim": {
             "conservative": f"C1 JSON-whitespace compaction only: {c1_only}% input-token reduction on RAG/JSON-heavy categories",
             "upside": f"full cleaner (C1+C2+C3): {full}%; C3 dead-metadata drop is the dominant driver and is stated separately, not blended into the published claim",
