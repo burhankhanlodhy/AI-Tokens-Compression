@@ -192,19 +192,121 @@ def _post(app, content):
         asyncio.run(app.state.http.aclose())
 
 
-@pytest.mark.parametrize("l1,comp", [(True, True), (True, False),
-                                     (False, True), (False, False)])
-@pytest.mark.parametrize("content", [RAG, CODE], ids=["json_rag", "code"])
+@pytest.mark.parametrize(
+    ("l1", "comp", "content"),
+    [
+        (True, True, CODE),
+        (True, False, CODE),
+        (False, True, CODE),
+        (False, False, CODE),
+        (False, True, RAG),
+        (False, False, RAG),
+    ],
+    ids=[
+        "code-True-True", "code-True-False", "code-False-True",
+        "code-False-False", "json_rag-False-True", "json_rag-False-False",
+    ],
+)
 def test_passthrough_reaches_upstream_byte_identical(
         tmp_path, monkeypatch, l1, comp, content):
-    """AC (locked by @product-manager): classification on raw bytes + L1 off
-    for passthrough => upstream gets byte-identical input under every
-    combination of L1_ENABLED and COMPRESSION_ENABLED."""
+    """Lossy and CODE passthrough remains byte-identical at the wire boundary.
+
+    JSON/RAG with L1 enabled is intentionally covered by the AC-P1f
+    round-trip regression below: its contract is reversible cleaning rather
+    than raw-byte identity.
+    """
     app, captured = _passthrough_capture(monkeypatch, tmp_path,
                                          l1=l1, comp=comp)
     resp = _post(app, content)
     assert resp.status_code == 200
     assert captured["body"]["messages"][0]["content"] == content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("comp", [True, False], ids=["compression-on", "compression-off"])
+async def test_l1_json_rag_round_trip_and_clean_cache_key(
+        l1_env, monkeypatch, comp):
+    """AC-P1f: the live route reproducibly cleans JSON/RAG before caching.
+
+    This intentionally drives the ASGI handler, not clean_messages() alone:
+    both requests must produce identical cleaned upstream bytes, and the
+    cache seam must receive the cleaned body whose independently computed key
+    differs from the raw-body key when the static prefix is cleaned.
+    """
+    monkeypatch.setenv("L1_ENABLED", "true")
+    monkeypatch.setenv("COMPRESSION_ENABLED", "true" if comp else "false")
+    monkeypatch.setenv("PROVIDER_ROUTING", "true")
+    monkeypatch.setenv("CACHE_ENABLED", "true")
+    get_settings.cache_clear()
+
+    from proxy import caching, main, stats
+    from proxy.l1_clean import clean_messages
+
+    raw_body = {
+        "model": "openai/gpt-4o",
+        "messages": [
+            {"role": "system", "content": RAG},
+            {"role": "user", "content": "What is the TTL?"},
+        ],
+    }
+    expected_messages = clean_messages(raw_body["messages"])
+    expected_body = {**raw_body, "messages": expected_messages}
+    assert expected_messages != raw_body["messages"]
+
+    cache_calls: list[tuple[str, str, str, dict]] = []
+    upstream_messages: list[list[dict]] = []
+
+    def fake_lookup(provider, model, body):
+        cache_calls.append(("lookup", provider, model, body))
+        return None
+
+    def fake_record(provider, model, body):
+        cache_calls.append(("record", provider, model, body))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        upstream_messages.append(body["messages"])
+        return httpx.Response(200, json=UPSTREAM_RESPONSE)
+
+    monkeypatch.setattr(caching, "lookup", fake_lookup)
+    monkeypatch.setattr(caching, "record", fake_record)
+    stats.init_db()
+
+    provider_base = get_settings().provider_base_urls["openai"]
+    upstream = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url=provider_base
+    )
+    main.app.state.http = None
+    main.app.state.http_clients = {provider_base: upstream}
+    try:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=main.app), base_url="http://test"
+        ) as client:
+            for _ in range(2):
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers={"Authorization": "Bearer test-key-123"},
+                    json=raw_body,
+                )
+                assert response.status_code == 200
+    finally:
+        await upstream.aclose()
+        main.app.state.http_clients = {}
+        get_settings.cache_clear()
+
+    assert upstream_messages == [expected_messages, expected_messages]
+    assert len(cache_calls) == 4
+    assert all(call[3] == expected_body for call in cache_calls)
+
+    clean_keys = {
+        caching.cache_key(caching.canonical_prefix(call[3]), call[2], call[1])
+        for call in cache_calls
+    }
+    raw_key = caching.cache_key(
+        caching.canonical_prefix(raw_body), raw_body["model"], "openai"
+    )
+    assert len(clean_keys) == 1
+    assert next(iter(clean_keys)) != raw_key
 
 
 # ---------------------------------------------------------------- B2 P1 (QA):
