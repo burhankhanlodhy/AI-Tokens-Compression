@@ -109,6 +109,19 @@ CREATE INDEX idx_requests_day_bucket ON requests(day_bucket);
 -- design — auth headers are never written to the ledger.
 
 -- ============================================================
+-- backfill_batches — idempotency marker for the SQLite -> Postgres
+-- migration. A source checksum is unique, and the marker is inserted in
+-- the same transaction as the ledger rows so failed verification rolls back
+-- both data and the marker.
+-- ============================================================
+CREATE TABLE backfill_batches (
+    id                BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    source_row_count  BIGINT NOT NULL,
+    checksum          TEXT NOT NULL UNIQUE,
+    completed_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ============================================================
 -- cache_entries — exact-prefix cache only in Phase A (PA-4). Keyed by a
 -- hash of the canonicalized static prefix + model + provider, so the
 -- lookup is a plain btree equality — no pgvector needed until Phase C

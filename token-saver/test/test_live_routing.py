@@ -15,7 +15,6 @@ request, asserting:
 from __future__ import annotations
 
 import json
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -30,9 +29,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from proxy.config import get_settings  # noqa: E402
 
-PG_ADMIN_DSN = os.environ.get(
-    "TOKEN_SAVER_PG_BASE", "postgresql://postgres:REDACTED@localhost:5433"
-)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pg_test_support import PG_BASE  # noqa: E402
+
+PG_ADMIN_DSN = PG_BASE
 _CACHE_DB = "ts_live_cache_test"
 
 

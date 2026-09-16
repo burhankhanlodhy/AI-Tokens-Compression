@@ -9,7 +9,6 @@ in offline environments.
 """
 from __future__ import annotations
 
-import os
 import sys
 import tempfile
 from decimal import Decimal
@@ -26,9 +25,8 @@ try:
 except ImportError:  # pragma: no cover
     pytest.skip("psycopg not installed", allow_module_level=True)
 
-PG_BASE = os.environ.get(
-    "TOKEN_SAVER_PG_BASE", "postgresql://postgres:REDACTED@localhost:5433"
-)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from pg_test_support import PG_BASE  # noqa: E402
 # database name lives in the path component; keep base + name separately so
 # patching kpis._dsn never turns the DB name into a hostname
 _DB_NAME = "ts_kpi_test"

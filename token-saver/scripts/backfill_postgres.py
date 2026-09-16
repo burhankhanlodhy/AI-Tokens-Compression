@@ -13,6 +13,7 @@ Implements @database-administrator's backfill spec:
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import sqlite3
 import sys
@@ -24,6 +25,7 @@ import psycopg
 DEFAULT_SQLITE_PATH = str(Path(__file__).resolve().parent.parent / "data" / "stats.db")
 DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000000"
 BATCH_SIZE = 500
+logger = logging.getLogger(__name__)
 
 
 def _dsn() -> str:
@@ -81,9 +83,14 @@ def _already_applied(pg: psycopg.Connection, checksum: str) -> bool:
     ).fetchone() is not None
 
 
-def _insert_batch(pg: psycopg.Connection, provider_id: int, batch: list[sqlite3.Row]) -> None:
+def _insert_batch(pg: psycopg.Connection, provider_id: int, batch: list[sqlite3.Row]) -> int:
     """Lossless cast: costs go to NUMERIC via their text representation."""
+    remapped_routes = 0
     for r in batch:
+        route = r["route"]
+        if route not in {"compress", "passthrough"}:
+            route = "passthrough"
+            remapped_routes += 1
         pg.execute(
             """
             INSERT INTO requests (tenant_id, provider_id, ts, model, route,
@@ -100,7 +107,7 @@ def _insert_batch(pg: psycopg.Connection, provider_id: int, batch: list[sqlite3.
                 provider_id,
                 r["ts"],                       # unix epoch REAL -> to_timestamp
                 r["model"],
-                r["route"],
+                route,
                 r["input_tokens_before"],
                 r["input_tokens_after"],
                 r["output_tokens"],
@@ -113,6 +120,7 @@ def _insert_batch(pg: psycopg.Connection, provider_id: int, batch: list[sqlite3.
                 r["status"],
             ),
         )
+    return remapped_routes
 
 
 def _verify(sqlite_conn: sqlite3.Connection, pg: psycopg.Connection) -> dict:
@@ -206,13 +214,19 @@ def run_backfill(sqlite_path: str = DEFAULT_SQLITE_PATH) -> dict:
                 "existing_rows": int(pre),
             }
         provider_id = _seed_prerequisites(pg)
+        remapped_routes = 0
         for i in range(0, len(rows), BATCH_SIZE):
-            _insert_batch(pg, provider_id, rows[i:i + BATCH_SIZE])
+            remapped_routes += _insert_batch(pg, provider_id, rows[i:i + BATCH_SIZE])
+        logger.info(
+            "backfill normalized %d legacy route value(s) to passthrough",
+            remapped_routes,
+        )
         pg.execute(
             "INSERT INTO backfill_batches (source_row_count, checksum) VALUES (%s, %s)",
             (len(rows), checksum),
         )
         report = _verify(sq, pg)
+        report["remapped_routes"] = remapped_routes
         if not report["match"]:
             pg.rollback()
             return {"status": "verification_failed", "report": report}
