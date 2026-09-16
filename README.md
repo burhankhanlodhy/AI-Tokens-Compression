@@ -104,6 +104,13 @@ the whole `data/` directory.
 .venv/bin/python test/compare.py           # direct vs proxied comparison
 ```
 
+## License
+
+Released under the [MIT License](LICENSE): free to use, modify, and
+redistribute, including for commercial purposes. Report security issues per
+[SECURITY.md](SECURITY.md) — please use the private advisory flow, not a
+public issue.
+
 ## Repo layout
 
 - `token-saver/proxy/` — the FastAPI proxy application
