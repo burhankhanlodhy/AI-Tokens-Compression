@@ -328,6 +328,19 @@ async def chat_completions(request: Request):
     # in_before -> in_after accounting (B2/B3).
     in_before = count_messages(messages, model)
 
+    # --- Phase 4: task-aware routing (computed on RAW bytes, pre-L1) ---
+    # B2 P0: classification MUST see the original messages. L1's C1
+    # whitespace compaction strips newlines, which destroys the
+    # classifier._STRUCTURED signal (^\s*[{[] + >=3 newlines) and flips
+    # JSON/RAG-shaped prompts from passthrough to compress — cleaning
+    # requests the taxonomy protects and manufacturing compress routes.
+    # Classification is computed before any transform.
+    # Taxonomy v1.1 §5: L1 is OFF for passthrough routes — a
+    # passthrough-classified request reaches upstream byte-identical,
+    # independent of L1_ENABLED/COMPRESSION_ENABLED.
+    classify_needed = s.compression_enabled or s.l1_enabled
+    route = classify(messages) if classify_needed else "passthrough"
+
     # --- B2: L1 lossless structural cleanup (runs BEFORE the PA-4 cache key) ---
     # Taxonomy §1 pipeline ordering: L1 clean first, then the cache key is
     # computed on the CLEAN body, so an L1-stripped request can share a cache
@@ -338,7 +351,7 @@ async def chat_completions(request: Request):
 
     l1_tokens_stripped = 0
     l1_applied = False
-    if s.l1_enabled and messages:
+    if s.l1_enabled and messages and route != "passthrough":
         l1_before = count_messages(messages, model)
         l1_messages = _l1_clean_messages(messages)
         l1_after = count_messages(l1_messages, model)
@@ -372,9 +385,6 @@ async def chat_completions(request: Request):
     hdr = request.headers.get("x-token-saver-conciseness")
     if hdr is not None:
         conciseness_on = hdr.strip().lower() in ("1", "true", "yes", "on")
-
-    # --- Phase 4: task-aware routing ---
-    route = classify(messages) if s.compression_enabled else "passthrough"
 
     compressed = False
 

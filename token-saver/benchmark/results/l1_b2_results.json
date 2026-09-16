@@ -86,8 +86,8 @@
     "c3_only": {
       "strippable4": {
         "before": 44483,
-        "after": 15423,
-        "reduction_pct": 65.3
+        "after": 16143,
+        "reduction_pct": 63.7
       },
       "control": {
         "before": 155,
@@ -112,21 +112,21 @@
         },
         "rag": {
           "before": 22050,
-          "after": 4794,
-          "reduction_pct": 78.3
+          "after": 5226,
+          "reduction_pct": 76.3
         },
         "system_dup": {
           "before": 15389,
-          "after": 3885,
-          "reduction_pct": 74.8
+          "after": 4173,
+          "reduction_pct": 72.9
         }
       }
     },
     "full": {
       "strippable4": {
         "before": 44483,
-        "after": 12664,
-        "reduction_pct": 71.5
+        "after": 13184,
+        "reduction_pct": 70.4
       },
       "control": {
         "before": 155,
@@ -151,20 +151,20 @@
         },
         "rag": {
           "before": 22050,
-          "after": 4103,
-          "reduction_pct": 81.4
+          "after": 4415,
+          "reduction_pct": 80.0
         },
         "system_dup": {
           "before": 15389,
-          "after": 3041,
-          "reduction_pct": 80.2
+          "after": 3249,
+          "reduction_pct": 78.9
         }
       }
     }
   },
   "customer_facing_claim": {
     "conservative": "C1 JSON-whitespace compaction only: 29.9% input-token reduction on RAG/JSON-heavy categories",
-    "upside": "full cleaner (C1+C2+C3): 71.5%; C3 dead-metadata drop is the dominant driver and is stated separately, not blended into the published claim"
+    "upside": "full cleaner (C1+C2+C3): 70.4%; C3 dead-metadata drop is the dominant driver and is stated separately, not blended into the published claim"
   },
   "ac_p1e_pass": true,
   "violations": []

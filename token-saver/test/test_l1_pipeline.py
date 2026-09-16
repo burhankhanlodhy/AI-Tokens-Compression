@@ -132,3 +132,108 @@ async def test_l1_disabled_by_default_leaves_messages(l1_env, monkeypatch):
     await app.state.http.aclose()
     assert resp.status_code == 200
     assert captured["body"]["messages"][0]["content"] == RAG  # untouched
+
+
+# ---------------------------------------------------------------- B2 P0 (QA):
+# a passthrough-classified request must reach upstream BYTE-IDENTICAL,
+# independent of L1_ENABLED / COMPRESSION_ENABLED (taxonomy v1.1 §5, line 24:
+# "L1 is off for passthrough"). Production path: classify runs on RAW bytes
+# pre-L1, and L1 is skipped for passthrough routes.
+
+CODE = '''```python
+def ttl():
+    return 3600
+```
+'''
+
+
+def _passthrough_capture(monkeypatch, tmp_path, *, l1, comp):
+    """App + capture dict with L1_ENABLED/COMPRESSION_ENABLED pinned.
+
+    MIN_CHARS_TO_CLASSIFY is lowered so the short RAG fixture genuinely
+    classifies as passthrough (default 120 would route it to compress)."""
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "stats.db"))
+    monkeypatch.setenv("L1_ENABLED", "true" if l1 else "false")
+    monkeypatch.setenv("COMPRESSION_ENABLED", "true" if comp else "false")
+    monkeypatch.setenv("MIN_CHARS_TO_CLASSIFY", "10")
+    get_settings.cache_clear()
+    from proxy import stats
+    stats.init_db()
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json=UPSTREAM_RESPONSE)
+
+    from proxy.main import app
+    app.state.http = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        base_url="http://upstream.test/v1")
+    return app, captured
+
+
+def _post(app, content):
+    import asyncio
+
+    async def _run():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as c:
+            return await c.post(
+                "/v1/chat/completions",
+                headers={"Authorization": "Bearer test-key-123"},
+                json={"model": "gpt-4o-mini",
+                      "messages": [{"role": "user", "content": content}]},
+            )
+
+    try:
+        return asyncio.run(_run())
+    finally:
+        asyncio.run(app.state.http.aclose())
+
+
+@pytest.mark.parametrize("l1,comp", [(True, True), (True, False),
+                                     (False, True), (False, False)])
+@pytest.mark.parametrize("content", [RAG, CODE], ids=["json_rag", "code"])
+def test_passthrough_reaches_upstream_byte_identical(
+        tmp_path, monkeypatch, l1, comp, content):
+    """AC (locked by @product-manager): classification on raw bytes + L1 off
+    for passthrough => upstream gets byte-identical input under every
+    combination of L1_ENABLED and COMPRESSION_ENABLED."""
+    app, captured = _passthrough_capture(monkeypatch, tmp_path,
+                                         l1=l1, comp=comp)
+    resp = _post(app, content)
+    assert resp.status_code == 200
+    assert captured["body"]["messages"][0]["content"] == content
+
+
+@pytest.mark.asyncio
+async def test_l1_still_runs_for_compress_route(l1_env, monkeypatch):
+    """Guard: the passthrough gate must not kill L1 on compress routes."""
+    monkeypatch.setenv("L1_ENABLED", "true")
+    get_settings.cache_clear()
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json=UPSTREAM_RESPONSE)
+
+    app = _app(handler)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        # conversational prose with duplicate system blocks -> compress route
+        resp = await c.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-key-123"},
+            json={"model": "gpt-4o-mini", "messages": [
+                {"role": "system", "content": "You are terse."},
+                {"role": "system", "content": "You are terse."},
+                {"role": "user", "content": "Summarize the meeting notes for me please."},
+            ]},
+        )
+    await app.state.http.aclose()
+    assert resp.status_code == 200
+    contents = [m["content"] for m in captured["body"]["messages"]]
+    assert contents == ["You are terse.",
+                        "Summarize the meeting notes for me please."]
