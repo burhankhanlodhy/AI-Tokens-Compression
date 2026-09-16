@@ -102,7 +102,9 @@ def test_models_request_is_logged(client):
             "SELECT route, input_tokens_before, output_tokens, est_cost_before"
             " FROM requests ORDER BY id DESC LIMIT 1"
         ).fetchone()
-    assert row[0] == "models"
+    # B-1: /v1/models logs under the 'passthrough' taxonomy value (the
+    # requests.route CHECK only allows 'compress'|'passthrough').
+    assert row[0] == "passthrough"
     assert row[1:] == (0, 0, 0)
 
 

@@ -721,9 +721,15 @@ def _normalize_to_openai(data: dict, model: str) -> dict:
     }
 
 
+# B-1b: telemetry must never break a proxied request, but silent drops are
+# unacceptable — count every failed ledger write and expose it in /metrics.
+LEDGER_WRITE_FAILURES = 0
+
+
 def _log(model, route, in_before, in_after, output_tokens,
          latency_ms, compressed, status, cache_status="miss",
          cache_savings=0.0, l1_tokens_stripped=0, l1_savings=0.0):
+    global LEDGER_WRITE_FAILURES
     try:
         cost_before = estimate_cost(model, in_before, output_tokens)
         cost_after = estimate_cost(model, in_after, output_tokens)
@@ -741,6 +747,7 @@ def _log(model, route, in_before, in_after, output_tokens,
             logger.info("model=%s route=%s input %d->%d tokens (saved %d)",
                         model, route, in_before, in_after, saved)
     except Exception:  # noqa: BLE001 — logging must never break the proxy
+        LEDGER_WRITE_FAILURES += 1
         logger.exception("Failed to log request stats")
 
 
@@ -751,7 +758,7 @@ async def list_models(request: Request):
     started = time.perf_counter()
     client = _get_http(request)
     resp = await client.get("/models", headers=_forward_headers(request))
-    _log("unknown", "models", 0, 0, 0,
+    _log("unknown", "passthrough", 0, 0, 0,
          (time.perf_counter() - started) * 1000, False, resp.status_code)
     return JSONResponse(resp.json(), status_code=resp.status_code)
 
@@ -779,6 +786,7 @@ async def metrics(format: str = "text"):
             "tokens_saved": t["input_tokens_saved"],
             "cost_saved": round(t["cost_saved"], 4),
             "avg_latency_ms": round(t["avg_latency_ms"], 1),
+            "ledger_write_failures": LEDGER_WRITE_FAILURES,
         }
     lines: list[str] = [
         "# HELP token_saver_requests_total total requests logged",
@@ -793,6 +801,9 @@ async def metrics(format: str = "text"):
         "# HELP token_saver_latency_ms average latency ms",
         "# TYPE token_saver_latency_ms gauge",
         f'token_saver_latency_ms {t["avg_latency_ms"]:.1f}',
+        "# HELP token_saver_ledger_write_failures ledger writes that failed and were swallowed (telemetry must not break the proxy)",
+        "# TYPE token_saver_ledger_write_failures counter",
+        f"token_saver_ledger_write_failures {LEDGER_WRITE_FAILURES}",
     ]
     for r in data["by_route"]:
         lines.append(f'token_saver_requests_by_route{{route="{r["route"]}"}} {r["requests"]}')
@@ -826,13 +837,18 @@ async def api_kpis(
     bucket: str = "day",
     from_ts: str | None = None,
     to_ts: str | None = None,
+    tenant_id: str | None = None,
+    api_key_id: str | None = None,
 ):
     """PA-2: time-bucketed KPI aggregation over the Postgres ledger.
 
     Single source of truth for the dashboard and Prometheus path; all math
     is SQL-side over `requests` (AC-A5/A12 — no client-side aggregation).
+    AC-A7: tenant_id/api_key_id scope every aggregate before it is computed
+    (absent selectors = aggregate across all tenants).
     """
-    return await kpis_endpoint(bucket=bucket, from_ts=from_ts, to_ts=to_ts)
+    return await kpis_endpoint(bucket=bucket, from_ts=from_ts, to_ts=to_ts,
+                               tenant_id=tenant_id, api_key_id=api_key_id)
 
 
 @app.get("/stats")

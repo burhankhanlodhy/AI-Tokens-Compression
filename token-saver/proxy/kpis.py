@@ -26,7 +26,13 @@ def _dsn() -> str:
     )
 
 
-def _fetch_kpis(bucket: str, from_iso: str | None, to_iso: str | None) -> dict[str, Any]:
+def _fetch_kpis(
+    bucket: str,
+    from_iso: str | None,
+    to_iso: str | None,
+    tenant_id: str | None = None,
+    api_key_id: str | None = None,
+) -> dict[str, Any]:
     """All KPI math happens in Postgres over the ledger (SUM-over-ledger only)."""
     params: list[Any] = []
     where = ""
@@ -36,6 +42,16 @@ def _fetch_kpis(bucket: str, from_iso: str | None, to_iso: str | None) -> dict[s
     if to_iso:
         params.append(to_iso)
         where += f" AND ts <= to_timestamp(%s, 'YYYY-MM-DD\"T\"HH24:MI:SS')"
+    # AC-A7: tenant/key scoping MUST happen before aggregation — every query
+    # below builds on this clause, so overview, series, by_model, by_provider
+    # and latency are all scoped to the selection. Absent selectors mean
+    # "aggregate across all tenants" (admin/overview view).
+    if tenant_id is not None:
+        params.append(tenant_id)
+        where += " AND tenant_id = %s"
+    if api_key_id is not None:
+        params.append(api_key_id)
+        where += " AND api_key_id = %s"
 
     bucket_expr = f"date_trunc('{BUCKETS[bucket]}', ts)"
 
@@ -185,12 +201,15 @@ async def kpis_endpoint(
     bucket: str = Query("day"),
     from_ts: str | None = Query(None, alias="from"),
     to_ts: str | None = Query(None, alias="to"),
+    tenant_id: str | None = Query(None, description="AC-A7: scope all KPIs to one tenant"),
+    api_key_id: str | None = Query(None, description="AC-A7: scope all KPIs to one proxy key"),
 ):
     if bucket not in BUCKETS:
         return JSONResponse({"error": f"bucket must be one of {sorted(BUCKETS)}"},
                             status_code=400)
     try:
-        data = _fetch_kpis(bucket, from_ts, to_ts)
+        data = _fetch_kpis(bucket, from_ts, to_ts,
+                           tenant_id=tenant_id, api_key_id=api_key_id)
     except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
         return JSONResponse({"error": "ledger unavailable", "detail": str(exc)},
                             status_code=503)
