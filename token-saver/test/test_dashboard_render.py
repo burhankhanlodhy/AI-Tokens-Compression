@@ -135,14 +135,49 @@ def test_r2_no_render_path_sums_l1_with_total(tmp_path):
     assert _js_money(0.00265 + 0.0004) not in html
 
 
+_FORBIDDEN_FIELD = r"(cost_saved|l1_cost_saved|cache_savings)"
+# operand = optional qualifier (dotted `ov.` or bracketed `ov["`...`"]`) + field
+_OPERAND = (r"(?:\w+\s*(?:\.\s*|\[\s*[\"']\s*))?" + _FORBIDDEN_FIELD +
+            r"\b(?:[\"']\s*\])?")
+# any additive pairing of the total with a portion (or portion with portion):
+# cost_saved + l1_cost_saved, cost_saved + cache_savings, l1 + cache
+ADDITIVE_DOUBLE_COUNT = re.compile(_OPERAND + r"\s*\+\s*" + _OPERAND)
+
+# The exact spellings this codebase writes — PM mutation report, all must fire.
+_DOUBLE_COUNT_FORMS = [
+    "ov.cost_saved + ov.l1_cost_saved",
+    "p.cost_saved + p.l1_cost_saved",
+    "s.cost_saved + s.cache_savings",
+    'cost_saved+ov["l1_cost_saved"]',
+    "cost_saved + l1_cost_saved",
+    'money(ov.cache_savings + ov["l1_cost_saved"])',
+]
+
+
+@pytest.mark.parametrize("snippet", _DOUBLE_COUNT_FORMS,
+                         ids=lambda s: s[:34])
+def test_r2_static_catches_known_double_count_forms(snippet):
+    """The PM's line-119 mutation (`ov.cost_saved + ov.l1_cost_saved`) slipped
+    the original identifier-adjacent regex. Each real-world spelling must turn
+    the static check red — the mutation proof is baked in, not hand-applied."""
+    assert ADDITIVE_DOUBLE_COUNT.search(snippet), \
+        f"static double-count check MISSED: {snippet}"
+
+
 def test_r2_static_no_additive_pattern_in_source():
-    """Static pin: no source line may add cost_saved to an l1 identifier
-    (or vice versa) — belt-and-braces alongside the dynamic check."""
+    """Static pin: no source line may add cost_saved to an l1/cache portion
+    (belt-and-braces alongside the dynamic check). Also proven against a live
+    mutation of the real source, not just synthetic snippets."""
     src = DASHBOARD_JS.read_text()
-    additive = re.compile(
-        r"(?:cost_saved\s*\+\s*[a-zA-Z_\"']*[Ll]1|[Ll]1[a-zA-Z_]*\s*\+\s*[a-zA-Z_\"']*cost_saved)"
-    )
-    assert not additive.search(src), "additive cost_saved/l1 pattern found in dashboard.js"
+    assert not ADDITIVE_DOUBLE_COUNT.search(src), \
+        "additive cost_saved/l1/cache pattern found in dashboard.js"
+    # live mutation: the exact P0 the rule exists to prevent, injected into the
+    # real file contents — the static check MUST fire on it
+    mutated = src.replace("money(ov.cost_saved)",
+                          "money(ov.cost_saved + ov.l1_cost_saved)", 1)
+    assert mutated != src, "mutation anchor not found in dashboard.js"
+    assert ADDITIVE_DOUBLE_COUNT.search(mutated), \
+        "static check failed to catch the live double-count mutation"
 
 
 # ------------------------------------------------------------------ R3: zero-guard
