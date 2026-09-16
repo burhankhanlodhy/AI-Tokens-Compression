@@ -123,7 +123,7 @@
         l1SubTile(ov) + cacheSubTile(ov) +
       "</div>" +
       chartCard("Savings over time", "span6", '<div class="chart-wrap"><canvas id="c-savings"></canvas></div>') +
-      chartCard("Spend per model (cost before)", "span12", '<div class="chart-wrap"><canvas id="c-models"></canvas></div>') +
+      chartCard("Cost saved per model", "span12", '<div class="chart-wrap"><canvas id="c-models"></canvas></div>') +
       '<div class="card span12"><h3>Recent buckets</h3><table><thead><tr><th>Bucket</th><th>Requests</th><th>Tokens saved</th><th>Cost saved</th><th>Cache savings</th><th>Errors</th></tr></thead><tbody>' +
       d.series.slice(-25).map(function (s) {
         return "<tr><td>" + s.bucket + "</td><td>" + fmt(s.requests) + "</td><td>" +
@@ -132,8 +132,10 @@
       }).join("") + "</tbody></table></div></div>";
     content.innerHTML = html;
     lineChart("c-savings", labels, d.series.map(function (s) { return s.cost_saved; }), "cost saved", "#4f8cff");
+    // F1 (AC-A8 / D1 ratified): donut = exactly ONE by_model field, cost_saved,
+    // titled to match — by_model carries no cost_before and no l1_* (§5).
     donutChart("c-models", d.by_model.map(function (m) { return m.model; }),
-      d.by_model.map(function (m) { return m.requests; }),
+      d.by_model.map(function (m) { return m.cost_saved; }),
       ["#4f8cff", "#35c28f", "#d9a53f", "#e5484d", "#9b7bff", "#5ac8fa"]);
   }
 
@@ -142,17 +144,21 @@
     var labels = d.series.map(function (s) { return s.bucket; });
     var errBadge = ov.error_rate_pct > 0 ? '<span class="badge red">' + ov.error_rate_pct + "%</span>"
                                           : '<span class="badge green">0%</span>';
+    // F2 (AC-A8 / D2 ratified): the contract exposes window-global percentiles
+    // only (latency.p50/p95/p99) — no per-bucket latency series exists in
+    // `series`, so no latency line chart may be fabricated. Percentiles render
+    // as KPI cards, 1:1, alongside overview.avg_latency_ms.
     var html = '<div class="grid">' +
-      chartCard("Latency percentiles (ms)", "span12", '<div class="chart-wrap"><canvas id="c-lat"></canvas></div>') +
+      kpiCard("Latency p50", fmt(d.latency.p50) + " ms", null, null, null) +
+      kpiCard("Latency p95", fmt(d.latency.p95) + " ms", null, null, null) +
+      kpiCard("Latency p99", fmt(d.latency.p99) + " ms", null, null, null) +
       kpiCard("Avg latency", fmt(ov.avg_latency_ms) + " ms", null, null, null) +
-      kpiCard("p95", fmt(d.latency.p95) + " ms", null, null, null) +
-      kpiCard("Error rate", errBadge, null, null, null) +
-      kpiCard("Cache hit rate", ov.cache_hit_pct + "%", null, null, null) +
       chartCard("Requests per bucket", "span6", '<div class="chart-wrap"><canvas id="c-req"></canvas></div>') +
       chartCard("Errors per bucket", "span6", '<div class="chart-wrap"><canvas id="c-err"></canvas></div>') +
+      kpiCard("Error rate", errBadge, null, null, null) +
+      kpiCard("Cache hit rate", ov.cache_hit_pct + "%", null, null, null) +
       "</div>";
     content.innerHTML = html;
-    lineChart("c-lat", labels, d.series.map(function () { return d.latency.p95; }), "p95", "#d9a53f");
     lineChart("c-req", labels, d.series.map(function (s) { return s.requests; }), "requests", "#4f8cff");
     lineChart("c-err", labels, d.series.map(function (s) { return s.errors; }), "errors", "#e5484d");
   }
