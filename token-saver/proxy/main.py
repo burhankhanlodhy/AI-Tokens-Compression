@@ -323,9 +323,35 @@ async def chat_completions(request: Request):
     messages = body.get("messages") or []
     streaming = bool(body.get("stream"))
 
+    # Ledger baseline: input_tokens_before = RAW original, counted before
+    # any transform, so compression AND L1 deltas are both visible in the
+    # in_before -> in_after accounting (B2/B3).
+    in_before = count_messages(messages, model)
+
+    # --- B2: L1 lossless structural cleanup (runs BEFORE the PA-4 cache key) ---
+    # Taxonomy §1 pipeline ordering: L1 clean first, then the cache key is
+    # computed on the CLEAN body, so an L1-stripped request can share a cache
+    # entry with an identical clean prompt. l1_tokens_stripped is the
+    # tokenizer delta of the clean step only (never blended with cache or
+    # compression savings; DBA B3 attributes it separately in the ledger).
+    from .l1_clean import clean_messages as _l1_clean_messages
+
+    l1_tokens_stripped = 0
+    l1_applied = False
+    if s.l1_enabled and messages:
+        l1_before = count_messages(messages, model)
+        l1_messages = _l1_clean_messages(messages)
+        l1_after = count_messages(l1_messages, model)
+        if l1_messages != messages:
+            messages = l1_messages
+            body = {**body, "messages": l1_messages}
+            l1_applied = True
+        l1_tokens_stripped = max(0, l1_before - l1_after)
+
     # --- PA-4: exact-prefix cache detection ---
-    # Determined on the *original* (pre-compression) body so the cache key is
-    # stable regardless of compression settings.
+    # Cache key = CLEAN body (AC-P1f / taxonomy §1). L1 runs above; the key
+    # is stable regardless of compression settings because L1 is a pure
+    # deterministic transform of the same input bytes.
     provider = _provider_for_model(model)
     cache_status = "miss"
     try:
@@ -350,7 +376,6 @@ async def chat_completions(request: Request):
     # --- Phase 4: task-aware routing ---
     route = classify(messages) if s.compression_enabled else "passthrough"
 
-    in_before = count_messages(messages, model)
     compressed = False
 
     if route == "compress":
@@ -435,7 +460,7 @@ async def chat_completions(request: Request):
     return await _relay(
         resp, started, model=model, route=route, in_before=in_before,
         in_after=in_after, compressed=compressed, streaming=streaming,
-        cache_status=cache_status,
+        cache_status=cache_status, l1_tokens_stripped=l1_tokens_stripped,
     )
 
 
@@ -450,10 +475,20 @@ async def _relay(
     compressed: bool,
     streaming: bool = False,
     cache_status: str = "miss",
+    l1_tokens_stripped: int = 0,
 ):
     """Stream or buffer the upstream response back, then log stats."""
     s = get_settings()
     latency_ms = (time.perf_counter() - started) * 1000
+    # B3 attribution: L1 savings are computed at the clean step and logged
+    # as their own column. A cache-hit request reports ONLY cache savings —
+    # L1 tokens and cache savings are never summed on a single request
+    # (taxonomy §1; UI/UX stated rule; QA reconciliation contract).
+    l1_savings = (
+        estimate_cost(model, l1_tokens_stripped, 0)
+        if cache_status != "exact_hit" and l1_tokens_stripped > 0
+        else 0.0
+    )
     out_headers = {
         k: v for k, v in resp.headers.items()
         if k.lower() not in HOP_BY_HOP and k.lower() != "content-encoding"
@@ -486,7 +521,9 @@ async def _relay(
                 output_tokens = count_text("".join(collected), model)
                 _log(model, route, in_before, in_after, output_tokens,
                      latency_ms, compressed, resp.status_code,
-                     cache_status=cache_status)
+                     cache_status=cache_status,
+                     l1_tokens_stripped=l1_tokens_stripped,
+                     l1_savings=l1_savings)
 
         async def translated_streamer():
             """Anthropic SSE -> OpenAI chat.completion.chunk SSE (C4).
@@ -595,7 +632,9 @@ async def _relay(
                 output_tokens = count_text("".join(collected), model)
                 _log(model, route, in_before, in_after, output_tokens,
                      latency_ms, compressed, resp.status_code,
-                     cache_status=cache_status)
+                     cache_status=cache_status,
+                     l1_tokens_stripped=l1_tokens_stripped,
+                     l1_savings=l1_savings)
 
         return StreamingResponse(
             translated_streamer() if needs_stream_translation else raw_streamer(),
@@ -630,7 +669,9 @@ async def _relay(
         pass  # non-JSON body (e.g. HTML error page): relay raw, 0 tokens
     _log(model, route, in_before, in_after, output_tokens,
          latency_ms, compressed, resp.status_code,
-         cache_status=cache_status)
+         cache_status=cache_status,
+         l1_tokens_stripped=l1_tokens_stripped,
+         l1_savings=l1_savings)
     if reshaped_obj is not None:
         return JSONResponse(content=reshaped_obj, status_code=resp.status_code,
                             headers=out_headers)
@@ -668,7 +709,7 @@ def _normalize_to_openai(data: dict, model: str) -> dict:
 
 def _log(model, route, in_before, in_after, output_tokens,
          latency_ms, compressed, status, cache_status="miss",
-         cache_savings=0.0):
+         cache_savings=0.0, l1_tokens_stripped=0, l1_savings=0.0):
     try:
         cost_before = estimate_cost(model, in_before, output_tokens)
         cost_after = estimate_cost(model, in_after, output_tokens)
@@ -678,6 +719,8 @@ def _log(model, route, in_before, in_after, output_tokens,
             est_cost_before=cost_before, est_cost_after=cost_after,
             latency_ms=latency_ms, compressed=compressed, status=status,
             cache_status=cache_status, cache_savings=cache_savings,
+            l1_tokens_stripped=l1_tokens_stripped,
+            l1_savings=l1_savings,
         )
         saved = in_before - in_after
         if saved > 0:

@@ -50,6 +50,8 @@ def _fetch_kpis(bucket: str, from_iso: str | None, to_iso: str | None) -> dict[s
                    COALESCE(SUM(est_cost_before), 0),
                    COALESCE(SUM(est_cost_after), 0),
                    COALESCE(SUM(cache_savings), 0),
+                   COALESCE(SUM(l1_tokens_stripped), 0),
+                   COALESCE(SUM(l1_savings), 0),
                    COALESCE(SUM(CASE WHEN cache_status = 'exact_hit' THEN 1 ELSE 0 END), 0),
                    COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0),
                    COALESCE(AVG(latency_ms), 0)
@@ -57,8 +59,8 @@ def _fetch_kpis(bucket: str, from_iso: str | None, to_iso: str | None) -> dict[s
             """,
             params,
         )
-        (n, tin, tout_after, out, cb, ca, cache_sav, cache_hits, errors,
-         avg_lat) = cur.fetchone()
+        (n, tin, tout_after, out, cb, ca, cache_sav, l1_tok, l1_sav,
+         cache_hits, errors, avg_lat) = cur.fetchone()
         tin = int(tin)
         tout_after = int(tout_after)
         saved = tin - tout_after
@@ -73,6 +75,8 @@ def _fetch_kpis(bucket: str, from_iso: str | None, to_iso: str | None) -> dict[s
             "cost_after": float(ca),
             "cost_saved": float(cb) - float(ca),
             "cache_savings": float(cache_sav),   # reported separately (AC-A6)
+            "l1_tokens_stripped": int(l1_tok),   # B3: L1 savings, separate from cache (taxonomy §1)
+            "l1_cost_saved": float(l1_sav),      # B3: never summed with cache_savings on one request
             "cache_hits": int(cache_hits),
             "cache_hit_pct": round(100 * cache_hits / n, 2) if n else 0.0,
             "errors": int(errors),
@@ -87,6 +91,8 @@ def _fetch_kpis(bucket: str, from_iso: str | None, to_iso: str | None) -> dict[s
                    SUM(input_tokens_before) - SUM(input_tokens_after),
                    SUM(est_cost_before) - SUM(est_cost_after),
                    SUM(cache_savings),
+                   SUM(l1_tokens_stripped),
+                   SUM(l1_savings),
                    SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END)
             FROM requests WHERE TRUE {where}
             GROUP BY b ORDER BY b
@@ -100,7 +106,9 @@ def _fetch_kpis(bucket: str, from_iso: str | None, to_iso: str | None) -> dict[s
                 "tokens_saved": int(r[2] or 0),
                 "cost_saved": float(r[3] or 0),
                 "cache_savings": float(r[4] or 0),
-                "errors": int(r[5] or 0),
+                "l1_tokens_stripped": int(r[5] or 0),
+                "l1_cost_saved": float(r[6] or 0),
+                "errors": int(r[7] or 0),
             }
             for r in cur.fetchall()
         ]
@@ -128,6 +136,8 @@ def _fetch_kpis(bucket: str, from_iso: str | None, to_iso: str | None) -> dict[s
                    SUM(r.input_tokens_before) - SUM(r.input_tokens_after),
                    SUM(r.est_cost_before) - SUM(r.est_cost_after),
                    SUM(CASE WHEN r.cache_status = 'exact_hit' THEN 1 ELSE 0 END),
+                   SUM(r.l1_tokens_stripped),
+                   SUM(r.l1_savings),
                    SUM(CASE WHEN r.status >= 400 THEN 1 ELSE 0 END)
             FROM requests r JOIN providers p ON p.id = r.provider_id
             WHERE TRUE {where}
@@ -140,8 +150,10 @@ def _fetch_kpis(bucket: str, from_iso: str | None, to_iso: str | None) -> dict[s
              "tokens_saved": int(r[2] or 0), "cost_saved": float(r[3] or 0),
              "cache_hits": int(r[4] or 0),
              "cache_hit_pct": round(100 * int(r[4] or 0) / r[1], 2) if r[1] else 0.0,
-             "errors": int(r[5] or 0),
-             "error_pct": round(100 * int(r[5] or 0) / r[1], 2) if r[1] else 0.0}
+             "l1_tokens_stripped": int(r[5] or 0),
+             "l1_cost_saved": float(r[6] or 0),
+             "errors": int(r[7] or 0),
+             "error_pct": round(100 * int(r[7] or 0) / r[1], 2) if r[1] else 0.0}
             for r in cur.fetchall()
         ]
 

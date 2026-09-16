@@ -76,6 +76,8 @@ def log_request(
     status: int,
     cache_status: str = "miss",
     cache_savings: float = 0.0,
+    l1_tokens_stripped: int = 0,
+    l1_savings: float = 0.0,
 ) -> None:
     """Append to the request ledger.
 
@@ -85,6 +87,8 @@ def log_request(
     - otherwise -> local SQLite (single-user mode and the unit-test fixture)
 
     This keeps the two ledgers deterministic for tests and deployment.
+    B3 attribution: l1_tokens_stripped / l1_savings are separate columns,
+    never summed with cache_savings on a single request (taxonomy §1).
     """
     import os
 
@@ -95,6 +99,7 @@ def log_request(
             est_cost_before=est_cost_before, est_cost_after=est_cost_after,
             latency_ms=latency_ms, compressed=compressed, status=status,
             cache_status=cache_status, cache_savings=cache_savings,
+            l1_tokens_stripped=l1_tokens_stripped, l1_savings=l1_savings,
         )
         return
     with _lock, get_conn() as conn:
@@ -121,7 +126,7 @@ def log_request(
 def _log_postgres(
     *, model, route, input_tokens_before, input_tokens_after, output_tokens,
     est_cost_before, est_cost_after, latency_ms, compressed, status,
-    cache_status, cache_savings,
+    cache_status, cache_savings, l1_tokens_stripped=0, l1_savings=0.0,
 ) -> None:
     import psycopg
 
@@ -142,18 +147,21 @@ def _log_postgres(
             INSERT INTO requests (tenant_id, provider_id, model, route,
                 input_tokens_before, input_tokens_after, output_tokens,
                 est_cost_before, est_cost_after, cache_status, cache_savings,
+                l1_tokens_stripped, l1_savings,
                 latency_ms, compressed, status)
             SELECT '00000000-0000-0000-0000-000000000000',
                    COALESCE((SELECT id FROM providers WHERE name = %s),
                             (SELECT id FROM providers WHERE name = 'legacy')),
                    %s, %s, %s, %s, %s, %s::numeric, %s::numeric, %s,
-                   %s::numeric, %s::numeric, %s, %s
+                   %s::numeric, %s::numeric, %s, %s::numeric, %s, %s
             """,
             (
                 provider or "legacy", model, route,
                 input_tokens_before, input_tokens_after, output_tokens,
                 str(est_cost_before), str(est_cost_after),
-                cache_status, str(cache_savings), latency_ms,
+                cache_status, str(cache_savings),
+                l1_tokens_stripped, str(l1_savings),
+                latency_ms,
                 compressed, status,
             ),
         )

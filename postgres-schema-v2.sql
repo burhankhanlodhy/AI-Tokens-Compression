@@ -86,6 +86,8 @@ CREATE TABLE requests (
     est_cost_before         NUMERIC(14,8) NOT NULL DEFAULT 0,   -- NUMERIC not REAL: no float drift (AC-A11/A12)
     est_cost_after          NUMERIC(14,8) NOT NULL DEFAULT 0,
     cache_savings           NUMERIC(14,8) NOT NULL DEFAULT 0,   -- reported separately from compression savings (AC-A6)
+    l1_tokens_stripped      INTEGER NOT NULL DEFAULT 0,          -- B3: L1 structural-clean savings, separate from cache/compression
+    l1_savings              NUMERIC(14,8) NOT NULL DEFAULT 0,    -- B3: est. USD of stripped tokens; 0 on cache-hit rows (never summed with cache_savings)
     latency_ms              NUMERIC(10,2) NOT NULL DEFAULT 0,
     compressed              BOOLEAN NOT NULL DEFAULT false,
     status                  INTEGER NOT NULL DEFAULT 0,          -- HTTP status returned to caller

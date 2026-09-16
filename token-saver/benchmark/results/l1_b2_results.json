@@ -1,0 +1,171 @@
+{
+  "schema": "l1_b2_v1",
+  "fixture_sha256": "230528ed9cd9b46fd379efc49d978a6d34e6de2f03a4aa3cb2eb2c50823e8111",
+  "counting_model": "gpt-4o",
+  "tokenizer": "tiktoken (proxy.counting), not len//4",
+  "taxonomy_version": "1.0 + PM provenance amendment (negative list)",
+  "decomposition": {
+    "c1_only": {
+      "strippable4": {
+        "before": 44483,
+        "after": 31188,
+        "reduction_pct": 29.9
+      },
+      "control": {
+        "before": 155,
+        "after": 155,
+        "reduction_pct": 0.0
+      },
+      "per_category": {
+        "control": {
+          "before": 155,
+          "after": 155,
+          "reduction_pct": 0.0
+        },
+        "json_doc": {
+          "before": 1682,
+          "after": 1166,
+          "reduction_pct": 30.7
+        },
+        "log_trace": {
+          "before": 5362,
+          "after": 4354,
+          "reduction_pct": 18.8
+        },
+        "rag": {
+          "before": 22050,
+          "after": 14987,
+          "reduction_pct": 32.0
+        },
+        "system_dup": {
+          "before": 15389,
+          "after": 10681,
+          "reduction_pct": 30.6
+        }
+      }
+    },
+    "c2_only": {
+      "strippable4": {
+        "before": 44483,
+        "after": 37999,
+        "reduction_pct": 14.6
+      },
+      "control": {
+        "before": 155,
+        "after": 155,
+        "reduction_pct": 0.0
+      },
+      "per_category": {
+        "control": {
+          "before": 155,
+          "after": 155,
+          "reduction_pct": 0.0
+        },
+        "json_doc": {
+          "before": 1682,
+          "after": 1382,
+          "reduction_pct": 17.8
+        },
+        "log_trace": {
+          "before": 5362,
+          "after": 5362,
+          "reduction_pct": 0.0
+        },
+        "rag": {
+          "before": 22050,
+          "after": 18570,
+          "reduction_pct": 15.8
+        },
+        "system_dup": {
+          "before": 15389,
+          "after": 12685,
+          "reduction_pct": 17.6
+        }
+      }
+    },
+    "c3_only": {
+      "strippable4": {
+        "before": 44483,
+        "after": 15063,
+        "reduction_pct": 66.1
+      },
+      "control": {
+        "before": 155,
+        "after": 155,
+        "reduction_pct": 0.0
+      },
+      "per_category": {
+        "control": {
+          "before": 155,
+          "after": 155,
+          "reduction_pct": 0.0
+        },
+        "json_doc": {
+          "before": 1682,
+          "after": 1382,
+          "reduction_pct": 17.8
+        },
+        "log_trace": {
+          "before": 5362,
+          "after": 5362,
+          "reduction_pct": 0.0
+        },
+        "rag": {
+          "before": 22050,
+          "after": 4578,
+          "reduction_pct": 79.2
+        },
+        "system_dup": {
+          "before": 15389,
+          "after": 3741,
+          "reduction_pct": 75.7
+        }
+      }
+    },
+    "full": {
+      "strippable4": {
+        "before": 44483,
+        "after": 12224,
+        "reduction_pct": 72.5
+      },
+      "control": {
+        "before": 155,
+        "after": 155,
+        "reduction_pct": 0.0
+      },
+      "per_category": {
+        "control": {
+          "before": 155,
+          "after": 155,
+          "reduction_pct": 0.0
+        },
+        "json_doc": {
+          "before": 1682,
+          "after": 1166,
+          "reduction_pct": 30.7
+        },
+        "log_trace": {
+          "before": 5362,
+          "after": 4354,
+          "reduction_pct": 18.8
+        },
+        "rag": {
+          "before": 22050,
+          "after": 3839,
+          "reduction_pct": 82.6
+        },
+        "system_dup": {
+          "before": 15389,
+          "after": 2865,
+          "reduction_pct": 81.4
+        }
+      }
+    }
+  },
+  "customer_facing_claim": {
+    "conservative": "C1 JSON-whitespace compaction only: 29.9% input-token reduction on RAG/JSON-heavy categories",
+    "upside": "full cleaner (C1+C2+C3): 72.5%; C3 dead-metadata drop is the dominant driver and is stated separately, not blended into the published claim"
+  },
+  "ac_p1e_pass": true,
+  "violations": []
+}

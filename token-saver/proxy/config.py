@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     # --- PA-4: exact-prefix cache detection ---
     cache_enabled: bool = True
 
+    # --- B2: L1 lossless structural cleanup (Phase B) ---
+    # Pure deterministic transform (proxy/l1_clean.py, frozen taxonomy
+    # l1-taxonomy.md). Runs BEFORE the PA-4 cache key: cache key = clean
+    # bytes (AC-P1f). Off-by-default until B4 QA sign-off on round-trip
+    # equivalence.
+    l1_enabled: bool = False
+
     # --- PA-1: multi-provider routing ---
     # "off" (default): legacy single-upstream behavior — everything goes to
     # UPSTREAM_BASE_URL in OpenAI shape. "on": model string routes through
