@@ -1,4 +1,24 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5433:5432"
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: token_saver
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../postgres-schema-v2.sql:/docker-entrypoint-initdb.d/10-postgres-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d token_saver"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
   proxy:
     build:
       context: .
@@ -10,11 +30,18 @@ services:
     environment:
       # Override in .env if targeting another OpenAI-compatible provider.
       UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL:-https://api.openai.com/v1}
+      # Containers reach Postgres by service name; the password still comes
+      # only from the ignored .env via Compose interpolation.
+      TOKEN_SAVER_PG_DSN: postgresql://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@postgres:5432/token_saver
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - stats-data:/app/data          # SQLite stats survive restarts
       - hf-cache:/root/.cache/huggingface  # LLMLingua-2 model weights cache
     restart: unless-stopped
 
 volumes:
+  postgres-data:
   stats-data:
   hf-cache:
