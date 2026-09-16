@@ -1,5 +1,7 @@
 # token-saver
 
+[![Tests](https://github.com/burhankhanlodhy/AI-Tokens-Compression/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/burhankhanlodhy/AI-Tokens-Compression/actions/workflows/ci.yml)
+
 `token-saver/` is the product: an OpenAI-compatible drop-in proxy that
 compresses prompts before they hit the upstream LLM, injects a conciseness
 instruction, suppresses hidden reasoning tokens by default, and tracks
