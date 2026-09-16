@@ -35,6 +35,12 @@ from typing import Any
 # Reserved answer-bearing keys (taxonomy §4) — never dropped, never recursed.
 RESERVED_KEYS = {"content", "text", "answer", "passage", "doc", "query"}
 
+# Shape-gate keys (taxonomy §4 eligible structure): ONLY these open RAG
+# scope. `answer`/`doc`/`query` stay reserved (byte-preserved) but do NOT
+# open the gate on their own — B2-c regression: `{"query":"…","score":0.9}`
+# must keep `score` (a bare query is not a retrieval result).
+GATE_KEYS = {"content", "text", "passage"}
+
 # C3 dead fields (exact-name match), taxonomy v1.1 §4 — narrower than v1.0:
 # provenance, identifiers, and timestamps were moved to the negative list.
 DEAD_FIELDS = {
@@ -77,8 +83,11 @@ _FLOAT_ARRAY_MIN_LEN = 32
 _COMPACT = {"separators": (",", ":"), "ensure_ascii": False}
 
 
+# Empty-container drop (taxonomy §4 row 5): empty string/array/object only.
+# `null` is a DISTINCT value ("author: null" can be the answer to "who
+# wrote it?") and is conserved — B2-c regression.
 def _is_empty(v: Any) -> bool:
-    return v == "" or v == [] or v == {} or v is None
+    return v == "" or v == [] or v == {}
 
 
 def _is_big_float_array(v: Any) -> bool:
@@ -90,8 +99,9 @@ def _is_big_float_array(v: Any) -> bool:
 
 
 def _is_rag_shaped(obj: dict) -> bool:
-    """Shape gate: object carries at least one reserved content sibling."""
-    return any(k in RESERVED_KEYS for k in obj)
+    """Shape gate: object carries at least one §4 eligible-structure key
+    (content/text/passage) — NOT answer/doc/query (B2-c)."""
+    return any(k in GATE_KEYS for k in obj)
 
 
 def _clean_obj(obj: Any, rag_scope: bool, c3: bool) -> Any:

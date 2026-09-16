@@ -32,7 +32,10 @@ class Settings(BaseSettings):
 
     # --- Feature flags ---
     compression_enabled: bool = True
-    output_conciseness_enabled: bool = True
+    # P1-1 (PM decision): conciseness OFF by default — benchmarks showed no
+    # reliable savings. Declared ONCE, here; the duplicate declaration near
+    # the Output conciseness section below was a dead trap (removed B2-c).
+    output_conciseness_enabled: bool = False
 
     # Reasoning models (e.g. glm-5.3-flash) can spend an unpredictable number
     # of hidden "thinking" tokens per request — often far more than anything
@@ -80,12 +83,12 @@ class Settings(BaseSettings):
     min_chars_to_compress: int = 400       # don't bother compressing short content
     compress_system_messages: bool = False # system prompts are usually precise specs
 
-    # --- Output conciseness ---
-    # P1-1 decision (PM, after runs 20260915T040955Z / 20260915T043617Z):
-    # benchmarked at -1.53% and -2.45% mean output change with parity — i.e.
-    # NO reliable savings for z-ai/glm-5.3-flash. OFF by default; the
-    # X-Token-Saver-Conciseness header can still enable it per-request.
-    output_conciseness_enabled: bool = False
+    # Output conciseness instruction + gate — see the single
+    # output_conciseness_enabled declaration in Feature flags above
+    # (P1-1 decision, PM, after runs 20260915T040955Z / 20260915T043617Z:
+    # benchmarked at -1.53% and -2.45% mean output change with parity —
+    # NO reliable savings for z-ai/glm-5.3-flash. The
+    # X-Token-Saver-Conciseness header can still enable it per-request.)
     conciseness_instruction: str = (
         "Answer concisely and directly. Do not restate the question, do not "
         "summarize what you are about to say, and do not add filler or "

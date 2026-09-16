@@ -99,6 +99,16 @@ async def test_ledger_records_l1_tokens(capturing):
     )
     data = stats.aggregate_stats()
     assert data["totals"]["input_tokens_saved"] > 0
+    # B2-d: assert on the L1 column ITSELF — input_tokens_saved is satisfied
+    # by the compression path alone and can never catch a dropped l1_* value.
+    with stats.get_conn() as conn:
+        row = conn.execute(
+            "SELECT l1_tokens_stripped, l1_savings FROM requests "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert row is not None, "no ledger row persisted"
+    assert row["l1_tokens_stripped"] > 0
+    assert row["l1_savings"] > 0
 
 
 @pytest.mark.asyncio

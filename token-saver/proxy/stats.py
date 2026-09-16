@@ -30,6 +30,17 @@ CREATE TABLE IF NOT EXISTS requests (
 CREATE INDEX IF NOT EXISTS idx_requests_ts ON requests(ts);
 """
 
+# B2-d: L1 ledger columns on the SQLite path too. B2 originally added them
+# to the Postgres schema only, so the local/single-user INSERT silently
+# dropped l1_tokens_stripped / l1_savings (caught by QA's live persistence
+# probe; the unit test asserted on input_tokens_saved and never noticed).
+# _MIGRATIONS run idempotently in init_db so existing local DBs upgrade in
+# place (same approach as docker token-saver-postgres for the PG side).
+_MIGRATIONS = (
+    "ALTER TABLE requests ADD COLUMN l1_tokens_stripped INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE requests ADD COLUMN l1_savings REAL NOT NULL DEFAULT 0",
+)
+
 
 def _connect() -> sqlite3.Connection:
     path = get_settings().database_path
@@ -50,6 +61,11 @@ def init_db() -> None:
         # + /stats polling (avoids 'database is locked').
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(_SCHEMA)
+        existing = {r[1] for r in conn.execute("PRAGMA table_info(requests)")}
+        for stmt in _MIGRATIONS:
+            col = stmt.split("ADD COLUMN ")[1].split()[0]
+            if col not in existing:
+                conn.execute(stmt)
 
 
 @contextmanager
@@ -106,7 +122,8 @@ def log_request(
         conn.execute(
             "INSERT INTO requests (ts, model, route, input_tokens_before, "
             "input_tokens_after, output_tokens, est_cost_before, est_cost_after, "
-            "latency_ms, compressed, status) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "latency_ms, compressed, status, l1_tokens_stripped, l1_savings) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 time.time(),
                 model,
@@ -119,6 +136,8 @@ def log_request(
                 latency_ms,
                 int(compressed),
                 status,
+                l1_tokens_stripped,
+                l1_savings,
             ),
         )
 

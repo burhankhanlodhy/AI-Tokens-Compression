@@ -129,6 +129,47 @@ def test_c3_embedding_name_outside_rag_shape_untouched():
     assert json.loads(clean_text(cfg)) == json.loads(cfg)
 
 
+# ---------- B2-c: gate narrowing (§4 eligible structure) + null conservation ----------
+
+@pytest.mark.parametrize("key", ["content", "text", "passage"])
+def test_gate_opens_on_eligible_structure_keys(key):
+    blk = json.dumps({key: "x", "score": 0.9})
+    out = json.loads(clean_text(blk))
+    assert "score" not in out and out[key] == "x"
+
+
+@pytest.mark.parametrize("key", ["query", "answer", "doc"])
+def test_gate_does_not_open_on_query_answer_doc(key):
+    # B2-c regression (QA + PM): a bare query/answer/doc is not a retrieval
+    # result — dead fields around it must survive (gate stays closed).
+    blk = json.dumps({key: "How good is it?", "score": 0.9})
+    assert json.loads(clean_text(blk)) == json.loads(blk)
+
+
+def test_gate_keys_stay_reserved_when_gate_closed():
+    # answer/doc/query remain RESERVED (byte-preserved) even though they
+    # no longer open the gate
+    blk = json.dumps({"answer": "x  y", "score": 0.9})
+    out = json.loads(clean_text(blk))
+    assert out["answer"] == "x  y" and out["score"] == 0.9
+
+
+def test_c3_null_conserved_empty_containers_dropped():
+    # B2-c regression (QA): §4 row 5 permits empty string/array/object
+    # only — `null` is a distinct value and must be conserved.
+    blk = json.dumps({
+        "text": "hi", "author": None, "note": "", "items": [], "extra": {},
+    })
+    out = json.loads(clean_text(blk))
+    assert out == {"text": "hi", "author": None}
+
+
+def test_c3_null_on_negative_list_conserved():
+    blk = json.dumps({"content": "x", "source": None, "note": ""})
+    out = json.loads(clean_text(blk))
+    assert out == {"content": "x", "source": None}
+
+
 # ---------- §6 determinism contract ----------
 
 def test_idempotent_clean():
