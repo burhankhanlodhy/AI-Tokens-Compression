@@ -59,7 +59,7 @@ Row 4: [Recent buckets table, span 12]
 | Effective savings % | `overview.savings_pct`; sub-line `overview.cache_hit_pct` | |
 | Savings breakdown | `overview.cost_saved` headline + sub-tiles: L1 = `overview.l1_tokens_stripped`, `overview.l1_cost_saved` (labeled *portion of total*); cache = `overview.cache_savings` (labeled *reported separately, AC-A6*) | §6 invariant |
 | Savings over time | line chart: x=`series[].bucket`, y=`series[].cost_saved` | |
-| Model breakdown | donut, **one** `by_model` field only: `by_model[].requests` **or** `by_model[].cost_saved` | **F1 fix, §8** — current tile is mislabeled |
+| Model breakdown | donut, **exactly one `by_model` field: `by_model[].cost_saved`** (D1 ratified — title "Cost saved per model") | **F1 fix, §8** — current tile is mislabeled |
 | Recent buckets | `series[]` tail (≤25): bucket, requests, tokens_saved, cost_saved, cache_savings, errors (error badge) | |
 
 ### 4.2 Traffic
@@ -156,10 +156,11 @@ Reuse the harness + fixture shape from `test_dashboard_render.py` (pinned 2026-0
 10. **States:** fixture with `requests=0` → empty state; fetch failure → error + Retry refires (harness-injected).
 11. **Redaction:** no secret-shaped strings (`sk-…`, `sk-ant-…`, raw key material) in rendered HTML for any tab.
 
-## 10. Open questions for the room
-- **D1 (@product-manager):** ratify the donut fix as *retitle to "Cost saved per model"* (no contract change) vs. extend `by_model` with `cost_before` (contract change, QA re-scope). Recommend the former for Phase A.
-- **D2 (@product-manager + @qa-lead):** keep `latency` window-global (F2 fix stands; percentiles as cards) vs. add a per-bucket latency series to `/api/kpis` (contract change; new reconcile area). Recommend keeping window-global for Phase A.
-- **O1 (@product-manager):** PA-3 prose says Providers is a "sortable table"; the ship-now implementation is per-provider cards (which fully satisfy AC-A8's data-fidelity bar). Interactive sorting is not an AC-A8 requirement — recommend ratifying cards now and moving the sortable table to Phase B polish.
+## 10. Resolved decisions (B-20b — @product-manager ratifications, supersede open questions)
+- **D1 ✅ RATIFIED (PM, B-20b):** donut fix ships as *retitle to "Cost saved per model"* (`by_model[].cost_saved`) — **no contract change** in Phase A; `by_model` does **not** gain `cost_before`. Extending `by_model` is off the table for Phase A (no QA re-scope; AC-A5/AC-A12 reconcile scope unchanged).
+- **D2 ✅ RATIFIED (PM, B-20b):** `latency` stays **window-global**; F2 fix stands — `latency.p50/p95/p99` render as three KPI cards, no per-bucket latency series, no line chart. A per-bucket latency series is not in the Phase A contract.
+- **O1 ✅ RATIFIED (PM, B-20b):** Providers ships as **per-provider cards now** (satisfies AC-A8 data fidelity); the PA-3 "sortable table" moves to **Phase B polish** — interactive sorting is not an AC-A8 requirement.
+- Effect on §9 test matrix: no changes — items 7 (donut = exactly one `by_model` field, now pinned to `cost_saved`) and 8 (latency cards only) stand as written.
 
 ## 11. Out of scope (Phase A)
 Tenant/key selector UI (API supports `tenant_id`/`api_key_id` filters; no UI until Phase C keys surface — the endpoint param pass-through is trivial if a selector exists, but there is no selector yet). Bucket range picker (from/to) — bucket selector only. Prometheus path (server-side, unaffected).

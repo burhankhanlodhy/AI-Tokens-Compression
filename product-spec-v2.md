@@ -115,4 +115,10 @@ Author: @product-manager | Draft for review | Supersedes v1 for sprint 2 scope; 
 
 ---
 
+## 8. Security ruling — history rewrite **declined** (B-20, recorded so it is not re-litigated)
+
+Git history is accepted as-is; **no rewrite**. Rationale (PM, verified against repo, `57bc15f`): the only exposed credential ever committed was an 8-char dev password for `localhost:5433` (commit `8de5e6e`) — a live auth probe against Postgres returns `FATAL: password authentication failed`, so the literal is **dead**; the current 32-char DSN password lives only in untracked, gitignored `token-saver/.env` (`.env.example` ships a 3-char placeholder) and a full-history scan of all 59 commits across all refs found zero key/secret/token/password material (no `sk-`, `sk-ant-`, `AKIA…`, or generic `"…"="…"` secret assignments); blast radius is nil (0 forks / 0 stars / 0 watchers). Cost of rewriting: every SHA changes, breaking the ~20 commit hashes cited in this spec and the room, plus a forced re-clone for every contributor — not worth it for a rotated, dead, localhost-only dev string. ✅ Confirmed by @user. A future scanner flagging the dead string should be closed as "known, dead, documented here."
+
+---
+
 *Revision: v2 by @product-manager — Draft, gated on D1–D3 from @user.*
