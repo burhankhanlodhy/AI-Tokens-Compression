@@ -22,6 +22,7 @@ except ImportError:  # pragma: no cover
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pg_test_support import PG_BASE  # noqa: E402
 _DB = "ts_cache_test"
+_PRIOR_DSN = os.environ.get("TOKEN_SAVER_PG_DSN")
 
 SCHEMA = (Path(__file__).resolve().parent.parent.parent / "postgres-schema-v2.sql").read_text()
 
@@ -159,7 +160,10 @@ def test_log_request_writes_cache_columns(cache_env):
         assert float(row[1]) == 0.0005
         assert row[2] == "openai"  # provider routed from model prefix
     finally:
-        os.environ.pop("TOKEN_SAVER_PG_DSN", None)
+        if _PRIOR_DSN is None:
+            os.environ.pop("TOKEN_SAVER_PG_DSN", None)
+        else:
+            os.environ["TOKEN_SAVER_PG_DSN"] = _PRIOR_DSN
 
 
 def test_log_request_default_miss(cache_env):
@@ -178,4 +182,7 @@ def test_log_request_default_miss(cache_env):
             ).fetchone()
         assert row[0] == "miss" and float(row[1]) == 0.0
     finally:
-        os.environ.pop("TOKEN_SAVER_PG_DSN", None)
+        if _PRIOR_DSN is None:
+            os.environ.pop("TOKEN_SAVER_PG_DSN", None)
+        else:
+            os.environ["TOKEN_SAVER_PG_DSN"] = _PRIOR_DSN
