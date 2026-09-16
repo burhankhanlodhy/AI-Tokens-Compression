@@ -89,11 +89,11 @@ def _insert_batch(pg: psycopg.Connection, provider_id: int, batch: list[sqlite3.
             INSERT INTO requests (tenant_id, provider_id, ts, model, route,
                 cache_status, input_tokens_before, input_tokens_after,
                 output_tokens, est_cost_before, est_cost_after, cache_savings,
-                latency_ms, compressed, status)
+                l1_tokens_stripped, l1_savings, latency_ms, compressed, status)
             VALUES (%s::uuid, %s, to_timestamp(%s), %s, %s,
                 'miss', %s, %s,
                 %s, %s::numeric, %s::numeric, 0,
-                %s::numeric, %s, %s)
+                %s, %s::numeric, %s::numeric, %s, %s)
             """,
             (
                 DEFAULT_TENANT_ID,
@@ -106,6 +106,8 @@ def _insert_batch(pg: psycopg.Connection, provider_id: int, batch: list[sqlite3.
                 r["output_tokens"],
                 str(Decimal(str(r["est_cost_before"]))),   # text path, not float
                 str(Decimal(str(r["est_cost_after"]))),
+                int(r["l1_tokens_stripped"]) if "l1_tokens_stripped" in r.keys() else 0,
+                str(Decimal(str(r["l1_savings"]))) if "l1_savings" in r.keys() else "0",
                 str(r["latency_ms"]),
                 bool(r["compressed"]),
                 r["status"],
@@ -123,19 +125,31 @@ def _verify(sqlite_conn: sqlite3.Connection, pg: psycopg.Connection) -> dict:
     exact — the text-path cast guarantees no drift is *introduced* below it.
     """
     q = Decimal("0.00000001")  # NUMERIC(14,8) scale
+    sqlite_columns = {
+        row[1] for row in sqlite_conn.execute("PRAGMA table_info(requests)")
+    }
+    # Older SQLite ledgers predate the L1 columns; those rows have the same
+    # semantic defaults as the Postgres schema. Newer ledgers are reconciled
+    # losslessly so a backfill cannot silently discard attribution.
+    l1_tokens_expr = "l1_tokens_stripped" if "l1_tokens_stripped" in sqlite_columns else "0"
+    l1_savings_expr = "l1_savings" if "l1_savings" in sqlite_columns else "0"
     sq = sqlite_conn.execute(
         "SELECT COUNT(*),"
         " COALESCE(SUM(est_cost_before), 0),"
         " COALESCE(SUM(est_cost_after), 0),"
         " COALESCE(SUM(input_tokens_before), 0),"
-        " COALESCE(SUM(output_tokens), 0) FROM requests"
+        " COALESCE(SUM(output_tokens), 0),"
+        f" COALESCE(SUM({l1_tokens_expr}), 0),"
+        f" COALESCE(SUM({l1_savings_expr}), 0) FROM requests"
     ).fetchone()
     pgrow = pg.execute(
         "SELECT COUNT(*),"
         " COALESCE(SUM(est_cost_before), 0),"
         " COALESCE(SUM(est_cost_after), 0),"
         " COALESCE(SUM(input_tokens_before), 0),"
-        " COALESCE(SUM(output_tokens), 0) FROM requests"
+        " COALESCE(SUM(output_tokens), 0),"
+        " COALESCE(SUM(l1_tokens_stripped), 0),"
+        " COALESCE(SUM(l1_savings), 0) FROM requests"
     ).fetchone()
 
     def _norm_pg(v):
@@ -147,6 +161,8 @@ def _verify(sqlite_conn: sqlite3.Connection, pg: psycopg.Connection) -> dict:
         "sum_cost_after": {"sqlite": sq[2], "postgres": _norm_pg(pgrow[2])},
         "sum_input_before": {"sqlite": sq[3], "postgres": pgrow[3]},
         "sum_output": {"sqlite": sq[4], "postgres": pgrow[4]},
+        "sum_l1_tokens_stripped": {"sqlite": sq[5], "postgres": pgrow[5]},
+        "sum_l1_savings": {"sqlite": sq[6], "postgres": _norm_pg(pgrow[6])},
     }
     exact = (
         report["count"]["sqlite"] == report["count"]["postgres"]
@@ -154,6 +170,8 @@ def _verify(sqlite_conn: sqlite3.Connection, pg: psycopg.Connection) -> dict:
         and Decimal(str(sq[2])).quantize(q) == _norm_pg(pgrow[2]).quantize(q)
         and sq[3] == pgrow[3]
         and sq[4] == pgrow[4]
+        and sq[5] == pgrow[5]
+        and Decimal(str(sq[6])).quantize(q) == _norm_pg(pgrow[6]).quantize(q)
     )
     report["match"] = exact
     return report
