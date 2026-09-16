@@ -108,6 +108,27 @@ def test_c3_reserved_content_survives_byte_identically():
     assert out["content"] in RAG_BLOCK
 
 
+# ---------- B2-a: taxonomy v1.1 §4 row 2 by exact name ----------
+
+def test_c3_short_embedding_dropped_by_name():
+    # 8-element `embedding`: below the >32 float-array rule, but taxonomy
+    # row 2 names it exactly — must still drop.
+    blk = json.dumps({
+        "content": "x", "embedding": [0.1] * 8, "vector": [0.2] * 4,
+        "vector_score": 0.99, "source": "a.md",
+    })
+    out = json.loads(clean_text(blk))
+    assert "embedding" not in out and "vector" not in out
+    assert "vector_score" not in out
+    assert out["content"] == "x" and out["source"] == "a.md"
+
+
+def test_c3_embedding_name_outside_rag_shape_untouched():
+    # shape gate still applies: same names in a non-RAG document survive
+    cfg = json.dumps({"embedding": [0.1] * 8, "name": "cfg"})
+    assert json.loads(clean_text(cfg)) == json.loads(cfg)
+
+
 # ---------- §6 determinism contract ----------
 
 def test_idempotent_clean():

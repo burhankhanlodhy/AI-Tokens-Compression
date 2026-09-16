@@ -41,6 +41,9 @@ DEAD_FIELDS = {
     # scoring math
     "score", "relevance", "relevance_score", "similarity", "distance",
     "cosine", "rerank_score",
+    # embeddings / vectors (taxonomy v1.1 §4 row 2, by exact name regardless
+    # of array length — an 8-element `embedding` is still an embedding)
+    "embedding", "vector", "vector_score",
     # internal char/token locators (page locators are PROVENANCE, not here)
     "char_start", "char_end", "token_start", "length", "offset",
     # harness / query-log plumbing
