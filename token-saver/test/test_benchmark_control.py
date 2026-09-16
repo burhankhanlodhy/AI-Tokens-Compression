@@ -60,6 +60,33 @@ def test_header_toggles_conciseness_between_arms(routed):
     assert "concisely" not in full_off.lower()
 
 
+def test_header_toggles_conciseness_with_active_compression(routed, monkeypatch):
+    """Regression for issue #1: the conciseness gate must judge the ORIGINAL
+    user prompt, not the compressed one. LLMLingua shrinks a long question
+    (>=400 chars, trailing '?') below the 400-char cap while keeping the
+    trailing '?', which used to flip the short-question gate and void the
+    A/B arms. Locally this hid because the model wasn't cached and
+    compression silently passed through; CI compresses for real."""
+    from proxy import compression as compression_mod
+
+    def fake_compress_text(text: str) -> str:
+        # Deterministic ~50%-rate stand-in that preserves the trailing '?'.
+        if len(text) < 50:
+            return text
+        return text[: len(text) // 2]
+
+    monkeypatch.setattr(compression_mod, "compress_text", fake_compress_text)
+    (body_on, body_off), _cap = _arms(routed)
+    full_on = json.dumps(body_on["messages"])
+    full_off = json.dumps(body_off["messages"])
+    # sanity: compression actually ran, else this test proves nothing
+    assert fake_compress_text(LONG_USER) in full_on
+    assert fake_compress_text(LONG_USER) in full_off
+    assert full_on != full_off, "arms identical — benchmark would measure nothing"
+    assert "concisely" in full_on.lower()
+    assert "concisely" not in full_off.lower()
+
+
 def test_header_never_leaks_upstream(routed):
     (_on, _off), cap = _arms(routed)
     for req in cap.requests:

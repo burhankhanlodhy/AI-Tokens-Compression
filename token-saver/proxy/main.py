@@ -399,7 +399,13 @@ async def chat_completions(request: Request):
         # Category/length-aware gate (P1-1 evidence): inject only when the
         # user's actual request is long enough for the instruction to pay
         # for itself; short prompts are net-negative.
-        if conciseness_on and should_inject_conciseness(new_messages):
+        # Gate on the ORIGINAL messages, not the compressed ones (issue #1):
+        # the short-question heuristic was calibrated on real user prompts,
+        # and compression can shrink a long prompt below the 400-char cap
+        # while keeping its trailing '?' — flipping the gate and silently
+        # voiding the benchmark A/B arms. Gating pre-compression also keeps
+        # the toggle deterministic regardless of compression outcome.
+        if conciseness_on and should_inject_conciseness(messages):
             new_messages = inject_conciseness(new_messages)
         if new_messages != messages:
             compressed = any(
