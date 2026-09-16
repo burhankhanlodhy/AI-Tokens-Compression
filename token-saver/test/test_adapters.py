@@ -21,6 +21,7 @@ from proxy.providers import (  # noqa: E402
 from proxy.providers.anthropic import AnthropicAdapter  # noqa: E402
 from proxy.providers.base import auth_headers_for, error_from_status  # noqa: E402
 from proxy.providers.openai_compat import OpenAICompatAdapter  # noqa: E402
+from proxy.providers.registry import DEFAULT_REGISTRY  # noqa: E402
 
 
 # ---------------------------------------------------------------- C1 routing
@@ -47,6 +48,19 @@ def test_route_by_model_prefix(model, expected_name):
 def test_route_override_wins():
     reg = ProviderRegistry()
     assert reg.route("gpt-4o", override="openrouter").name == "openrouter"
+
+
+def test_route_disabled_provider_does_not_silently_reroute():
+    """AC-A2: a known-but-disabled provider returns None instead of silently
+    rerouting its models to the default provider; an explicit unknown
+    provider slug also returns None (clear 4xx upstream of dispatch)."""
+    rows = [r for r in DEFAULT_REGISTRY if r.name != "anthropic"]
+    reg = ProviderRegistry(rows=rows)
+    assert reg.route("claude-3-5-sonnet") is None
+    assert reg.route("anthropic/claude-sonnet-5") is None
+    assert reg.route("unknown-provider/model") is None
+    # bare, unclaimed model names still use the documented default
+    assert reg.route("some-unknown-model").name == "openrouter"
 
 
 # ---------------------------------------------------------------- C2 auth
@@ -137,8 +151,25 @@ def test_anthropic_tool_translation():
     tools = [{"type": "function", "function": {
         "name": "get_weather", "description": "w", "parameters": {"type": "object"}}}]
     w = a.translate_request(_norm(tools=tools))
+    # AC-A4: OpenAI `parameters` must be renamed to Anthropic `input_schema`
     assert w.json_body["tools"] == [{"name": "get_weather", "description": "w",
-                                     "parameters": {"type": "object"}}]
+                                     "input_schema": {"type": "object"}}]
+
+
+def test_anthropic_tool_translation_is_idempotent():
+    """AC-A4: already-Anthropic tool definitions pass through unchanged, and
+    OpenAI-only keys (strict) are dropped from wrapped definitions."""
+    a = AnthropicAdapter()
+    anthropic_tool = {"name": "get_weather", "description": "w",
+                      "input_schema": {"type": "object"}}
+    w = a.translate_request(_norm(tools=[anthropic_tool]))
+    assert w.json_body["tools"] == [anthropic_tool]
+    wrapped = [{"type": "function", "function": {
+        "name": "get_weather", "description": "w", "strict": True,
+        "parameters": {"type": "object"}}}]
+    w2 = a.translate_request(_norm(tools=wrapped))
+    assert w2.json_body["tools"] == [{"name": "get_weather", "description": "w",
+                                      "input_schema": {"type": "object"}}]
 
 
 # ---------------------------------------------------------------- C4 response translation

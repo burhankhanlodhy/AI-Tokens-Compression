@@ -43,7 +43,7 @@ def _arms(routed):
             r = c.post("/v1/chat/completions",
                        headers={"Authorization": "Bearer sk-x",
                                 "X-Token-Saver-Conciseness": hdr_val},
-                       json={"model": "z-ai/glm-5.3-flash",
+                       json={"model": "openrouter/z-ai/glm-5.3-flash",
                              "messages": [{"role": "user", "content": LONG_USER}]})
             assert r.status_code == 200, r.text[:150]
             captured.append(json.loads(cap.requests[-1].content))
@@ -104,7 +104,7 @@ def test_no_header_keeps_config_default(routed):
         main_mod.app.state.http_clients = {}
         r = c.post("/v1/chat/completions",
                    headers={"Authorization": "Bearer sk-x"},
-                   json={"model": "z-ai/glm-5.3-flash",
+                   json={"model": "openrouter/z-ai/glm-5.3-flash",
                          "messages": [{"role": "user", "content": LONG_USER}]})
         assert r.status_code == 200
     body = json.loads(cap.requests[0].content)

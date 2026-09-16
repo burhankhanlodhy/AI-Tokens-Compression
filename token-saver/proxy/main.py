@@ -36,6 +36,7 @@ from .kpis import kpis_endpoint
 from . import caching
 from .providers.model import ProviderError
 from .providers.anthropic import AnthropicAdapter
+from .providers.base import error_from_status
 from .providers.registry import PREFIX_ROUTES, DEFAULT_REGISTRY, ProviderRegistry
 
 
@@ -44,15 +45,29 @@ from .providers.registry import PREFIX_ROUTES, DEFAULT_REGISTRY, ProviderRegistr
 _RESHAPE_PROVIDERS = {"anthropic"}
 
 
+class UnknownProviderError(ValueError):
+    """AC-A2: the model string names a provider the registry cannot serve
+    (unregistered slug, or a registered-but-disabled provider)."""
+
+    def __init__(self, model: str):
+        self.model = model
+        super().__init__(
+            f"unknown provider for model '{model}': no enabled provider "
+            "matches it; prefix the model with a registered provider "
+            "(e.g. 'openrouter/...') or correct the model string"
+        )
+
+
 def _provider_for_model(model: str) -> str | None:
-    """Route a model string to a provider name via the registry prefixes."""
-    lowered = model.lower()
-    for prefix, provider in PREFIX_ROUTES.items():
-        if lowered.startswith(prefix) and any(
-            r.name == provider for r in DEFAULT_REGISTRY
-        ):
-            return provider
-    return None
+    """Route a model string to a provider name via the shared registry.
+
+    AC-A2: ProviderRegistry.route() is the single source of truth — this no
+    longer re-walks PREFIX_ROUTES with different fallback semantics (which
+    could disagree with the adapter actually used for dispatch). Returns
+    None exactly when route() has no enabled provider for the model.
+    """
+    adapter = ProviderRegistry().route(model)
+    return adapter.name if adapter is not None else None
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("token-saver")
@@ -290,19 +305,23 @@ async def _forward_routed(request: Request, model: str, payload: bytes,
     """PA-1 live-path dispatch: adapter + provider base URL for a model.
 
     Returns (response, provider_name). Falls back to legacy single-upstream
-    _forward when provider_routing is off or the model maps to no provider.
+    _forward when provider_routing is off. Raises UnknownProviderError when
+    routing is on and the registry has no enabled provider for the model
+    (AC-A2: a clear 4xx, never a silent reroute to the default provider).
     """
     s = get_settings()
-    provider = _provider_for_model(model)
-    if not s.provider_routing or not provider:
-        resp = await _forward(request, payload, "chat/completions")
-        return resp, (provider or "legacy")
     registry = ProviderRegistry()
     adapter = registry.route(model)
-    base_url = s.provider_base_urls.get(provider, s.upstream_base_url)
+    provider = adapter.name if adapter is not None else None
+    if not s.provider_routing:
+        resp = await _forward(request, payload, "chat/completions")
+        return resp, (provider or "legacy")
+    if adapter is None:
+        raise UnknownProviderError(model)
+    base_url = s.provider_base_urls.get(adapter.name, s.upstream_base_url)
     resp = await _forward_via_adapter(request, model, payload, adapter,
                                       base_url, stream)
-    return resp, provider
+    return resp, adapter.name
 
 
 @app.post("/v1/chat/completions")
@@ -432,16 +451,28 @@ async def chat_completions(request: Request):
     payload = json.dumps(body).encode()
 
     # --- C7: upstream transport failures surface as normalized errors ---
+    # AC-A9: transport failures and relayed provider errors share ONE
+    # normalizer (_normalized_error) so every client-facing failure has the
+    # same envelope shape regardless of where it originated.
     try:
         resp, provider = await _forward_routed(request, model, payload, stream=True)
+    except UnknownProviderError as exc:
+        _log(model, route or "passthrough", in_before, in_after, 0,
+             (time.perf_counter() - started) * 1000, compressed, 400,
+             cache_status=cache_status)
+        return JSONResponse(
+            status_code=400,
+            content={"error": {"message": str(exc),
+                               "type": "unknown_provider", "code": 400}},
+        )
     except httpx.TimeoutException as exc:
         _log(model, route or "passthrough", in_before, in_after, 0,
              (time.perf_counter() - started) * 1000, compressed, 504,
              cache_status=cache_status)
         return JSONResponse(
             status_code=504,
-            content={"error": {"message": f"upstream timeout: {exc}",
-                               "type": "upstream_timeout", "code": 504}},
+            content=_normalized_error(504, f"upstream timeout: {exc}",
+                                      kind="upstream_timeout"),
         )
     except httpx.ConnectError as exc:
         _log(model, route or "passthrough", in_before, in_after, 0,
@@ -449,8 +480,8 @@ async def chat_completions(request: Request):
              cache_status=cache_status)
         return JSONResponse(
             status_code=502,
-            content={"error": {"message": f"upstream unreachable: {exc}",
-                               "type": "upstream_unreachable", "code": 502}},
+            content=_normalized_error(502, f"upstream unreachable: {exc}",
+                                      kind="upstream_unreachable"),
         )
 
     if injected_reasoning and resp.status_code == 400 and provider in ("openrouter", "openai", "legacy"):
@@ -482,6 +513,37 @@ async def chat_completions(request: Request):
         in_after=in_after, compressed=compressed, streaming=streaming,
         cache_status=cache_status, l1_tokens_stripped=l1_tokens_stripped,
     )
+
+
+def _normalized_error(status: int, message: str, *,
+                      kind: str | None = None) -> dict:
+    """ONE shared client-facing error envelope (AC-A9).
+
+    Both the transport-failure branches and the non-streaming relay build
+    errors through here, so upstream timeouts, connect failures, and relayed
+    provider error statuses all surface the same normalized shape
+    {error: {message, type, code}} instead of raw provider bodies.
+    `kind` overrides error_from_status for transport-level failures (504
+    timeout / 502 unreachable), whose kinds are not status-derived.
+    """
+    err = error_from_status(status, message)
+    return {"error": {"message": message, "type": kind or err.kind,
+                      "code": status}}
+
+
+def _error_message_from_body(content: bytes) -> str:
+    """Best-effort provider error message out of an upstream error body."""
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return content.decode(errors="replace")
+    if isinstance(data, dict):
+        err = data.get("error")
+        if isinstance(err, dict) and err.get("message"):
+            return str(err["message"])
+        if isinstance(err, str) and err:
+            return err
+    return content.decode(errors="replace")
 
 
 async def _relay(
@@ -681,6 +743,27 @@ async def _relay(
 
     output_tokens = 0
     reshaped_obj: dict | list | None = None
+    # --- AC-A9: relayed provider errors surface the shared envelope ---
+    # Every JSON error status (401/403/429/5xx/...) from any provider goes
+    # through _normalized_error — the same builder the transport-failure
+    # branches use — instead of relaying the provider body verbatim.
+    # Non-JSON error bodies (HTML error pages) still relay raw.
+    if resp.status_code >= 400:
+        try:
+            json.loads(content)
+            json_error = True
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            json_error = False
+        if json_error:
+            _log(model, route, in_before, in_after, 0, latency_ms,
+                 compressed, resp.status_code, cache_status=cache_status,
+                 l1_tokens_stripped=l1_tokens_stripped, l1_savings=l1_savings)
+            return JSONResponse(
+                content=_normalized_error(
+                    resp.status_code, _error_message_from_body(content)),
+                status_code=resp.status_code,
+                headers=out_headers,
+            )
     try:
         parsed = json.loads(reshaped) if isinstance(reshaped, (str, bytes)) else reshaped
         reshaped_obj = parsed

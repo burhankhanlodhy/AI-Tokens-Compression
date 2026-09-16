@@ -68,15 +68,35 @@ class ProviderRegistry:
                 )
         self.default_provider = "openrouter"
 
-    def route(self, model: str, override: str | None = None) -> ProviderAdapter:
-        """Model string -> adapter. Prefix wins, then override, then default."""
+    def route(self, model: str, override: str | None = None) -> ProviderAdapter | None:
+        """Model string -> adapter, or None when no enabled provider can
+        serve it.
+
+        AC-A2 (no silent fallback): a model that explicitly names a provider
+        ("openai/gpt-4o", "unknown-provider/x", "claude-*" with anthropic
+        disabled) must either reach that provider or fail with a clear 4xx —
+        it must never silently reroute to another provider's upstream, and
+        Anthropic-shaped traffic must never land on an OpenAI-compat adapter.
+        Bare, unclaimed model names ("some-unknown-model") still resolve to
+        the documented default provider. Order: override, then prefix, then
+        explicit-provider-slug check, then default.
+        """
         if override and override in self._adapters:
             return self._adapters[override]
         lowered = model.lower()
         for prefix, provider in PREFIX_ROUTES.items():
-            if lowered.startswith(prefix) and provider in self._adapters:
-                return self._adapters[provider]
-        return self._adapters[self.default_provider]
+            if lowered.startswith(prefix):
+                # Known provider prefix: serve it, or None when that provider
+                # is disabled/absent — never fall through to the default.
+                return self._adapters.get(provider)
+        if "/" in model:
+            # "provider/model" form with an unregistered provider slug: the
+            # client named a provider we don't have — honor the intent or
+            # fail loudly instead of silently defaulting (AC-A2).
+            slug = model.split("/", 1)[0].lower()
+            if slug not in {row.name for row in self.rows}:
+                return None
+        return self._adapters.get(self.default_provider)
 
     def get(self, name: str) -> ProviderAdapter | None:
         return self._adapters.get(name)

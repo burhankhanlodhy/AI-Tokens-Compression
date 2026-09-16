@@ -66,6 +66,28 @@ class AnthropicAdapter:
                 parts.append({"type": "text", "text": p.text or ""})
         return parts
 
+    @staticmethod
+    def _anthropic_tool(tool: Any) -> Any:
+        """One tool definition -> Anthropic {name, description, input_schema}.
+
+        Idempotent (AC-A4): already-Anthropic tools pass through unchanged;
+        OpenAI-shaped tools — wrapped ({type: function, function: {...}}) or
+        bare — get the required parameters->input_schema rename, and
+        OpenAI-only keys (strict) are dropped because Anthropic rejects them.
+        """
+        if not isinstance(tool, dict):
+            return tool
+        fn = tool.get("function") if isinstance(tool.get("function"), dict) else tool
+        if not isinstance(fn, dict) or "input_schema" in fn:
+            return fn if isinstance(fn, dict) else tool
+        translated: dict[str, Any] = {"name": fn.get("name", "")}
+        if fn.get("description") is not None:
+            translated["description"] = fn["description"]
+        translated["input_schema"] = fn.get("parameters") or {
+            "type": "object", "properties": {},
+        }
+        return translated
+
     def translate_request(self, req: NormalizedRequest) -> AdapterRequest:
         body: dict[str, Any] = {
             "model": self.normalize_model(req.model),
@@ -93,11 +115,7 @@ class AnthropicAdapter:
                 ]}
             body["messages"].append(entry)
         if req.tools:
-            # OpenAI {type:function,function:{name,description,parameters}}
-            # -> Anthropic {name, description, input_schema}
-            body["tools"] = [
-                t.get("function", t) for t in req.tools
-            ]
+            body["tools"] = [self._anthropic_tool(t) for t in req.tools]
         if req.stream:
             body["stream"] = True
         # `reasoning` is OpenAI/OpenRouter-shaped; Anthropic has no such param.
