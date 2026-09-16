@@ -15,7 +15,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 
 from . import stats
@@ -835,7 +835,12 @@ async def dashboard_js():
 @app.get("/api/kpis")
 async def api_kpis(
     bucket: str = "day",
-    from_ts: str | None = None,
+    # B-8: the documented contract (spec v2 §3) is ?from=&to= — the aliases
+    # MUST be bound here on the real FastAPI route; the wrapper is the single
+    # binding site for every /api/kpis param.
+    from_: str | None = Query(None, alias="from"),
+    to_: str | None = Query(None, alias="to"),
+    from_ts: str | None = None,  # undocumented legacy names, back-compat
     to_ts: str | None = None,
     tenant_id: str | None = None,
     api_key_id: str | None = None,
@@ -847,7 +852,8 @@ async def api_kpis(
     AC-A7: tenant_id/api_key_id scope every aggregate before it is computed
     (absent selectors = aggregate across all tenants).
     """
-    return await kpis_endpoint(bucket=bucket, from_ts=from_ts, to_ts=to_ts,
+    return await kpis_endpoint(bucket=bucket, from_ts=from_ or from_ts,
+                               to_ts=to_ or to_ts,
                                tenant_id=tenant_id, api_key_id=api_key_id)
 
 

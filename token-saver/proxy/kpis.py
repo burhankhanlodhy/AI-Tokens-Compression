@@ -13,7 +13,6 @@ import os
 from typing import Any
 
 import psycopg
-from fastapi import Query
 from fastapi.responses import JSONResponse
 
 BUCKETS = {"minute": "minute", "hour": "hour", "day": "day"}
@@ -198,12 +197,16 @@ def _fetch_kpis(
 
 
 async def kpis_endpoint(
-    bucket: str = Query("day"),
-    from_ts: str | None = Query(None, alias="from"),
-    to_ts: str | None = Query(None, alias="to"),
-    tenant_id: str | None = Query(None, description="AC-A7: scope all KPIs to one tenant"),
-    api_key_id: str | None = Query(None, description="AC-A7: scope all KPIs to one proxy key"),
+    bucket: str = "day",
+    from_ts: str | None = None,
+    to_ts: str | None = None,
+    tenant_id: str | None = None,
+    api_key_id: str | None = None,
 ):
+    """Direct-call endpoint (B-8: no Query bindings here — Query defaults
+    leak as unresolved objects when invoked outside FastAPI, which is how
+    the HTTP `from`/`to` filter went dead; all HTTP binding lives on the
+    api_kpis wrapper in main.py, the single binding site)."""
     if bucket not in BUCKETS:
         return JSONResponse({"error": f"bucket must be one of {sorted(BUCKETS)}"},
                             status_code=400)
