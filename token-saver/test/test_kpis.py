@@ -271,10 +271,70 @@ def test_invalid_bucket_400(kpi_env):
     assert resp.status_code == 400
 
 
-def test_ledger_unavailable_503(kpi_env):
+# ------------------------------------------------------------ B-10: param validation (400, field-named)
+
+# (param, malformed value, field the error message must name)
+# NOTE: from/to are validated under their own names, but the direct-call
+# signature only carries from_ts/to_ts (the wrapper merges the aliases) —
+# so the direct-call probe passes the value via the legacy kwarg.
+MALFORMED_PROBES = [
+    ("bucket", "bogus", "bucket", "bucket"),             # pre-existing contract, kept as regression
+    ("from", "not-a-date", "from", "from_ts"),
+    ("to", "garbage", "to", "to_ts"),
+    ("from_ts", "not-a-date", "from", "from_ts"),        # legacy alias — validated too
+    ("to_ts", "garbage", "to", "to_ts"),
+    ("tenant_id", "not-a-uuid", "tenant_id", "tenant_id"),
+    ("api_key_id", "nope", "api_key_id", "api_key_id"),
+    ("from", "2026-01-01'; DROP TABLE requests;--", "from", "from_ts"),  # SQL-ish: 400 before PG
+]
+
+
+@pytest.mark.parametrize("param,value,field,kwarg", MALFORMED_PROBES)
+def test_malformed_param_400_not_500(kpi_env, param, value, field, kwarg):
+    """B-10: every malformed filter param is a client error (400) with a
+    field-named message — matching ?bucket= — never a bare 500."""
     import asyncio
     kpis = kpi_env
-    kpis._dsn = lambda: "postgresql://invalid-host:59999/none"
+    resp = asyncio.run(kpis.kpis_endpoint(**{"bucket": "day", kwarg: value}))
+    assert resp.status_code == 400, (param, resp.body.decode())
+    assert field in resp.body.decode()
+
+
+def test_wire_malformed_params_400(kpi_env):
+    """B-10 acceptance over the wire: probes through the real ASGI app (the
+    api_kpis wrapper — the single binding site), the way the 500s were found.
+    A valid selector must still pass validation and return 200."""
+    from fastapi.testclient import TestClient
+    from proxy.main import app
+    kpis = kpi_env
+    client = TestClient(app)
+    for url, field in [("/api/kpis?bucket=bogus", "bucket"),
+                       ("/api/kpis?from=not-a-date", "from"),
+                       ("/api/kpis?to=garbage", "to"),
+                       ("/api/kpis?from_ts=not-a-date", "from"),
+                       ("/api/kpis?tenant_id=not-a-uuid", "tenant_id"),
+                       ("/api/kpis?api_key_id=nope", "api_key_id"),
+                       ("/api/kpis?from=2026-01-01'; DROP TABLE requests;--", "from")]:
+        resp = client.get(url)
+        assert resp.status_code == 400, (url, resp.status_code, resp.text)
+        assert field in resp.json()["error"], (url, resp.json())
+    # positive controls: valid values pass validation and reach the ledger
+    ok_range = client.get("/api/kpis?from=2026-09-14&to=2026-09-15")
+    assert ok_range.status_code == 200, ok_range.text
+    assert ok_range.json()["overview"]["requests"] == 4
+    ok_tenant = client.get(
+        "/api/kpis?tenant_id=00000000-0000-0000-0000-000000000000")
+    assert ok_tenant.status_code == 200, ok_tenant.text
+    assert ok_tenant.json()["overview"]["requests"] == 6
+
+
+def test_ledger_unavailable_503(kpi_env, monkeypatch):
+    import asyncio
+    kpis = kpi_env
+    # monkeypatch restores the real _dsn — an unconditional overwrite here
+    # poisoned every later module-scoped test (same defect class as B-9b)
+    monkeypatch.setattr(kpis, "_dsn",
+                        lambda: "postgresql://invalid-host:59999/none")
     resp = asyncio.run(kpis.kpis_endpoint(bucket="day", from_ts=None, to_ts=None))
     assert resp.status_code == 503
     assert "error" in resp.body.decode()

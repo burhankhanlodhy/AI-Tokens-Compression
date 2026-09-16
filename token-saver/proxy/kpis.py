@@ -9,6 +9,8 @@ Contract: GET /api/kpis?bucket=minute|hour|day&from=<iso>&to=<iso>
 """
 from __future__ import annotations
 
+import uuid
+from datetime import date, datetime
 from typing import Any
 
 import psycopg
@@ -194,6 +196,37 @@ def _fetch_kpis(
     }
 
 
+def _is_iso_date(value: str) -> bool:
+    """Accept what the ledger range filter accepts: an ISO date
+    (YYYY-MM-DD) or an ISO datetime — what Postgres to_timestamp parses."""
+    for parser in (datetime.fromisoformat, date.fromisoformat):
+        try:
+            parser(value)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+def _is_uuid(value: str) -> bool:
+    """requests.tenant_id / requests.api_key_id are UUID columns
+    (postgres-schema-v2.sql) — a non-UUID would fail server-side with 500."""
+    try:
+        uuid.UUID(value)
+    except (ValueError, AttributeError):
+        return False
+    return True
+
+
+def _param_error(field: str, value: str, expected: str) -> JSONResponse:
+    """B-10: malformed filter params are client errors (400), field-named —
+    not bare 500s from server-side casts."""
+    return JSONResponse(
+        {"error": f"{field} must be {expected} (got {value!r})"},
+        status_code=400,
+    )
+
+
 async def kpis_endpoint(
     bucket: str = "day",
     from_ts: str | None = None,
@@ -208,6 +241,16 @@ async def kpis_endpoint(
     if bucket not in BUCKETS:
         return JSONResponse({"error": f"bucket must be one of {sorted(BUCKETS)}"},
                             status_code=400)
+    # B-10: validate before any DB contact. `from`/`to` are merged into
+    # from_ts/to_ts by the wrapper, so these checks cover both the documented
+    # names and the legacy aliases; tenant_id/api_key_id must be UUIDs.
+    for _field, _value in (("from", from_ts), ("to", to_ts)):
+        if _value is not None and not _is_iso_date(_value):
+            return _param_error(_field, _value,
+                                "an ISO date or datetime (YYYY-MM-DD[THH:MM:SS])")
+    for _field, _value in (("tenant_id", tenant_id), ("api_key_id", api_key_id)):
+        if _value is not None and not _is_uuid(_value):
+            return _param_error(_field, _value, "a UUID")
     try:
         data = _fetch_kpis(bucket, from_ts, to_ts,
                            tenant_id=tenant_id, api_key_id=api_key_id)
