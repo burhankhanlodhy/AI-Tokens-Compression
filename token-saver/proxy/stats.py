@@ -94,6 +94,7 @@ def log_request(
     cache_savings: float = 0.0,
     l1_tokens_stripped: int = 0,
     l1_savings: float = 0.0,
+    provider: str | None = None,
 ) -> None:
     """Append to the request ledger.
 
@@ -116,6 +117,7 @@ def log_request(
             latency_ms=latency_ms, compressed=compressed, status=status,
             cache_status=cache_status, cache_savings=cache_savings,
             l1_tokens_stripped=l1_tokens_stripped, l1_savings=l1_savings,
+            provider=provider,
         )
         return
     with _lock, get_conn() as conn:
@@ -146,21 +148,26 @@ def _log_postgres(
     *, model, route, input_tokens_before, input_tokens_after, output_tokens,
     est_cost_before, est_cost_after, latency_ms, compressed, status,
     cache_status, cache_savings, l1_tokens_stripped=0, l1_savings=0.0,
+    provider=None,
 ) -> None:
     import psycopg
 
     dsn = os.environ["TOKEN_SAVER_PG_DSN"]
     with psycopg.connect(dsn, connect_timeout=3) as conn:
-        # default tenant + routed provider (legacy/OpenAICompat by default);
-        # provider resolution uses the same prefix table as the cache layer.
-        from .providers.registry import PREFIX_ROUTES, DEFAULT_REGISTRY
+        # B-24 (AC-A12): the live path passes the adapter-resolved provider
+        # name (the registry row's own name), so config-added providers are
+        # attributed to themselves instead of falling back to 'legacy'.
+        # Direct log_request callers (tests, seeds) without a provider keep
+        # the historical prefix-table derivation.
+        if provider is None:
+            from .providers.registry import PREFIX_ROUTES, DEFAULT_REGISTRY
 
-        lowered = model.lower()
-        provider = next(
-            (p for pre, p in PREFIX_ROUTES.items() if lowered.startswith(pre)
-             and any(r.name == p for r in DEFAULT_REGISTRY)),
-            None,
-        )
+            lowered = model.lower()
+            provider = next(
+                (p for pre, p in PREFIX_ROUTES.items() if lowered.startswith(pre)
+                 and any(r.name == p for r in DEFAULT_REGISTRY)),
+                None,
+            )
         conn.execute(
             """
             INSERT INTO requests (tenant_id, provider_id, model, route,

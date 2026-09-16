@@ -61,12 +61,26 @@ class ProviderRegistry:
             if not row.enabled:
                 continue
             if row.adapter_class == "AnthropicAdapter":
-                self._adapters[row.name] = AnthropicAdapter()
+                self._adapters[row.name] = AnthropicAdapter(name=row.name)
             else:
                 self._adapters[row.name] = OpenAICompatAdapter(
                     name=row.name, auth_style=row.auth_style
                 )
         self.default_provider = "openrouter"
+
+    def base_url_for(self, name: str) -> str | None:
+        """The base_url recorded on the registry row.
+
+        B-24 (AC-A1 x AC-A2): the row is the source of truth for
+        config-added providers — without this, a row-only provider's traffic
+        silently egresses to the default upstream host carrying the caller's
+        key. Built-in providers keep the documented settings-dict override
+        surface (config.py provider_base_urls).
+        """
+        for row in self.rows:
+            if row.name == name:
+                return row.base_url
+        return None
 
     def route(self, model: str, override: str | None = None) -> ProviderAdapter | None:
         """Model string -> adapter, or None when no enabled provider can
@@ -90,12 +104,17 @@ class ProviderRegistry:
                 # is disabled/absent — never fall through to the default.
                 return self._adapters.get(provider)
         if "/" in model:
-            # "provider/model" form with an unregistered provider slug: the
-            # client named a provider we don't have — honor the intent or
-            # fail loudly instead of silently defaulting (AC-A2).
             slug = model.split("/", 1)[0].lower()
-            if slug not in {row.name for row in self.rows}:
-                return None
+            if slug in {row.name for row in self.rows}:
+                # Registered row (built-in OR config-added, AC-A1): route to
+                # its own adapter — .get() yields None when the row is
+                # disabled, so a disabled provider never silently reroutes
+                # (AC-A2, B-24).
+                return self._adapters.get(slug)
+            # Explicit "provider/model" with an unregistered provider slug:
+            # the client named a provider we don't have — honor the intent
+            # or fail loudly instead of silently defaulting (AC-A2).
+            return None
         return self._adapters.get(self.default_provider)
 
     def get(self, name: str) -> ProviderAdapter | None:
@@ -105,7 +124,7 @@ class ProviderRegistry:
         """Build/return the adapter for a registry row (used by tests/factories)."""
         if row.name not in self._adapters:
             if row.adapter_class == "AnthropicAdapter":
-                self._adapters[row.name] = AnthropicAdapter()
+                self._adapters[row.name] = AnthropicAdapter(name=row.name)
             else:
                 self._adapters[row.name] = OpenAICompatAdapter(
                     name=row.name, auth_style=row.auth_style

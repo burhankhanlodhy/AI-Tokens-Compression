@@ -40,9 +40,10 @@ from .providers.base import error_from_status
 from .providers.registry import PREFIX_ROUTES, DEFAULT_REGISTRY, ProviderRegistry
 
 
-# Providers whose wire shape differs from the client's OpenAI shape — only
-# these need response/stream translation. OpenAI-compat providers pass through.
-_RESHAPE_PROVIDERS = {"anthropic"}
+# Response reshaping is adapter-CLASS-driven (C4, B-24): any AnthropicAdapter
+# needs /v1/messages -> OpenAI translation, whatever name its registry row
+# carries (AC-A1 config rows must not lose reshaping because their name is
+# not the built-in "anthropic"). OpenAI-compat providers pass through.
 
 
 class UnknownProviderError(ValueError):
@@ -318,7 +319,13 @@ async def _forward_routed(request: Request, model: str, payload: bytes,
         return resp, (provider or "legacy")
     if adapter is None:
         raise UnknownProviderError(model)
-    base_url = s.provider_base_urls.get(adapter.name, s.upstream_base_url)
+    # B-24 (AC-A1 x AC-A2): base URL precedence — the documented settings
+    # override for built-ins, then the row's own base_url for config-added
+    # providers (never the default upstream host with the caller's key),
+    # then the legacy upstream.
+    base_url = (s.provider_base_urls.get(adapter.name)
+                or registry.base_url_for(adapter.name)
+                or s.upstream_base_url)
     resp = await _forward_via_adapter(request, model, payload, adapter,
                                       base_url, stream)
     return resp, adapter.name
@@ -512,6 +519,10 @@ async def chat_completions(request: Request):
         resp, started, model=model, route=route, in_before=in_before,
         in_after=in_after, compressed=compressed, streaming=streaming,
         cache_status=cache_status, l1_tokens_stripped=l1_tokens_stripped,
+        # B-24/AC-A12: attribute the ledger to the row the request actually
+        # served under. Routing off = legacy single-upstream: keep the
+        # historical prefix-table attribution (provider=None).
+        provider=provider if s.provider_routing else None,
     )
 
 
@@ -558,8 +569,15 @@ async def _relay(
     streaming: bool = False,
     cache_status: str = "miss",
     l1_tokens_stripped: int = 0,
+    provider: str | None = None,
 ):
-    """Stream or buffer the upstream response back, then log stats."""
+    """Stream or buffer the upstream response back, then log stats.
+
+    `provider` is the adapter-resolved registry row name from dispatch
+    (B-24/AC-A12): the ledger must attribute the row the request actually
+    served under, not a prefix-table guess. None keeps the historical
+    prefix-table derivation in the ledger layer.
+    """
     s = get_settings()
     latency_ms = (time.perf_counter() - started) * 1000
     # B3 attribution: L1 savings are computed at the clean step and logged
@@ -581,7 +599,7 @@ async def _relay(
         # OpenAI shape (C4); OpenAI-compat/legacy streams pass through raw.
         needs_stream_translation = (
             s.provider_routing
-            and (p := _provider_for_model(model)) in _RESHAPE_PROVIDERS
+            and isinstance(ProviderRegistry().route(model), AnthropicAdapter)
             and resp.status_code == 200
             and "text/event-stream" in resp.headers.get("content-type", "")
         )
@@ -605,7 +623,8 @@ async def _relay(
                      latency_ms, compressed, resp.status_code,
                      cache_status=cache_status,
                      l1_tokens_stripped=l1_tokens_stripped,
-                     l1_savings=l1_savings)
+                     l1_savings=l1_savings,
+                     provider=provider)
 
         async def translated_streamer():
             """Anthropic SSE -> OpenAI chat.completion.chunk SSE (C4).
@@ -716,7 +735,8 @@ async def _relay(
                      latency_ms, compressed, resp.status_code,
                      cache_status=cache_status,
                      l1_tokens_stripped=l1_tokens_stripped,
-                     l1_savings=l1_savings)
+                     l1_savings=l1_savings,
+                     provider=provider)
 
         return StreamingResponse(
             translated_streamer() if needs_stream_translation else raw_streamer(),
@@ -734,8 +754,8 @@ async def _relay(
     s2 = get_settings()
     reshaped = content
     if s2.provider_routing:
-        provider = _provider_for_model(model)
-        if provider in _RESHAPE_PROVIDERS and resp.status_code == 200:
+        if (isinstance(ProviderRegistry().route(model), AnthropicAdapter)
+                and resp.status_code == 200):
             try:
                 reshaped = _normalize_to_openai(json.loads(content), model)
             except (json.JSONDecodeError, AttributeError, KeyError, TypeError):
@@ -757,7 +777,8 @@ async def _relay(
         if json_error:
             _log(model, route, in_before, in_after, 0, latency_ms,
                  compressed, resp.status_code, cache_status=cache_status,
-                 l1_tokens_stripped=l1_tokens_stripped, l1_savings=l1_savings)
+                 l1_tokens_stripped=l1_tokens_stripped, l1_savings=l1_savings,
+                 provider=provider)
             return JSONResponse(
                 content=_normalized_error(
                     resp.status_code, _error_message_from_body(content)),
@@ -774,7 +795,8 @@ async def _relay(
          latency_ms, compressed, resp.status_code,
          cache_status=cache_status,
          l1_tokens_stripped=l1_tokens_stripped,
-         l1_savings=l1_savings)
+         l1_savings=l1_savings,
+         provider=provider)
     if reshaped_obj is not None:
         return JSONResponse(content=reshaped_obj, status_code=resp.status_code,
                             headers=out_headers)
@@ -817,7 +839,8 @@ LEDGER_WRITE_FAILURES = 0
 
 def _log(model, route, in_before, in_after, output_tokens,
          latency_ms, compressed, status, cache_status="miss",
-         cache_savings=0.0, l1_tokens_stripped=0, l1_savings=0.0):
+         cache_savings=0.0, l1_tokens_stripped=0, l1_savings=0.0,
+         provider=None):
     global LEDGER_WRITE_FAILURES
     try:
         cost_before = estimate_cost(model, in_before, output_tokens)
@@ -830,6 +853,7 @@ def _log(model, route, in_before, in_after, output_tokens,
             cache_status=cache_status, cache_savings=cache_savings,
             l1_tokens_stripped=l1_tokens_stripped,
             l1_savings=l1_savings,
+            provider=provider,
         )
         saved = in_before - in_after
         if saved > 0:

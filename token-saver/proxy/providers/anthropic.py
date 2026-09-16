@@ -25,8 +25,12 @@ ANTHROPIC_VERSION = "2023-06-01"
 class AnthropicAdapter:
     name = "anthropic"
 
-    def __init__(self, messages_path: str = "/v1/messages"):
+    def __init__(self, messages_path: str = "/v1/messages", name: str | None = None):
         self.messages_path = messages_path
+        # B-24 (AC-A1): a config-added Anthropic-class row must route and be
+        # attributed under ITS row name, not the hardcoded built-in name.
+        if name is not None:
+            self.name = name
 
     # ---- routing ----
 

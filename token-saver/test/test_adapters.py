@@ -21,7 +21,11 @@ from proxy.providers import (  # noqa: E402
 from proxy.providers.anthropic import AnthropicAdapter  # noqa: E402
 from proxy.providers.base import auth_headers_for, error_from_status  # noqa: E402
 from proxy.providers.openai_compat import OpenAICompatAdapter  # noqa: E402
-from proxy.providers.registry import DEFAULT_REGISTRY  # noqa: E402
+from proxy.providers.registry import (  # noqa: E402
+    DEFAULT_REGISTRY,
+    ProviderRegistry,
+    ProviderRow,
+)
 
 
 # ---------------------------------------------------------------- C1 routing
@@ -61,6 +65,39 @@ def test_route_disabled_provider_does_not_silently_reroute():
     assert reg.route("unknown-provider/model") is None
     # bare, unclaimed model names still use the documented default
     assert reg.route("some-unknown-model").name == "openrouter"
+
+
+# ------------------------------------- B-24 config-row providers (AC-A1 x AC-A2)
+
+def test_config_row_provider_routes_to_its_own_adapter():
+    """A config-added (row-only) provider routes to its own adapter, not the
+    default provider — the AC-A1 'no code change' path must actually work."""
+    row = ProviderRow("myconfigprovider", "https://myhost.example/v1",
+                      "OpenAICompatAdapter", "bearer")
+    reg = ProviderRegistry(rows=DEFAULT_REGISTRY + [row])
+    adapter = reg.route("myconfigprovider/mistral-small")
+    assert adapter is not None and adapter.name == "myconfigprovider"
+    assert reg.base_url_for("myconfigprovider") == "https://myhost.example/v1"
+
+
+def test_disabled_config_row_does_not_silently_reroute():
+    """B-24: disabling a config-added row returns None from route() — never
+    a silent reroute to the default provider (AC-A2 in both directions)."""
+    row = ProviderRow("myconfigprovider", "https://myhost.example/v1",
+                      "OpenAICompatAdapter", "bearer", enabled=False)
+    reg = ProviderRegistry(rows=DEFAULT_REGISTRY + [row])
+    assert reg.route("myconfigprovider/mistral-small") is None
+
+
+def test_anthropic_class_config_row_keeps_row_name():
+    """B-24: AnthropicAdapter no longer hardcodes the built-in name — a row
+    named 'corp-anthropic' routes and attributes under its own name."""
+    row = ProviderRow("corp-anthropic", "https://corp-gw.example",
+                      "AnthropicAdapter", "x-api-key")
+    reg = ProviderRegistry(rows=DEFAULT_REGISTRY + [row])
+    adapter = reg.route("corp-anthropic/claude-sonnet-5")
+    assert adapter is not None and adapter.name == "corp-anthropic"
+    assert adapter.messages_path == "/v1/messages"
 
 
 # ---------------------------------------------------------------- C2 auth

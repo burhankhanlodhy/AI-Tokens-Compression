@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -173,6 +174,78 @@ def test_routing_off_is_legacy_passthrough(monkeypatch):
         assert cap.requests[0].url.path.endswith("/chat/completions")
         body = json.loads(cap.requests[0].content)
         assert body["messages"][0]["role"] == "system"
+    main_mod._client_factory = None
+    get_settings.cache_clear()
+
+
+# ------------------------------------- B-24 config-row providers end-to-end
+
+def test_config_row_provider_reaches_its_own_host(monkeypatch):
+    """B-24 (AC-A1 x AC-A2): a synthetic config-only provider row must reach
+    ITS OWN base_url through its own adapter — never the default upstream
+    host carrying the caller's key (the credential-egress defect) — and a
+    disabled row must 4xx with zero upstream egress."""
+    from proxy.providers.registry import DEFAULT_REGISTRY, ProviderRow
+
+    row = ProviderRow("rowonly", "https://rowhost.example/v1",
+                      "OpenAICompatAdapter", "bearer")
+    monkeypatch.setenv("PROVIDER_ROUTING", "true")
+    monkeypatch.setenv("CACHE_ENABLED", "false")
+    monkeypatch.delenv("TOKEN_SAVER_PG_DSN", raising=False)
+    monkeypatch.setenv("DATABASE_PATH", tempfile.mktemp(suffix=".db"))
+    get_settings.cache_clear()
+    from proxy import main as main_mod
+
+    real_registry = main_mod.ProviderRegistry
+    monkeypatch.setattr(
+        main_mod, "ProviderRegistry",
+        lambda rows=None: real_registry(
+            DEFAULT_REGISTRY + [row] if rows is None else rows),
+        raising=False)
+
+    class _RowHostTransport(_CaptureTransport):
+        async def handle_async_request(self, request):
+            self.requests.append(request)
+            return httpx.Response(200, json={
+                "id": "c1", "object": "chat.completion",
+                "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                "model": "mistral-small"})
+
+    cap = _RowHostTransport()
+    main_mod._client_factory = lambda base_url, timeout: httpx.AsyncClient(
+        base_url=base_url, timeout=timeout, transport=cap)
+    with TestClient(main_mod.app) as c:
+        main_mod.app.state.http = None
+        main_mod.app.state.http_clients = {}
+        r = c.post("/v1/chat/completions",
+                   headers={"Authorization": "Bearer sk-x"},
+                   json={"model": "rowonly/mistral-small",
+                         "messages": [{"role": "user", "content": "hi"}]})
+        assert r.status_code == 200, r.text[:200]
+        assert str(cap.requests[0].url).startswith(
+            "https://rowhost.example/v1/chat/completions")
+    main_mod._client_factory = None
+
+    # Disabled row: clear 4xx, and the request never egresses anywhere.
+    disabled_row = replace(row, enabled=False)
+    monkeypatch.setattr(
+        main_mod, "ProviderRegistry",
+        lambda rows=None: real_registry(
+            DEFAULT_REGISTRY + [disabled_row] if rows is None else rows),
+        raising=False)
+    cap2 = _RowHostTransport()
+    main_mod._client_factory = lambda base_url, timeout: httpx.AsyncClient(
+        base_url=base_url, timeout=timeout, transport=cap2)
+    with TestClient(main_mod.app) as c:
+        main_mod.app.state.http = None
+        main_mod.app.state.http_clients = {}
+        r = c.post("/v1/chat/completions",
+                   headers={"Authorization": "Bearer sk-x"},
+                   json={"model": "rowonly/mistral-small",
+                         "messages": [{"role": "user", "content": "hi"}]})
+        assert 400 <= r.status_code < 500
+        assert "unknown" in r.text.lower() or "provider" in r.text.lower()
+        assert cap2.requests == []
     main_mod._client_factory = None
     get_settings.cache_clear()
 
