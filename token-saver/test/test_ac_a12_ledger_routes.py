@@ -21,11 +21,11 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from pg_test_support import drop_database, ledger_count, make_database  # noqa: E402
+from pg_test_support import drop_database, ledger_count, make_database, unique_db_name  # noqa: E402
 from proxy.config import get_settings  # noqa: E402
 
 
-DB_NAME = "ts_ac_a12_routes"
+DB_NAME = unique_db_name("ts_ac_a12_routes")
 NO_LOG_ROUTES = {
     ("GET", "/health"),
     ("GET", "/dashboard"),

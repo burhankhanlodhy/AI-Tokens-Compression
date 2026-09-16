@@ -26,10 +26,10 @@ except ImportError:  # pragma: no cover
     pytest.skip("psycopg not installed", allow_module_level=True)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pg_test_support import PG_BASE  # noqa: E402
+from pg_test_support import PG_BASE, unique_db_name  # noqa: E402
 # database name lives in the path component; keep base + name separately so
 # patching kpis._dsn never turns the DB name into a hostname
-_DB_NAME = "ts_kpi_test"
+_DB_NAME = unique_db_name("ts_kpi_test")
 
 
 def _base_dsn() -> str:

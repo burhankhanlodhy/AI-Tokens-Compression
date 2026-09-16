@@ -30,10 +30,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 from proxy.config import get_settings  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pg_test_support import PG_BASE  # noqa: E402
+from pg_test_support import PG_BASE, unique_db_name  # noqa: E402
 
 PG_ADMIN_DSN = PG_BASE
-_CACHE_DB = "ts_live_cache_test"
+_CACHE_DB = unique_db_name("ts_live_cache_test")
 
 
 def _seed_cache_db(dsn: str) -> None:

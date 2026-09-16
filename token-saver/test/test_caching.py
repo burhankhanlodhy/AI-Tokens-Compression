@@ -20,8 +20,8 @@ except ImportError:  # pragma: no cover
     pytest.skip("psycopg not installed", allow_module_level=True)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from pg_test_support import PG_BASE  # noqa: E402
-_DB = "ts_cache_test"
+from pg_test_support import PG_BASE, unique_db_name  # noqa: E402
+_DB = unique_db_name("ts_cache_test")
 _PRIOR_DSN = os.environ.get("TOKEN_SAVER_PG_DSN")
 
 SCHEMA = (Path(__file__).resolve().parent.parent.parent / "postgres-schema-v2.sql").read_text()

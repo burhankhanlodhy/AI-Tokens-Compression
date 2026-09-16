@@ -12,6 +12,15 @@ import pytest
 PG_BASE = os.environ.get("TOKEN_SAVER_PG_BASE", "")
 
 
+def unique_db_name(prefix: str) -> str:
+    """Return a Postgres test database name isolated per process/xdist worker."""
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "").replace("-", "_")
+    suffix = str(os.getpid())
+    if worker:
+        suffix = f"{suffix}_{worker}"
+    return f"{prefix}_{suffix}"
+
+
 def require_pg_base() -> str:
     if not PG_BASE:
         pytest.skip(

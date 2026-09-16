@@ -15,11 +15,11 @@ from psycopg import sql
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from pg_test_support import DEFAULT_TENANT, drop_database, make_database  # noqa: E402
+from pg_test_support import DEFAULT_TENANT, drop_database, make_database, unique_db_name  # noqa: E402
 from proxy.config import get_settings  # noqa: E402
 
 
-DB_NAME = "ts_ac_a13_secrets"
+DB_NAME = unique_db_name("ts_ac_a13_secrets")
 RAW_KEY = "sk_live_qa_a13_raw_key_must_not_persist"
 
 

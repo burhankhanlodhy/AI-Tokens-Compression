@@ -19,12 +19,12 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from pg_test_support import drop_database, make_database  # noqa: E402
+from pg_test_support import drop_database, make_database, unique_db_name  # noqa: E402
 from proxy.config import get_settings  # noqa: E402
 from proxy import stats  # noqa: E402
 
 
-DB_NAME = "ts_ac_a10_concurrency"
+DB_NAME = unique_db_name("ts_ac_a10_concurrency")
 
 
 class CaptureTransport(httpx.AsyncBaseTransport):

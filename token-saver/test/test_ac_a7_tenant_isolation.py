@@ -25,11 +25,12 @@ from pg_test_support import (  # noqa: E402
     TENANT_B,
     drop_database,
     make_database,
+    unique_db_name,
 )
 from proxy.config import get_settings  # noqa: E402
 
 
-DB_NAME = "ts_ac_a7_isolation"
+DB_NAME = unique_db_name("ts_ac_a7_isolation")
 KEY_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 KEY_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 

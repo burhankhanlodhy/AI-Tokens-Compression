@@ -18,7 +18,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from pg_test_support import PG_BASE, drop_database, make_database  # noqa: E402
+from pg_test_support import PG_BASE, drop_database, make_database, unique_db_name  # noqa: E402
 from scripts import backfill_postgres as backfill  # noqa: E402
 
 
@@ -94,7 +94,7 @@ def _drop(name: str):
 
 def test_populated_backfill_reconciles_and_is_idempotent(sqlite_fixture, monkeypatch):
     source, (before_sum, after_sum) = sqlite_fixture
-    name = "ts_ac_a11_complete"
+    name = unique_db_name("ts_ac_a11_complete")
     dsn = make_database(name)
     monkeypatch.setenv("TOKEN_SAVER_PG_DSN", dsn)
     try:
@@ -146,7 +146,7 @@ def test_populated_backfill_reconciles_and_is_idempotent(sqlite_fixture, monkeyp
 
 def test_verification_failure_rolls_back_rows_and_marker(sqlite_fixture, monkeypatch):
     source, _expected = sqlite_fixture
-    name = "ts_ac_a11_rollback"
+    name = unique_db_name("ts_ac_a11_rollback")
     dsn = make_database(name)
     monkeypatch.setenv("TOKEN_SAVER_PG_DSN", dsn)
     try:
@@ -166,7 +166,7 @@ def test_verification_failure_rolls_back_rows_and_marker(sqlite_fixture, monkeyp
 
 def test_dirty_target_is_refused_without_mutation(sqlite_fixture, monkeypatch):
     source, _expected = sqlite_fixture
-    name = "ts_ac_a11_dirty_target"
+    name = unique_db_name("ts_ac_a11_dirty_target")
     dsn = make_database(name)
     monkeypatch.setenv("TOKEN_SAVER_PG_DSN", dsn)
     try:
