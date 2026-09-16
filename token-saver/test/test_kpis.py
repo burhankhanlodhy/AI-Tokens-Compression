@@ -98,8 +98,14 @@ def kpi_env():
             )
 
     from proxy import kpis
+    # B-9d: restore the real _dsn on teardown — an unconditional overwrite
+    # here left the global pointing at the torn-down throwaway DB, so any
+    # module running after this one 503'd on "database ts_kpi_test does not
+    # exist" (same leak class as B-9b; suite was green only by alphabet).
+    _real_dsn = kpis._dsn
     kpis._dsn = lambda: dsn
     yield kpis
+    kpis._dsn = _real_dsn
 
     with psycopg.connect(PG_BASE, autocommit=True) as pg:
         pg.execute(f"DROP DATABASE IF EXISTS {_DB_NAME}")
