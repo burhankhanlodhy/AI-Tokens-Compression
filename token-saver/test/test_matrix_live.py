@@ -43,7 +43,7 @@ def routed(monkeypatch):
             pg.execute(f"DROP DATABASE IF EXISTS {_CACHE_DB}")
             pg.execute(f"CREATE DATABASE {_CACHE_DB}")
     except psycopg.OperationalError:
-        pytest.skip("Postgres unavailable", allow_module_level=False)
+        pytest.skip("TOKEN_SAVER_PG_BASE is unavailable for Postgres acceptance tests", allow_module_level=False)
     monkeypatch.setenv("TOKEN_SAVER_PG_DSN", f"{PG_ADMIN_DSN}/{_CACHE_DB}")
     _seed_cache_db(f"{PG_ADMIN_DSN}/{_CACHE_DB}")
     get_settings.cache_clear()

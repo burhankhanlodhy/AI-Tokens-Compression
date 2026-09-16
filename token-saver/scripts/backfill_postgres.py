@@ -22,6 +22,9 @@ from pathlib import Path
 
 import psycopg
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from proxy.db import get_pg_dsn  # noqa: E402
+
 DEFAULT_SQLITE_PATH = str(Path(__file__).resolve().parent.parent / "data" / "stats.db")
 DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000000"
 BATCH_SIZE = 500
@@ -29,10 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 def _dsn() -> str:
-    return os.environ.get(
-        "TOKEN_SAVER_PG_DSN",
-        "postgresql://postgres:REDACTED@localhost:5433/token_saver",
-    )
+    return get_pg_dsn()
 
 
 def _source_checksum(rows: list[sqlite3.Row]) -> str:

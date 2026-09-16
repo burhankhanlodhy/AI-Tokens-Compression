@@ -9,20 +9,18 @@ Contract: GET /api/kpis?bucket=minute|hour|day&from=<iso>&to=<iso>
 """
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import psycopg
 from fastapi.responses import JSONResponse
 
+from .db import get_pg_dsn
+
 BUCKETS = {"minute": "minute", "hour": "hour", "day": "day"}
 
 
 def _dsn() -> str:
-    return os.environ.get(
-        "TOKEN_SAVER_PG_DSN",
-        "postgresql://postgres:REDACTED@localhost:5433/token_saver",
-    )
+    return get_pg_dsn()
 
 
 def _fetch_kpis(

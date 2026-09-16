@@ -73,7 +73,7 @@ def kpi_env():
             pg.execute(f"DROP DATABASE IF EXISTS {_DB_NAME}")
             pg.execute(f"CREATE DATABASE {_DB_NAME}")
     except psycopg.OperationalError:
-        pytest.skip("Postgres unavailable", allow_module_level=False)
+        pytest.skip("TOKEN_SAVER_PG_BASE is unavailable for Postgres acceptance tests", allow_module_level=False)
 
     dsn = _test_dsn()
     with psycopg.connect(dsn, autocommit=True) as pg:
@@ -274,7 +274,7 @@ def test_invalid_bucket_400(kpi_env):
 def test_ledger_unavailable_503(kpi_env):
     import asyncio
     kpis = kpi_env
-    kpis._dsn = lambda: "postgresql://postgres:REDACTED@localhost:59999/none"
+    kpis._dsn = lambda: "postgresql://invalid-host:59999/none"
     resp = asyncio.run(kpis.kpis_endpoint(bucket="day", from_ts=None, to_ts=None))
     assert resp.status_code == 503
     assert "error" in resp.body.decode()

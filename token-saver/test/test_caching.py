@@ -35,7 +35,10 @@ def cache_env():
             pg.execute(f"DROP DATABASE IF EXISTS {_DB}")
             pg.execute(f"CREATE DATABASE {_DB}")
     except psycopg.OperationalError:
-        pytest.skip("Postgres unavailable", allow_module_level=False)
+        pytest.skip(
+            "TOKEN_SAVER_PG_BASE is unavailable for Postgres acceptance tests",
+            allow_module_level=False,
+        )
 
     dsn = f"{PG_BASE}/{_DB}"
     with psycopg.connect(dsn, autocommit=True) as pg:

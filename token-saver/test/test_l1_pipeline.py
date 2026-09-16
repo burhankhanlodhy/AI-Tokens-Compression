@@ -17,7 +17,9 @@ import pytest
 import pytest_asyncio
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from pg_optional_support import require_pg_dsn
 from proxy.config import get_settings
 
 RAG = json.dumps({"content": "TTL default is 3600 seconds.",
@@ -33,10 +35,17 @@ UPSTREAM_RESPONSE = {
 
 @pytest.fixture
 def l1_env(tmp_path, monkeypatch):
+    # The L1 pipeline assertions use the local SQLite ledger.
+    monkeypatch.delenv("TOKEN_SAVER_PG_DSN", raising=False)
     monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "stats.db"))
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture
+def postgres_stats():
+    return require_pg_dsn()
 
 
 def _app(transport_handler):
@@ -87,7 +96,11 @@ async def test_upstream_receives_clean_messages(capturing):
 
 
 @pytest.mark.asyncio
-async def test_ledger_records_l1_tokens(capturing):
+async def test_ledger_records_l1_tokens(postgres_stats, capturing, monkeypatch):
+    # Keep this historically PG-sensitive path loud when its production DSN
+    # is absent or unreachable, then use the isolated SQLite fixture for the
+    # actual L1-column assertion.
+    monkeypatch.delenv("TOKEN_SAVER_PG_DSN", raising=False)
     from proxy import stats
     stats.init_db()  # test_proxy's tmp_db fixture does this; standalone here
     c, captured = capturing

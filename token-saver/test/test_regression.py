@@ -16,6 +16,9 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from pg_optional_support import require_pg_dsn  # noqa: E402
 
 os.environ.setdefault("DATABASE_PATH", tempfile.mktemp(suffix=".db"))
 
@@ -26,13 +29,20 @@ from proxy.main import app  # noqa: E402
 
 
 @pytest.fixture()
-def client():
+def client(monkeypatch):
     # fresh temp DB per test so counts/empty-states are deterministic
+    monkeypatch.delenv("TOKEN_SAVER_PG_DSN", raising=False)
     os.environ["DATABASE_PATH"] = tempfile.mktemp(suffix=".db")
     stats.get_settings.cache_clear()
     stats.init_db()
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture()
+def postgres_stats():
+    """Require PG availability, while regression assertions use SQLite."""
+    return require_pg_dsn()
 
 
 # ---------------------------------------------------------------- T2: clean startup
@@ -91,7 +101,7 @@ def test_metrics_json_summary(client):
 
 # ---------------------------------------------------------------- T12: /v1/models logging
 
-def test_models_request_is_logged(client):
+def test_models_request_is_logged(postgres_stats, client):
     """T12: proxied /v1/models requests are logged with zero token/cost."""
     before = stats.aggregate_stats()["totals"]["requests"]
     client.get("/v1/models")
@@ -124,7 +134,7 @@ def test_stats_html_empty_state(client):
     assert "No requests yet" in r.text
 
 
-def test_stats_html_first_run_flip(client):
+def test_stats_html_first_run_flip(postgres_stats, client):
     """Empty state -> first request -> non-zero savings render (first-run AC)."""
     assert client.get("/stats?format=html").text.count("Tokens saved (") == 0
     _log_one()
@@ -133,7 +143,7 @@ def test_stats_html_first_run_flip(client):
     assert "Est. cost saved" in r.text
 
 
-def test_stats_html_has_tabs_and_chips(client):
+def test_stats_html_has_tabs_and_chips(postgres_stats, client):
     _log_one()
     r = client.get("/stats?format=html")
     assert 'data-tab="by_day"' in r.text
@@ -159,7 +169,7 @@ def test_stats_html_error_state(client):
     assert "Couldn" in r.text and "Retry" in r.text
 
 
-def test_stats_by_model_breakdown(client):
+def test_stats_by_model_breakdown(postgres_stats, client):
     _log_one()
     data = client.get("/stats").json()
     assert data["by_model"][0]["model"] == "m"
@@ -168,7 +178,7 @@ def test_stats_by_model_breakdown(client):
 
 # ---------------------------------------------------------------- suite still green
 
-def test_original_suite_still_passes():
+def test_original_suite_still_passes(postgres_stats):
     import subprocess
     import sys
     from pathlib import Path

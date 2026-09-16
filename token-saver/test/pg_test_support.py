@@ -7,12 +7,20 @@ from pathlib import Path
 import psycopg
 import pytest
 
-# One source of truth for every Postgres acceptance test.  The checked-in
-# fallback keeps local runs compatible with the existing dev Postgres; CI and
-# release runs should override it with TOKEN_SAVER_PG_BASE.
-PG_BASE = os.environ.get(
-    "TOKEN_SAVER_PG_BASE", "postgresql://postgres:REDACTED@localhost:5433"
-)
+# One source of truth for every Postgres acceptance test.  Never guess a
+# credential: CI/local acceptance runs must provide the admin DSN explicitly.
+PG_BASE = os.environ.get("TOKEN_SAVER_PG_BASE", "")
+
+
+def require_pg_base() -> str:
+    if not PG_BASE:
+        pytest.skip(
+            "TOKEN_SAVER_PG_BASE must be set for Postgres acceptance tests",
+            allow_module_level=False,
+        )
+    assert PG_BASE is not None
+    return PG_BASE
+
 SCHEMA = (Path(__file__).resolve().parents[2] / "postgres-schema-v2.sql").read_text()
 DEFAULT_TENANT = "00000000-0000-0000-0000-000000000000"
 TENANT_A = "11111111-1111-1111-1111-111111111111"
@@ -21,14 +29,18 @@ TENANT_B = "22222222-2222-2222-2222-222222222222"
 
 def make_database(name: str) -> str:
     """Create a clean database, apply the committed schema, and seed providers."""
+    base = require_pg_base()
     try:
-        with psycopg.connect(PG_BASE, autocommit=True, connect_timeout=3) as pg:
+        with psycopg.connect(base, autocommit=True, connect_timeout=3) as pg:
             pg.execute(f"DROP DATABASE IF EXISTS {name}")
             pg.execute(f"CREATE DATABASE {name}")
     except psycopg.OperationalError:
-        pytest.skip("Postgres unavailable", allow_module_level=False)
+        pytest.skip(
+            "TOKEN_SAVER_PG_BASE is unavailable for Postgres acceptance tests",
+            allow_module_level=False,
+        )
 
-    dsn = f"{PG_BASE}/{name}"
+    dsn = f"{base}/{name}"
     with psycopg.connect(dsn, autocommit=True) as pg:
         pg.execute(SCHEMA)
         pg.execute(

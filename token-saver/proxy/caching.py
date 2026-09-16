@@ -18,19 +18,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from typing import Any
 
 import psycopg
+
+from .db import get_pg_dsn
 
 CACHE_TTL_HOURS = 24
 
 
 def _dsn() -> str:
-    return os.environ.get(
-        "TOKEN_SAVER_PG_DSN",
-        "postgresql://postgres:REDACTED@localhost:5433/token_saver",
-    )
+    return get_pg_dsn()
 
 
 def canonical_prefix(body: dict[str, Any]) -> str:

@@ -14,7 +14,9 @@ import pytest
 import pytest_asyncio
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from pg_optional_support import require_pg_dsn  # noqa: E402
 from proxy import stats
 from proxy.classifier import classify
 from proxy.config import get_settings
@@ -112,6 +114,9 @@ def test_has_compressible_content_ignores_system_by_default():
 
 @pytest.fixture
 def tmp_db(tmp_path, monkeypatch):
+    # These unit tests intentionally exercise SQLite.  Do not let a process
+    # level production DSN silently change their ledger backend.
+    monkeypatch.delenv("TOKEN_SAVER_PG_DSN", raising=False)
     monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "stats.db"))
     get_settings.cache_clear()
     stats.init_db()
@@ -119,7 +124,13 @@ def tmp_db(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
-def test_stats_roundtrip(tmp_db):
+@pytest.fixture
+def postgres_stats():
+    """Require a reachable production DSN before PG-sensitive unit paths."""
+    return require_pg_dsn()
+
+
+def test_stats_roundtrip(postgres_stats, tmp_db):
     stats.log_request(model="gpt-4o-mini", route="compress",
                       input_tokens_before=1000, input_tokens_after=600,
                       output_tokens=200, est_cost_before=0.0005,
@@ -292,7 +303,7 @@ async def test_invalid_json_body_forwarded_untouched(client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stats_endpoint(client):
+async def test_stats_endpoint(postgres_stats, client):
     await client.post(
         "/v1/chat/completions",
         headers={"Authorization": "Bearer test-key-123"},
