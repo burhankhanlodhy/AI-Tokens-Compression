@@ -50,4 +50,14 @@ jobs:
         working-directory: token-saver
         env:
           TOKEN_SAVER_PG_BASE: postgresql://postgres:ci-password@localhost:5432
+          TOKEN_SAVER_PG_DSN: postgresql://postgres:ci-password@localhost:5432/postgres
         run: python -m pytest -q
+
+      - name: Run reverse-order suite
+        working-directory: token-saver
+        env:
+          TOKEN_SAVER_PG_BASE: postgresql://postgres:ci-password@localhost:5432
+          TOKEN_SAVER_PG_DSN: postgresql://postgres:ci-password@localhost:5432/postgres
+        run: |
+          mapfile -t tests < <(find test -maxdepth 1 -type f -name 'test_*.py' -printf '%p\n' | sort -r)
+          python -m pytest -q "${tests[@]}"
