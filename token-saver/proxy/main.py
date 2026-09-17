@@ -520,9 +520,12 @@ async def chat_completions(request: Request):
         in_after=in_after, compressed=compressed, streaming=streaming,
         cache_status=cache_status, l1_tokens_stripped=l1_tokens_stripped,
         # B-24/AC-A12: attribute the ledger to the row the request actually
-        # served under. Routing off = legacy single-upstream: keep the
-        # historical prefix-table attribution (provider=None).
-        provider=provider if s.provider_routing else None,
+        # served under. Routing off = legacy single-upstream: attribute to the
+        # seeded 'legacy' providers row, NOT the prefix table — the prefix
+        # table describes the model's vendor, not who egressed the bytes
+        # (benchmark trap: an anthropic/-prefixed model served by the legacy
+        # OpenRouter upstream would otherwise be ledgered as provider=anthropic).
+        provider=provider if s.provider_routing else "legacy",
     )
 
 
