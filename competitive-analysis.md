@@ -77,8 +77,9 @@ Course holds. The PointFive guide independently lands on the same framing:
 - **Exact-prefix caching** (everyone has it; cost = baseline).
 
 ### STRONG SHOULD-HAVE (P1 — the real differentiators that win vs. LiteLLM/Portkey)
-- **Output-side conciseness / full in+out cost model** — competitors still largely ignore output tokens. **Our cleanest wedge.** Build + benchmark it.
-- **Side-by-side quality verification harness + published accuracy-preservation numbers** — turns "no quality loss" marketing into a provable, trustworthy claim (the JetBrains/rtk lesson: claims get independently tested).
+- **Lossless L1 structural cleanup — the measured wedge (post-audit endorsement).** The proxy sits on the request path and can strip applied structural waste — pretty-printed JSON scaffolding, duplicate/empty system blocks, dead RAG metadata — with **zero quality risk and no judge required**: no rubric to defend. **Measured on the committed corpus: ~29.9% input-token reduction from JSON whitespace compaction alone (C1-only, the conservative floor), 70.4% with C1+C2+C3** — at **100% answer retention** (`run_l1_benchmark.py --production-path`, divergences gated, results committed). This is honest savings a customer can verify in one command, checksum-pinned — which is exactly the trust claim the market punishes generic "X% compression" marketing for lacking (the JetBrains/rtk lesson: claims get independently tested).
+- **Honest, calibrated measurement as the brand** (post-audit, supersedes the output-conciseness push). The 2026-09 audit found the draft output-conciseness benchmark **statistically uninterpretable** (mean-of-ratios with one sample per arm collapses toward 0 regardless of true effect). The corrected method is preregistered in spec v2 (AC-P1/P1a/P1b/P1c) and is **gated by an empty-box calibration** (`benchmark/empty_box.py`): the estimator must read ~0 on a synthetic null effect and resolve a synthetic 15% effect before it may spend provider money. The publishable claim is "we can prove what we measured, and what we couldn't measure we didn't claim" — the wedge competitors are structurally unable to copy quickly.
+- **Output-side conciseness** — **not** the headline anymore (GLM-class always-on thinking makes it null-by-construction; the audit re-opened the enable-by-default decision, feature is currently off). Full in+out cost model remains on the roadmap but must re-earn enablement through the calibrated harness first.
 - **Semantic caching (Phase C, deferred)** — the top paid-moat feature; brings us into "even more than competitors" territory on the roadmap.
 - **Focused multi-tenant virtual keys** (Phase C) — needed to sell to teams.
 
@@ -94,10 +95,10 @@ Course holds. The PointFive guide independently lands on the same framing:
 
 **Order of build (ties to spec v2 phases):**
 1. **Phase A (must):** multi-provider + adapters, KPI API, dashboard, exact-prefix cache, Postgres-native. *(already spec'd, gated on your v2 review)*
-2. **Phase B (should):** **output-conciseness benchmark** + publish savings-without-quality-loss numbers; dashboard polish.
+2. **Phase B (should):** **lossless L1 structural cleanup is the measured wedge — ship it, publish the one-command reproducible savings numbers** (~29.9% C1-only floor / 70.4% full of input tokens on RAG/JSON-heavy traffic at 100% retention), and make **honest calibrated measurement** the brand (empty-box-gated benchmark per spec AC-P1a-gate); dashboard polish.
 3. **Phase C (should/later):** semantic caching on pgvector, multi-tenant keys/quotas.
 
-**Biggest strategic call:** invest in **output-side cost + honest verification** — it's the one thing the field broadly ignores AND where a small, fast team can credibly lead, rather than out-gatewaying Portkey/LiteLLM.
+**Biggest strategic call:** invest in **lossless L1 structural savings + honest, calibrated verification** — the wedge the field treats as commodity marketing, made provable; that's where a small, fast team can credibly lead rather than out-gatewaying Portkey/LiteLLM.
 
 ---
 
