@@ -84,3 +84,15 @@ jobs:
           if executed < 289 or totals['skipped']:
               raise SystemExit('executed test floor violated: expected at least 289 non-skipped tests')
           PY
+
+  c5-docker-acceptance:
+    name: C-5 Docker acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Run clean-clone Docker acceptance gate
+        run: ./token-saver/test/c5_docker_acceptance.sh
