@@ -244,6 +244,52 @@ def last_user_message(prompt: dict) -> str:
     return user_msgs[-1].get("content", "") if user_msgs else ""
 
 
+def entry_from_arms(p: dict, eligible: bool, base: dict, treat: dict) -> dict:
+    """Build one results entry from its two run_arm() outputs.
+
+    C-7b (PM ruling, measured): run_arm() returns RAW k-sample SUMS. In the
+    default eligible-only mode the eligible arms accumulate k=30 calls while
+    the ineligible corpus is a single call, so weighting the blended
+    corpus-wide figure by raw sums enters the 40 zero-effect prompts at
+    1/30th of their true traffic weight — a ~3.4x over-report of the only
+    number claiming to describe a customer's whole bill (13.78pp vs the
+    correct 4.09pp at a true 15%), and the two modes disagreed by
+    construction (--full-corpus was right). Every arm is therefore
+    normalized by its OWN n_ok to a per-call mean before it reaches
+    summarize(); raw totals are kept beside for audit. The headline is
+    unaffected (ratio-of-sums within one arm depth) and eligible-only
+    blended == full-corpus blended on the same effect — the pinned
+    invariant.
+    """
+    base_calls = base.get("n_ok") or 0
+    treat_calls = treat.get("n_ok") or 0
+    entry = {
+        "id": p["id"], "category": p["category"], "eligible": eligible,
+        "baseline_tokens": (base.get("tokens_total", 0) / base_calls
+                            if base_calls else 0.0),
+        "treatment_tokens": (treat.get("tokens_total", 0) / treat_calls
+                             if treat_calls else 0.0),
+        "treatment_sampled": treat["sampled"],
+        "baseline_ok": base["ok"], "treatment_ok": treat["ok"],
+        "baseline_n_ok": base["n_ok"], "treatment_n_ok": treat["n_ok"],
+        "baseline_tokens_total": base.get("tokens_total", 0),
+        "treatment_tokens_total": treat.get("tokens_total", 0),
+        "tokens_source": base.get("tokens_source"),
+    }
+    question = last_user_message(p)
+    if base["ok"] and treat["sampled"] and treat["ok"]:
+        # deterministic per-prompt judge order (str seeds are stable
+        # across processes, unlike hash())
+        entry.update(rubric_score(base["text"], treat["text"],
+                                  question,
+                                  random.Random(f"judge-order:{p['id']}")))
+        entry["baseline_text"] = base["text"][:800]
+        entry["treatment_text"] = treat["text"][:800]
+    elif not base["ok"] or not treat["ok"]:
+        entry["error"] = base.get("error") or treat.get("error")
+    return entry
+
+
 # AC-P1c publication floor (C-10, ratified): the sabotage-sweep blind-spot
 # width. Below this the instrument cannot resolve signal from noise, so a
 # figure there is noise dressed as signal — never publishable.
@@ -440,30 +486,11 @@ def main() -> int:
           f"calls. Ctl-C now if this is not the authorized budget.")
     for p, eligible in plans:
         plan = sampling_plan(eligible, eligible_only)
-        question = last_user_message(p)
         base = run_arm(client, args.base_url, args.model, p,
                        conciseness=False, k=plan["baseline_k"])
         treat = run_arm(client, args.base_url, args.model, p,
                         conciseness=True, k=plan["treatment_k"])
-        entry = {
-            "id": p["id"], "category": p["category"], "eligible": eligible,
-            "baseline_tokens": base.get("tokens_total", 0),
-            "treatment_tokens": treat.get("tokens_total", 0),
-            "treatment_sampled": treat["sampled"],
-            "baseline_ok": base["ok"], "treatment_ok": treat["ok"],
-            "baseline_n_ok": base["n_ok"], "treatment_n_ok": treat["n_ok"],
-            "tokens_source": base.get("tokens_source"),
-        }
-        if base["ok"] and treat["sampled"] and treat["ok"]:
-            # deterministic per-prompt judge order (str seeds are stable
-            # across processes, unlike hash())
-            entry.update(rubric_score(base["text"], treat["text"],
-                                      question,
-                                      random.Random(f"judge-order:{p['id']}")))
-            entry["baseline_text"] = base["text"][:800]
-            entry["treatment_text"] = treat["text"][:800]
-        elif not base["ok"] or not treat["ok"]:
-            entry["error"] = base.get("error") or treat.get("error")
+        entry = entry_from_arms(p, eligible, base, treat)
         results.append(entry)
         pct = (100 * (entry["baseline_tokens"] - entry["treatment_tokens"])
                / entry["baseline_tokens"]

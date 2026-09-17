@@ -16,6 +16,7 @@ the same C-7a commit:
 """
 from __future__ import annotations
 
+import random
 import sys
 from pathlib import Path
 
@@ -90,3 +91,90 @@ def test_ac_p1g_ci_including_zero_is_no_measurable_effect():
     assert headline["ci95_interval"][0] < 0.0 < headline["ci95_interval"][1]
     assert headline["publication_status"] == "no_measurable_effect"
     assert headline["reported_reduction_pct"] is None
+
+
+# ---------------------------------------------------------------------------
+# C-7b: blended weights are per-call normalized (mode invariant)
+# ---------------------------------------------------------------------------
+
+
+def _arm(total, n_ok, k, sampled=True, ok=True, text="answer text"):
+    """A run_arm()-shaped output: tokens_total is the RAW k-sample sum."""
+    return {"ok": ok, "n_ok": n_ok, "k": k, "sampled": sampled,
+            "tokens_total": total, "text": text,
+            "tokens_source": "usage.completion_tokens", "error": None}
+
+
+def _prompt(pid):
+    return {"id": pid, "category": "qa",
+            "messages": [{"role": "user", "content": f"question {pid}?"}]}
+
+
+def test_c7b_blended_is_mode_invariant(monkeypatch):
+    """THE invariant: eligible-only blended == --full-corpus blended on the
+    same effect. Built through the shipped entry construction from the same
+    per-call samples: 15 eligible prompts at a true 15% effect (k=30 both
+    arms), 40 ineligible zero-effect prompts (byte-identical arms — full-k
+    in full-corpus mode, single-pass baseline + derived treatment in
+    eligible-only mode). Before C-7b the mixed sampling depths weighted the
+    zero-effect prompts at 1/30th of their true traffic and over-reported
+    the blended figure ~3.4x."""
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    rng = random.Random(20260916)
+    eligible_only, full_corpus = [], []
+    for i in range(15):
+        base_calls = [800.0 + rng.uniform(0, 400) for _ in range(30)]
+        treat_calls = [b * 0.85 for b in base_calls]  # true 15% effect
+        p = _prompt(f"elig{i}")
+        eligible_only.append(run_benchmark.entry_from_arms(
+            p, True,
+            _arm(sum(base_calls), 30, 30), _arm(sum(treat_calls), 30, 30)))
+        full_corpus.append(run_benchmark.entry_from_arms(
+            p, True,
+            _arm(sum(base_calls), 30, 30), _arm(sum(treat_calls), 30, 30)))
+    for i in range(40):
+        per_call = 500.0 + rng.uniform(0, 400)
+        p = _prompt(f"in Elig{i}".replace(" ", "_"))
+        # eligible-only: single-pass baseline, treatment NOT sampled
+        eligible_only.append(run_benchmark.entry_from_arms(
+            p, False, _arm(per_call, 1, 1),
+            _arm(0, 0, 0, sampled=False)))
+        # full-corpus: byte-identical arms sampled at full k
+        full_corpus.append(run_benchmark.entry_from_arms(
+            p, False, _arm(30 * per_call, 30, 30),
+            _arm(30 * per_call, 30, 30)))
+
+    s_elig = run_benchmark.summarize(eligible_only)
+    s_full = run_benchmark.summarize(full_corpus)
+    assert (s_elig["blended_corpus_wide"]["mean_output_reduction_pct"]
+            == s_full["blended_corpus_wide"]["mean_output_reduction_pct"])
+    assert (s_elig["headline"]["mean_output_reduction_pct"]
+            == s_full["headline"]["mean_output_reduction_pct"])
+    # and the mode-invariant figure is NOT the mixed-depth over-report:
+    # rebuilding the same corpus with RAW sums (pre-C-7b shape) differs
+    raw = [{"id": e["id"], "eligible": e["eligible"],
+            "baseline_tokens": e["baseline_tokens_total"],
+            "treatment_tokens": e["treatment_tokens_total"],
+            "treatment_sampled": e["treatment_sampled"]}
+           for e in eligible_only]
+    buggy = run_benchmark.summarize(raw)["blended_corpus_wide"]
+    correct = s_elig["blended_corpus_wide"]["mean_output_reduction_pct"]
+    assert buggy["mean_output_reduction_pct"] > correct  # the 3.4x trap
+
+
+def test_c7b_entry_tokens_are_percall_means_with_raw_totals_kept():
+    """Each arm is normalized by its OWN n_ok; raw totals stay beside for
+    audit; an unsampled arm (n_ok=0) does not divide by zero."""
+    base = _arm(3000.0, 30, 30)
+    treat = _arm(2550.0, 30, 30)
+    e = run_benchmark.entry_from_arms(_prompt("x"), True, base, treat)
+    assert e["baseline_tokens"] == 100.0
+    assert e["treatment_tokens"] == 85.0
+    assert e["baseline_tokens_total"] == 3000.0
+    assert e["treatment_tokens_total"] == 2550.0
+    unsampled = run_benchmark.entry_from_arms(
+        _prompt("y"), False, _arm(750.0, 1, 1),
+        _arm(0, 0, 0, sampled=False))
+    assert unsampled["baseline_tokens"] == 750.0
+    assert unsampled["treatment_tokens"] == 0.0
+    assert unsampled["treatment_sampled"] is False
