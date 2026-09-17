@@ -215,6 +215,20 @@ async def test_reasoning_disabled_by_default(capturing_client):
 
 
 @pytest.mark.asyncio
+async def test_reasoning_evidence_header_on_injected_override(capturing_client):
+    """P1-1 SD gate evidence: the client can RECORD that the override was
+    sent upstream (otherwise a silent mapping failure looks identical to
+    working suppression)."""
+    c, captured = capturing_client
+    resp = await c.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-key-123"},
+        json={"model": "z-ai/glm-5.3-flash", "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert resp.headers.get("x-token-saver-reasoning") == "injected"
+
+
+@pytest.mark.asyncio
 async def test_reasoning_respects_explicit_client_choice(capturing_client):
     c, captured = capturing_client
     await c.post(
@@ -227,6 +241,21 @@ async def test_reasoning_respects_explicit_client_choice(capturing_client):
         },
     )
     assert captured["body"]["reasoning"] == {"enabled": True, "effort": "high"}
+
+
+@pytest.mark.asyncio
+async def test_no_reasoning_header_when_client_supplied_reasoning(capturing_client):
+    c, _ = capturing_client
+    resp = await c.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-key-123"},
+        json={
+            "model": "z-ai/glm-5.3-flash",
+            "messages": [{"role": "user", "content": "hi"}],
+            "reasoning": {"enabled": True, "effort": "high"},
+        },
+    )
+    assert "x-token-saver-reasoning" not in resp.headers
 
 
 @pytest.mark.asyncio
@@ -268,6 +297,12 @@ async def test_reasoning_mandatory_model_retries_without_override(tmp_db):
     assert "reasoning" in calls[0]
     assert "reasoning" not in calls[1]
     assert "z-ai/glm-5.3-flash" in main_module._reasoning_mandatory_models
+    # The rejection must be visible to the client, not swallowed by the
+    # proxy's silent retry — otherwise zero observed reasoning tokens after
+    # a rejected override could be misread as confirmed suppression.
+    assert resp.headers.get("x-token-saver-reasoning") == (
+        "rejected_retry_without_override"
+    )
 
     # A second request to the same model should skip the override entirely
     # and go straight through in one call.

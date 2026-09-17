@@ -6,6 +6,8 @@ client's Authorization header straight through; it never stores keys.
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -114,9 +116,13 @@ class Settings(BaseSettings):
     database_path: str = str(PROXY_ROOT / "data" / "stats.db")
 
     # --- Cost estimation (USD per 1M tokens, input/output) ---
-    # Small table; extend as needed. Unknown models fall back to these defaults.
-    # Prices below are for popular OpenRouter-hosted models; check
-    # https://openrouter.ai/models for current pricing.
+    # Prices live in pricing.json (loaded at startup — see load_pricing).
+    # Changing a price is a one-file edit, zero code change. This hardcoded
+    # dict is the FALLBACK ONLY, used when the file is missing/unreadable or
+    # a routed model has no file entry (with a warning). Values below mirror
+    # the pricing.json seed (OpenRouter-checked 2026-09-17) so fallback
+    # behavior degrades gracefully instead of resurrecting stale rates.
+    pricing_file: str = str(PROXY_ROOT / "pricing.json")
     default_input_price_per_m: float = 0.50
     default_output_price_per_m: float = 1.50
     model_prices_per_m: dict[str, tuple[float, float]] = {
@@ -125,14 +131,77 @@ class Settings(BaseSettings):
         "openai/gpt-4.1": (2.00, 8.00),
         "openai/gpt-4.1-mini": (0.40, 1.60),
         "openai/gpt-4.1-nano": (0.10, 0.40),
+        "openai/gpt-5.6-luna": (0.20, 1.20),
         "anthropic/claude-sonnet-4": (3.00, 15.00),
         "anthropic/claude-sonnet-5": (2.00, 10.00),
-        "anthropic/claude-haiku-4": (0.80, 4.00),
+        "anthropic/claude-haiku-4.5": (1.00, 5.00),
         "google/gemini-2.5-flash": (0.30, 2.50),
-        "meta-llama/llama-3.3-70b-instruct": (0.12, 0.30),
-        "deepseek/deepseek-chat": (0.14, 0.28),
-        "z-ai/glm-5.3-flash": (0.10, 0.40),
+        "google/gemini-3.5-flash": (1.50, 9.00),
+        "google/gemini-3.5-flash-lite": (0.30, 2.50),
+        "google/gemini-3.5-flash-lite:batch": (0.15, 1.25),
+        "google/gemini-3.8-flash": (0.75, 3.75),
+        "meta-llama/llama-3.3-70b-instruct": (0.10, 0.32),
+        "deepseek/deepseek-chat": (0.2574, 1.0287),
+        "deepseek/deepseek-v4-flash": (0.07, 0.14),
+        "z-ai/glm-5.3-flash": (0.09, 0.30),
     }
+
+
+_PRICING_LOGGER = logging.getLogger("token-saver.pricing")
+_pricing_cache: dict[str, tuple[float, float]] | None = None
+_pricing_warned: set[str] = set()
+
+
+def load_pricing(force_reload: bool = False) -> dict[str, tuple[float, float]]:
+    """Load model prices from pricing.json (USD per 1M, [input, output]).
+
+    Called once at proxy startup and cached. Keys starting with '_' are
+    metadata and skipped. If the file is missing, unreadable, or malformed,
+    the hardcoded fallback table in Settings.model_prices_per_m takes over
+    (with a warning) so cost accounting never silently stops.
+    """
+    global _pricing_cache
+    if _pricing_cache is not None and not force_reload:
+        return _pricing_cache
+    s = get_settings()
+    path = Path(s.pricing_file)
+    table: dict[str, tuple[float, float]] = {}
+    if path.is_file():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+            _PRICING_LOGGER.warning(
+                "pricing file %s unreadable (%s); using hardcoded fallback table",
+                path, exc,
+            )
+            raw = None
+        if isinstance(raw, dict):
+            for model, prices in raw.items():
+                if model.startswith("_"):
+                    continue  # metadata (_meta etc)
+                if (
+                    isinstance(prices, (list, tuple))
+                    and len(prices) == 2
+                    and all(isinstance(p, (int, float)) and p >= 0 for p in prices)
+                ):
+                    table[model] = (float(prices[0]), float(prices[1]))
+                else:
+                    _PRICING_LOGGER.warning(
+                        "pricing file %s: skipping malformed entry %r (want "
+                        "[input_per_m, output_per_m] as non-negative numbers)",
+                        path, model,
+                    )
+        elif raw is not None:
+            _PRICING_LOGGER.warning(
+                "pricing file %s is not a JSON object; using hardcoded fallback table",
+                path,
+            )
+    else:
+        _PRICING_LOGGER.warning(
+            "pricing file %s not found; using hardcoded fallback table", path
+        )
+    _pricing_cache = table
+    return table
 
 
 @lru_cache
@@ -141,10 +210,27 @@ def get_settings() -> Settings:
     return Settings()
 
 
-def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Estimated USD cost for a request."""
-    s = get_settings()
-    in_price, out_price = s.model_prices_per_m.get(
-        model, (s.default_input_price_per_m, s.default_output_price_per_m)
-    )
+def estimate_cost(model: str, input_tokens: int, output_tokens: float) -> float:
+    """Estimated USD cost for a request.
+
+    Prices come from pricing.json (startup-loaded). A routed model with no
+    file entry falls back to the hardcoded table / defaults AND logs a
+    one-time warning per model so stale-rate drift is visible, not silent.
+    """
+    table = load_pricing()
+    prices = table.get(model)
+    if prices is None:
+        s = get_settings()
+        prices = s.model_prices_per_m.get(
+            model, (s.default_input_price_per_m, s.default_output_price_per_m)
+        )
+        if model not in _pricing_warned:
+            _pricing_warned.add(model)
+            in_file = bool(table)
+            _PRICING_LOGGER.warning(
+                "no pricing%s entry for model %r — falling back to hardcoded "
+                "rates %s; edit pricing.json to price it correctly",
+                ".json" if in_file else "-file", model, prices,
+            )
+    in_price, out_price = prices
     return (input_tokens * in_price + output_tokens * out_price) / 1_000_000

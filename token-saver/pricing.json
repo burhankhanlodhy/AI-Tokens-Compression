@@ -1,0 +1,26 @@
+{
+  "_meta": {
+    "description": "USD per 1M tokens, [input, output], keyed by model id. Loaded at proxy startup; changing a price = edit this file only, zero code change.",
+    "source": "https://openrouter.ai/api/v1/models (prompt/completion pricing fields, verified 2026-09-17)",
+    "note": "Standard (non-:batch) endpoint prices. The :batch variants are separate endpoints with different behavior — priced separately so a routed :batch slug is still billed accurately.",
+    "entry_format": "model-id -> [input_per_m, output_per_m]; keys starting with '_' are metadata and ignored by the loader."
+  },
+  "openai/gpt-4o": [2.50, 10.00],
+  "openai/gpt-4o-mini": [0.15, 0.60],
+  "openai/gpt-4.1": [2.00, 8.00],
+  "openai/gpt-4.1-mini": [0.40, 1.60],
+  "openai/gpt-4.1-nano": [0.10, 0.40],
+  "openai/gpt-5.6-luna": [0.20, 1.20],
+  "anthropic/claude-sonnet-4": [3.00, 15.00],
+  "anthropic/claude-sonnet-5": [2.00, 10.00],
+  "anthropic/claude-haiku-4.5": [1.00, 5.00],
+  "google/gemini-2.5-flash": [0.30, 2.50],
+  "google/gemini-3.5-flash": [1.50, 9.00],
+  "google/gemini-3.5-flash-lite": [0.30, 2.50],
+  "google/gemini-3.5-flash-lite:batch": [0.15, 1.25],
+  "google/gemini-3.8-flash": [0.75, 3.75],
+  "meta-llama/llama-3.3-70b-instruct": [0.10, 0.32],
+  "deepseek/deepseek-chat": [0.2574, 1.0287],
+  "deepseek/deepseek-v4-flash": [0.07, 0.14],
+  "z-ai/glm-5.3-flash": [0.09, 0.30]
+}

@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Str
 from . import stats
 from .classifier import classify
 from .compression import compress_messages, has_compressible_content
-from .config import estimate_cost, get_settings
+from .config import estimate_cost, get_settings, load_pricing
 from .counting import (
     count_messages,
     count_output,
@@ -123,6 +123,7 @@ def _ensure_cache_seed_rows() -> None:
 async def lifespan(app: FastAPI) -> Iterator[None]:
     stats.init_db()
     s = get_settings()
+    load_pricing()  # startup: pricing.json is THE price source (PM ruling)
     _ensure_cache_seed_rows()
     app.state.http = httpx.AsyncClient(
         base_url=s.upstream_base_url.rstrip("/"),
@@ -454,6 +455,16 @@ async def chat_completions(request: Request):
         body = {**body, "reasoning": {"enabled": False}}
         injected_reasoning = True
 
+    # Reasoning-evidence header (P1-1 SD gate): the runner must be able to
+    # RECORD whether the upstream accepted our `reasoning:{enabled:false}`
+    # override or rejected it (the proxy's silent 400-retry would otherwise
+    # be invisible to clients, and the gate would reward the failure mode).
+    #   injected                     -> override was sent upstream
+    #   rejected_retry_without_override -> upstream 400'd it; retried bare
+    reasoning_headers: dict[str, str] = {}
+    if injected_reasoning:
+        reasoning_headers["x-token-saver-reasoning"] = "injected"
+
     in_after = count_messages(body.get("messages") or [], model)
     payload = json.dumps(body).encode()
 
@@ -507,6 +518,9 @@ async def chat_completions(request: Request):
             # remember that, and retry once without our override instead of
             # failing every request to it.
             _reasoning_mandatory_models.add(model)
+            reasoning_headers["x-token-saver-reasoning"] = (
+                "rejected_retry_without_override"
+            )
             retry_body = {k: v for k, v in body.items() if k != "reasoning"}
             in_after = count_messages(retry_body.get("messages") or [], model)
             resp = await _forward(
@@ -529,6 +543,7 @@ async def chat_completions(request: Request):
         # (benchmark trap: an anthropic/-prefixed model served by the legacy
         # OpenRouter upstream would otherwise be ledgered as provider=anthropic).
         provider=provider if s.provider_routing else "legacy",
+        extra_headers=reasoning_headers,
     )
 
 
@@ -576,6 +591,7 @@ async def _relay(
     cache_status: str = "miss",
     l1_tokens_stripped: int = 0,
     provider: str | None = None,
+    extra_headers: dict[str, str] | None = None,
 ):
     """Stream or buffer the upstream response back, then log stats.
 
@@ -583,6 +599,9 @@ async def _relay(
     (B-24/AC-A12): the ledger must attribute the row the request actually
     served under, not a prefix-table guess. None keeps the historical
     prefix-table derivation in the ledger layer.
+
+    `extra_headers` are proxy-generated response headers (e.g. the
+    x-token-saver-reasoning evidence header) merged over the relayed set.
     """
     s = get_settings()
     latency_ms = (time.perf_counter() - started) * 1000
@@ -599,6 +618,8 @@ async def _relay(
         k: v for k, v in resp.headers.items()
         if k.lower() not in HOP_BY_HOP and k.lower() != "content-encoding"
     }
+    if extra_headers:
+        out_headers.update(extra_headers)
 
     if streaming:
         # Provider-routed streaming needs SSE translation to the client's
