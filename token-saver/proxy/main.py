@@ -316,8 +316,16 @@ async def _forward_routed(request: Request, model: str, payload: bytes,
     adapter = registry.route(model)
     provider = adapter.name if adapter is not None else None
     if not s.provider_routing:
+        # Key off the TRANSPORT ACTUALLY USED: with routing off the bytes go
+        # to the legacy single upstream (OpenRouter), regardless of the
+        # prefix-derived adapter name. Returning that name here (e.g. "google"
+        # for a gemini slug) made the 400-reasoning-retry guard treat a
+        # legacy-upstream 400 as a non-legacy provider response and skip the
+        # retry (SD-gate defect found by QA/PM at 309f924). Ledger callers
+        # already coerced to "legacy" when routing is off — this is the same
+        # fact, declared once at the source.
         resp = await _forward(request, payload, "chat/completions")
-        return resp, (provider or "legacy")
+        return resp, "legacy"
     if adapter is None:
         raise UnknownProviderError(model)
     # B-24 (AC-A1 x AC-A2): base URL precedence — the documented settings
@@ -527,9 +535,13 @@ async def chat_completions(request: Request):
                 request, json.dumps(retry_body).encode(), "chat/completions"
             )
         else:
+            # Not the mandatory-reasoning error: relay the 400 raw, but the
+            # evidence header must never read "injected" on a failed request
+            # — record the rejection explicitly.
             return JSONResponse(
                 content=json.loads(err_content) if err_content else {},
                 status_code=400,
+                headers={"x-token-saver-reasoning": "rejected_400_relayed"},
             )
 
     return await _relay(

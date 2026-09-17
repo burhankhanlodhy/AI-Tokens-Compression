@@ -259,7 +259,19 @@ async def test_no_reasoning_header_when_client_supplied_reasoning(capturing_clie
 
 
 @pytest.mark.asyncio
-async def test_reasoning_mandatory_model_retries_without_override(tmp_db):
+@pytest.mark.parametrize(
+    "slug",
+    [
+        "z-ai/glm-5.3-flash",
+        # SD-gate defect (309f924): the gemini slug prefix-routes to the
+        # "google" registry row; with PROVIDER_ROUTING off the transport is
+        # still the legacy OpenRouter upstream, and the retry guard used to
+        # skip it because "google" wasn't in its provider allowlist. Every
+        # slug we intend to route must take the retry path.
+        "google/gemini-3.5-flash-lite",
+    ],
+)
+async def test_reasoning_mandatory_model_retries_without_override(tmp_db, slug):
     from proxy import main as main_module
     from proxy.main import app
 
@@ -286,7 +298,7 @@ async def test_reasoning_mandatory_model_retries_without_override(tmp_db):
         resp = await c.post(
             "/v1/chat/completions",
             headers={"Authorization": "Bearer test-key-123"},
-            json={"model": "z-ai/glm-5.3-flash",
+            json={"model": slug,
                   "messages": [{"role": "user", "content": "hi"}]},
         )
     await app.state.http.aclose()
@@ -296,7 +308,7 @@ async def test_reasoning_mandatory_model_retries_without_override(tmp_db):
     assert len(calls) == 2
     assert "reasoning" in calls[0]
     assert "reasoning" not in calls[1]
-    assert "z-ai/glm-5.3-flash" in main_module._reasoning_mandatory_models
+    assert slug in main_module._reasoning_mandatory_models
     # The rejection must be visible to the client, not swallowed by the
     # proxy's silent retry — otherwise zero observed reasoning tokens after
     # a rejected override could be misread as confirmed suppression.
@@ -314,7 +326,7 @@ async def test_reasoning_mandatory_model_retries_without_override(tmp_db):
         resp = await c.post(
             "/v1/chat/completions",
             headers={"Authorization": "Bearer test-key-123"},
-            json={"model": "z-ai/glm-5.3-flash",
+            json={"model": slug,
                   "messages": [{"role": "user", "content": "hi"}]},
         )
     await app.state.http.aclose()
@@ -324,6 +336,39 @@ async def test_reasoning_mandatory_model_retries_without_override(tmp_db):
     assert "reasoning" not in calls[0]
 
     main_module._reasoning_mandatory_models.clear()
+
+
+@pytest.mark.asyncio
+async def test_non_mandatory_400_relays_rejected_evidence_header(tmp_db):
+    """A 400 that is NOT the mandatory-reasoning error is relayed raw — and
+    the evidence header must record the rejection, never read 'injected' on
+    a failed request (PM's header finding at 309f924)."""
+    from proxy import main as main_module
+    from proxy.main import app
+
+    main_module._reasoning_mandatory_models.clear()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            400,
+            json={"error": {"message": "invalid api key", "code": 400}},
+        )
+
+    transport = httpx.MockTransport(handler)
+    app.state.http = httpx.AsyncClient(transport=transport, base_url="http://upstream.test/v1")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        resp = await c.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-key-123"},
+            json={"model": "google/gemini-3.5-flash-lite",
+                  "messages": [{"role": "user", "content": "hi"}]},
+        )
+    await app.state.http.aclose()
+
+    assert resp.status_code == 400
+    assert resp.headers.get("x-token-saver-reasoning") == "rejected_400_relayed"
 
 
 @pytest.mark.asyncio
