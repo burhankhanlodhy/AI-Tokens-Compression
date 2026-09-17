@@ -357,8 +357,9 @@ def main() -> int:
         for _, e in plans)
     est_judges = sum(1 for _, e in plans
                      if e and sampling_plan(e, eligible_only)["judge"])
-    print(f"Mode: {'eligible-only (ruled shipping shape)' if eligible_only
-          else 'FULL CORPUS (owner override)'} | HARNESS_K={HARNESS_K} | "
+    mode_label = ("eligible-only (ruled shipping shape)" if eligible_only
+                  else "FULL CORPUS (owner override)")
+    print(f"Mode: {mode_label} | HARNESS_K={HARNESS_K} | "
           f"eligible subset: {n_eligible}/{len(prompts)}")
     print(f"Spend estimate: ~{est_calls} completions + ~{est_judges} judge "
           f"calls. Ctl-C now if this is not the authorized budget.")
