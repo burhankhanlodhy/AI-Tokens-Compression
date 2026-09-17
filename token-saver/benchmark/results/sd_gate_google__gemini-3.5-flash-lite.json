@@ -1,0 +1,131 @@
+{
+  "schema": "sd_gate_v4",
+  "generated_at": "2026-09-17T18:24:05.417745+00:00",
+  "model": "google/gemini-3.5-flash-lite",
+  "n_requested": 5,
+  "n_successful": 5,
+  "temperature": 0.0,
+  "conciseness": "disabled",
+  "base_url": "http://127.0.0.1:8000",
+  "expected_proxy_control": {
+    "thinking_level": "MINIMAL"
+  },
+  "probe": {
+    "probe_minimal_reasoning_tokens": [
+      0,
+      0
+    ],
+    "probe_high_reasoning_tokens": [
+      0,
+      0
+    ],
+    "probe_minimal_mean": 0.0,
+    "probe_high_mean": 0.0,
+    "control_efficacy": "not demonstrated",
+    "boundedness_claim": "bounded by model default, control efficacy not demonstrated \u2014 reasoning counts did not move between MINIMAL and HIGH; the parameter may be decorative"
+  },
+  "samples": [
+    {
+      "completion_tokens": 1163,
+      "reasoning_tokens": 0,
+      "reasoning_field_present": true,
+      "reasoning_evidence_header": "injected:thinking_level",
+      "explicit_control": null,
+      "words": 763,
+      "chars": 4531,
+      "visible_tokens": 1163,
+      "visible_est_tokens_chars_over_4": 1132.75,
+      "denominator_ratio": 1.0267049216508497,
+      "denominator_ok": true
+    },
+    {
+      "completion_tokens": 1005,
+      "reasoning_tokens": 0,
+      "reasoning_field_present": true,
+      "reasoning_evidence_header": "injected:thinking_level",
+      "explicit_control": null,
+      "words": 640,
+      "chars": 3800,
+      "visible_tokens": 1005,
+      "visible_est_tokens_chars_over_4": 950.0,
+      "denominator_ratio": 1.0578947368421052,
+      "denominator_ok": true
+    },
+    {
+      "completion_tokens": 905,
+      "reasoning_tokens": 0,
+      "reasoning_field_present": true,
+      "reasoning_evidence_header": "injected:thinking_level",
+      "explicit_control": null,
+      "words": 599,
+      "chars": 3473,
+      "visible_tokens": 905,
+      "visible_est_tokens_chars_over_4": 868.25,
+      "denominator_ratio": 1.0423265188597755,
+      "denominator_ok": true
+    },
+    {
+      "completion_tokens": 1238,
+      "reasoning_tokens": 0,
+      "reasoning_field_present": true,
+      "reasoning_evidence_header": "injected:thinking_level",
+      "explicit_control": null,
+      "words": 789,
+      "chars": 4788,
+      "visible_tokens": 1238,
+      "visible_est_tokens_chars_over_4": 1197.0,
+      "denominator_ratio": 1.0342522974101922,
+      "denominator_ok": true
+    },
+    {
+      "completion_tokens": 942,
+      "reasoning_tokens": 0,
+      "reasoning_field_present": true,
+      "reasoning_evidence_header": "injected:thinking_level",
+      "explicit_control": null,
+      "words": 600,
+      "chars": 3610,
+      "visible_tokens": 942,
+      "visible_est_tokens_chars_over_4": 902.5,
+      "denominator_ratio": 1.0437673130193905,
+      "denominator_ok": true
+    }
+  ],
+  "summary": {
+    "mean": 1050.6,
+    "sd": 143.89683804726218,
+    "cv": 0.13696634118338302,
+    "n_for_80pct_at_0.15": 2.5567050354231498,
+    "n_for_80pct_at_0.22": 1.7432079786976018,
+    "n_for_80pct_at_0.4": 0.958764388283681
+  },
+  "reasoning_tokens_samples": [
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "reasoning_separately_reported": false,
+  "reasoning_field_accepted": true,
+  "c2_gate": {
+    "billed_cv": 0.13696634118338302,
+    "cv_lt_0.35": true,
+    "mean_completion_tokens": 1050.6,
+    "reasoning_share_ratio_of_sums": 0.0,
+    "share_cap": 0.3333333333333333,
+    "share_within_cap": true,
+    "denominator_invariant_ok": true,
+    "reasoning_field_accepted": true,
+    "reasoning_field_present": true,
+    "reasoning_tokens_observed": [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "reasoning_bounded_confirmed": true,
+    "qualifies": true
+  }
+}
