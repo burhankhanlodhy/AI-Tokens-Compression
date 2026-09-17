@@ -17,6 +17,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 TOKEN_SAVER = Path(__file__).resolve().parent.parent
 BENCHMARK = TOKEN_SAVER / "benchmark"
 sys.path.insert(0, str(TOKEN_SAVER))
@@ -257,3 +259,91 @@ def test_p1_corpus_v2_eligible_count_is_15_of_55():
     assert len(prompts) == 55
     eligible = [p for p in prompts if run_benchmark.is_eligible(p)]
     assert len(eligible) == 15
+
+
+# ---------------------------------------------------------------------------
+# C-9: eligible-only spend ruling
+# ---------------------------------------------------------------------------
+
+def test_c9_sampling_plan_full_k_on_eligible_single_pass_on_ineligible():
+    full = run_benchmark.sampling_plan(True, eligible_only=True)
+    assert full == {"baseline_k": estimator.HARNESS_K,
+                    "treatment_k": estimator.HARNESS_K, "judge": True}
+    single = run_benchmark.sampling_plan(False, eligible_only=True)
+    assert single == {"baseline_k": 1, "treatment_k": 0, "judge": False}
+    # --full-corpus override restores every-prompt full-k
+    override = run_benchmark.sampling_plan(False, eligible_only=False)
+    assert override["baseline_k"] == estimator.HARNESS_K
+    assert override["treatment_k"] == estimator.HARNESS_K
+
+
+def test_c9_zero_k_arm_is_not_sampled():
+    arm = run_benchmark.run_arm(_FakeClient(), "http://x", "m", PROMPT,
+                               conciseness=True, k=0)
+    assert arm["sampled"] is False and arm["ok"] is True
+    assert arm["tokens_total"] == 0
+
+
+def test_c9_eligible_only_is_the_default_mode_full_corpus_needs_override():
+    ap = run_benchmark.build_parser()
+    assert ap.parse_args([]).mode == "eligible_only"
+    assert ap.parse_args(["--eligible-only"]).mode == "eligible_only"
+    assert ap.parse_args(["--full-corpus"]).mode == "full_corpus"
+    with pytest.raises(SystemExit):
+        ap.parse_args(["--eligible-only", "--full-corpus"])
+
+
+def test_c9_derived_blended_weights_zero_contribution_for_unsampled_arms():
+    stats = run_benchmark.summarize(
+        [{"id": "a", "eligible": True, "baseline_tokens": 1000.0,
+          "treatment_tokens": 800.0, "treatment_sampled": True},
+         {"id": "b", "eligible": False, "baseline_tokens": 100.0,
+          "treatment_tokens": 0.0, "treatment_sampled": False},
+         {"id": "c", "eligible": False, "baseline_tokens": 300.0,
+          "treatment_tokens": 0.0, "treatment_sampled": False}])
+    b = stats["blended_corpus_wide"]
+    assert b["derived"] is True
+    assert "DERIVED" in b["label"]
+    # blended denominator weights are real baselines (1000+100+300);
+    # unsampled arms contribute t := b, i.e. exactly 0pp
+    assert abs(b["mean_output_reduction_pct"] - 100 * 200 / 1400) < 0.01
+    # headline is untouched by the derived weights
+    assert abs(stats["headline"]["mean_output_reduction_pct"] - 20.0) < 0.01
+
+
+def test_c9_end_to_end_eligible_only_matches_ruled_budget(tmp_path,
+                                                          monkeypatch,
+                                                          capsys):
+    """Integration: default mode on the real pinned corpus issues exactly
+    15 x 2 x 30 + 40 x 1 = 940 completion calls and 15 judge calls — the
+    ruled ~970 shape, not the 3,300 full-corpus shape."""
+    calls = {"completions": 0, "treatment": 0, "judges": 0}
+
+    class _CountingClient:
+        def post(self, url, json=None, headers=None, timeout=None):
+            calls["completions"] += 1
+            if (headers or {}).get("X-Token-Saver-Conciseness") == "1":
+                calls["treatment"] += 1
+            return _FakeResponse(10)
+
+    class _FakeHealth:
+        status_code = 200
+
+    monkeypatch.setattr(run_benchmark.httpx, "Client", _CountingClient)
+    monkeypatch.setattr(run_benchmark.httpx, "get",
+                        lambda *a, **k: _FakeHealth())
+
+    def _fake_judge(baseline, treatment, question, rng):
+        calls["judges"] += 1
+        return {"mode": "model_judge", "score_a": 8, "score_b": 8,
+                "winner": "tie"}
+
+    monkeypatch.setattr(run_benchmark, "rubric_score", _fake_judge)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    monkeypatch.setattr(sys, "argv", ["run_benchmark.py",
+                                      "--out", str(tmp_path)])
+
+    assert run_benchmark.main() == 0
+    assert calls["completions"] == 15 * 2 * estimator.HARNESS_K + 40
+    assert calls["treatment"] == 15 * estimator.HARNESS_K
+    assert calls["judges"] == 15

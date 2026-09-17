@@ -6,11 +6,16 @@ Design (per product-spec-v2.md):
   AC-P1a anti-cherry-picking. The corpus checksum is PINNED below; the
   runner refuses to spend a single token against a corpus that does not
   match the pin (AC-P1b).
-- Each prompt is sent 2 x HARNESS_K times through the live proxy route:
-  HARNESS_K samples with OUTPUT_CONCISENESS_ENABLED=false (baseline) and
-  HARNESS_K samples =true (treatment), aggregated into per-prompt token
-  sums (the aggregation the shared estimator and the calibration gate
-  both simulate).
+- Each ELIGIBLE prompt is sent 2 x HARNESS_K times through the live proxy
+  route: HARNESS_K samples with OUTPUT_CONCISENESS_ENABLED=false (baseline)
+  and HARNESS_K samples =true (treatment), aggregated into per-prompt token
+  sums (the aggregation the shared estimator and the calibration gate both
+  simulate). Ineligible prompts are NOT sampled at full k (spend ruling:
+  byte-identical arms by gate design, 0pp expected by construction) — under
+  the default --eligible-only mode they get ONE baseline pass so the
+  blended corpus-wide figure has honest denominator weights; their
+  treatment side is derived (:= baseline). --full-corpus restores the
+  every-prompt full-k shape (owner override, ~3,300 completions).
 - Output tokens counted from the provider's usage.completion_tokens
   (AC-P1a); the proxy-side counter is only a recorded fallback.
 - Temperature is pinned (TEMPERATURE) on every request and recorded in
@@ -144,17 +149,39 @@ def run_arm(client: httpx.Client, base_url: str, model: str,
             prompt: dict, conciseness: bool, k: int = HARNESS_K) -> dict:
     """Take k samples of one arm; aggregate into the per-prompt token sum
     the estimator consumes. All k samples must succeed for the arm to
-    count (a partial arm is a failed pair, never silently averaged)."""
+    count (a partial arm is a failed pair, never silently averaged).
+    k=0 means the arm is NOT sampled (eligible-only spend ruling for the
+    ineligible corpus: byte-identical arms buy noise, not signal)."""
+    if k == 0:
+        return {"ok": True, "n_ok": 0, "k": 0, "tokens_total": 0,
+                "text": "", "tokens_source": None, "sampled": False,
+                "error": None}
     samples = [run_one(client, base_url, model, prompt, conciseness)
                for _ in range(k)]
     n_ok = sum(1 for s in samples if s["ok"])
     first_ok = next((s for s in samples if s["ok"]), None)
     err = next((s.get("error") for s in samples if not s["ok"]), None)
-    return {"ok": n_ok == k, "n_ok": n_ok, "k": k,
+    return {"ok": n_ok == k, "n_ok": n_ok, "k": k, "sampled": True,
             "tokens_total": sum(s.get("tokens", 0) for s in samples),
             "text": first_ok["text"] if first_ok else "",
             "tokens_source": (first_ok or {}).get("tokens_source"),
             "error": err}
+
+
+def sampling_plan(eligible: bool, eligible_only: bool) -> dict:
+    """Spend ruling (PM, 2026-09-16): the ineligible prompts send
+    byte-identical arms by gate design with temperature pinned — their
+    expected contribution is 0pp by construction, so full-k sampling of
+    them buys noise, not real money. Shipping shape: full-k both arms on
+    the eligible subset, single-pass baseline on the ineligible corpus
+    (for honest derived blended weights), judge restricted to the
+    headline population."""
+    if eligible:
+        return {"baseline_k": HARNESS_K, "treatment_k": HARNESS_K,
+                "judge": True}
+    if eligible_only:
+        return {"baseline_k": 1, "treatment_k": 0, "judge": False}
+    return {"baseline_k": HARNESS_K, "treatment_k": HARNESS_K, "judge": True}
 
 
 def rubric_score(baseline: str, treatment: str, question: str,
@@ -220,7 +247,9 @@ def last_user_message(prompt: dict) -> str:
 def summarize(valid_entries: list[dict]) -> dict:
     """Headline (eligible subset) + labelled blended (corpus-wide) stats."""
     eligible = [r for r in valid_entries if r.get("eligible")]
-    blended_pairs = [(r["baseline_tokens"], r["treatment_tokens"])
+    blended_pairs = [(r["baseline_tokens"],
+                      r["treatment_tokens"] if r.get("treatment_sampled", True)
+                      else r["baseline_tokens"])
                      for r in valid_entries]
     eligible_pairs = [(r["baseline_tokens"], r["treatment_tokens"])
                       for r in eligible]
@@ -242,7 +271,12 @@ def summarize(valid_entries: list[dict]) -> dict:
         "blended_corpus_wide": {
             "label": ("corpus-wide blended over ALL valid prompts — NOT the "
                       "headline; dilutes the eligible-subset effect with "
-                      "byte-identical arms"),
+                      "byte-identical arms. DERIVED when ineligible arms "
+                      "were not sampled: their arms are byte-identical by "
+                      "gate design (treatment := baseline, 0pp contribution) "
+                      "and only single-pass baseline weights were measured."),
+            "derived": any(not r.get("treatment_sampled", True)
+                           for r in valid_entries),
             "n": len(blended_pairs),
             "mean_output_reduction_pct": round(blended["mean_reduction_pct"], 2),
             "ci95_halfwidth": round(blended["ci95"], 2),
@@ -256,12 +290,32 @@ def summarize(valid_entries: list[dict]) -> dict:
     }
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base-url", default="http://localhost:8000")
     ap.add_argument("--model", default="z-ai/glm-5.3-flash")
     ap.add_argument("--out", default=str(ROOT / "results"))
-    args = ap.parse_args()
+    # C-9 spend ruling: eligible-only is the DEFAULT shipping shape
+    # (~970 calls). The full-55 measured shape (~3,300 + judges) requires
+    # an explicit --full-corpus owner override — it can never happen
+    # silently.
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--eligible-only", dest="mode", default="eligible_only",
+                      action="store_const", const="eligible_only",
+                      help="(default) full-k both arms on the eligible "
+                           "subset; single-pass baseline only on the "
+                           "ineligible corpus; judge restricted to the "
+                           "headline population")
+    mode.add_argument("--full-corpus", dest="mode",
+                      action="store_const", const="full_corpus",
+                      help="OWNER OVERRIDE: sample every prompt at full k "
+                           "both arms (~3,300 completions + judges)")
+    return ap
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    eligible_only = args.mode == "eligible_only"
 
     if not os.environ.get("OPENROUTER_API_KEY"):
         print("ERROR: OPENROUTER_API_KEY not set. No results will be fabricated.",
@@ -294,23 +348,37 @@ def main() -> int:
 
     client = httpx.Client()
     results = []
-    eligible_ids = [p["id"] for p in prompts if is_eligible(p)]
-    print(f"Running {len(prompts)} prompts x 2 arms x HARNESS_K={HARNESS_K} "
-          f"samples (eligible subset: {len(eligible_ids)})...")
-    for p in prompts:
-        eligible = is_eligible(p)
+    plans = [(p, is_eligible(p)) for p in prompts]
+    n_eligible = sum(1 for _, e in plans if e)
+    # spend estimate BEFORE the first provider call — never a silent budget
+    est_calls = sum(
+        sampling_plan(e, eligible_only)["baseline_k"]
+        + sampling_plan(e, eligible_only)["treatment_k"]
+        for _, e in plans)
+    est_judges = sum(1 for _, e in plans
+                     if e and sampling_plan(e, eligible_only)["judge"])
+    print(f"Mode: {'eligible-only (ruled shipping shape)' if eligible_only
+          else 'FULL CORPUS (owner override)'} | HARNESS_K={HARNESS_K} | "
+          f"eligible subset: {n_eligible}/{len(prompts)}")
+    print(f"Spend estimate: ~{est_calls} completions + ~{est_judges} judge "
+          f"calls. Ctl-C now if this is not the authorized budget.")
+    for p, eligible in plans:
+        plan = sampling_plan(eligible, eligible_only)
         question = last_user_message(p)
-        base = run_arm(client, args.base_url, args.model, p, conciseness=False)
-        treat = run_arm(client, args.base_url, args.model, p, conciseness=True)
+        base = run_arm(client, args.base_url, args.model, p,
+                       conciseness=False, k=plan["baseline_k"])
+        treat = run_arm(client, args.base_url, args.model, p,
+                        conciseness=True, k=plan["treatment_k"])
         entry = {
             "id": p["id"], "category": p["category"], "eligible": eligible,
             "baseline_tokens": base.get("tokens_total", 0),
             "treatment_tokens": treat.get("tokens_total", 0),
+            "treatment_sampled": treat["sampled"],
             "baseline_ok": base["ok"], "treatment_ok": treat["ok"],
             "baseline_n_ok": base["n_ok"], "treatment_n_ok": treat["n_ok"],
             "tokens_source": base.get("tokens_source"),
         }
-        if base["ok"] and treat["ok"]:
+        if base["ok"] and treat["sampled"] and treat["ok"]:
             # deterministic per-prompt judge order (str seeds are stable
             # across processes, unlike hash())
             entry.update(rubric_score(base["text"], treat["text"],
@@ -318,15 +386,19 @@ def main() -> int:
                                       random.Random(f"judge-order:{p['id']}")))
             entry["baseline_text"] = base["text"][:800]
             entry["treatment_text"] = treat["text"][:800]
-        else:
+        elif not base["ok"] or not treat["ok"]:
             entry["error"] = base.get("error") or treat.get("error")
         results.append(entry)
         pct = (100 * (entry["baseline_tokens"] - entry["treatment_tokens"])
                / entry["baseline_tokens"]
-               if entry["baseline_tokens"] and treat["ok"] else float("nan"))
-        print(f"  {p['id']}{'*' if eligible else ' '}: "
-              f"{entry['baseline_tokens']} -> {entry['treatment_tokens']} "
-              f"({pct:.1f}%) {'OK' if base['ok'] and treat['ok'] else 'ERR'}")
+               if entry["baseline_tokens"] and treat["sampled"] and treat["ok"]
+               else float("nan"))
+        tag = "*" if eligible else ("b" if eligible_only else "*")
+        print(f"  {p['id']}{tag}: "
+              f"{entry['baseline_tokens']} -> "
+              f"{entry['treatment_tokens'] if treat['sampled'] else '(n/a)'} "
+              f"({pct:.1f}%) "
+              f"{'OK' if base['ok'] and treat['ok'] else 'ERR'}")
 
     valid = [r for r in results if r.get("baseline_ok") and r.get("treatment_ok")]
 
@@ -341,6 +413,7 @@ def main() -> int:
         "fixture_checksum_pinned": EXPECTED_FIXTURE_SHA256,
         "temperature": TEMPERATURE,
         "harness_k": HARNESS_K,
+        "sampling_mode": args.mode,
         "n_fixture": len(prompts),
         "n_valid": len(valid),
         **stats,
