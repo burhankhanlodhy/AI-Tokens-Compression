@@ -14,7 +14,9 @@ the proxy never stores API keys.
 
 ```bash
 cd token-saver
-cp .env.example .env            # review defaults; no keys needed (BYOK)
+cp .env.example .env            # no API keys needed (BYOK)
+# REQUIRED: set your own Postgres password in .env (POSTGRES_PASSWORD=...).
+# It cannot be left empty — Compose refuses to start until it is set.
 docker compose up -d --build
 curl http://localhost:8000/health   # -> {"status":"ok"}
 ```
