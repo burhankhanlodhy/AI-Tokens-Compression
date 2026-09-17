@@ -32,9 +32,14 @@ Design (per product-spec-v2.md):
 - Statistical claim: paired test at 95% CI (AC-P1a) via the shared
   corrected estimator (ratio-of-sums + bootstrap).
 
-Usage:
+Usage (P1-1 paid run — the exact ratified invocation, mirrored in
+  product-spec-v2.md; the model default IS the K-3-pinned instrument):
   OPENROUTER_API_KEY=sk-... .venv/bin/python benchmark/run_benchmark.py \
-      --base-url http://localhost:8000 --model z-ai/glm-5.3-flash
+      --base-url http://localhost:8000
+  # -> default mode is --eligible-only (C-9), default model is
+  #    google/gemini-3.5-flash-lite (B4 instrument swap). The GLM slug is
+  #    WITHDRAWN for the paid run (78.1% reasoning share, null by
+  #    construction) and is NOT a valid --model here.
 
 Requires a running proxy (docker compose up) and a real API key in the env
 of the CLIENT calls (BYOK passthrough). No results are fabricated: if the
@@ -471,7 +476,13 @@ def summarize(valid_entries: list[dict]) -> dict:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base-url", default="http://localhost:8000")
-    ap.add_argument("--model", default="z-ai/glm-5.3-flash")
+    # B4 instrument swap (RATIFIED): the default --model must be the
+    # K-3-pinned ratifed slug. The archived GLM instrument is withdrawn
+    # for the paid run (78.1% reasoning share => null-by-construction);
+    # a bare model NAME misses the pricing table — the exact SLUG is
+    # required. Guarded by
+    # test_c9_p1_model_default_is_the_ratified_instrument_slug.
+    ap.add_argument("--model", default="google/gemini-3.5-flash-lite")
     ap.add_argument("--out", default=str(ROOT / "results"))
     # C-9 spend ruling: eligible-only is the DEFAULT shipping shape
     # (~970 calls). The full-55 measured shape (~3,300 + judges) requires

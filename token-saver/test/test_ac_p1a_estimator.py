@@ -293,6 +293,17 @@ def test_c9_eligible_only_is_the_default_mode_full_corpus_needs_override():
         ap.parse_args(["--eligible-only", "--full-corpus"])
 
 
+def test_c9_p1_model_default_is_the_ratified_instrument_slug():
+    """B4 blocker: a run launched without an explicit --model must spend
+    the authorized budget on the B4-ratified instrument slug — exactly
+    `google/gemini-3.5-flash-lite` (the bare name misses the pricing
+    table; the archived GLM slug is withdrawn for the paid run,
+    78.1% reasoning share => null-by-construction)."""
+    ap = run_benchmark.build_parser()
+    assert ap.parse_args([]).model == "google/gemini-3.5-flash-lite"
+    assert "glm" not in ap.parse_args([]).model.lower()
+
+
 def test_c9_derived_blended_weights_zero_contribution_for_unsampled_arms():
     stats = run_benchmark.summarize(
         [{"id": "a", "eligible": True, "baseline_tokens": 1000.0,

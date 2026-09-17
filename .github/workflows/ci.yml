@@ -61,8 +61,8 @@ jobs:
                     for key in ('tests', 'failures', 'errors', 'skipped')}
           executed = totals['tests'] - totals['skipped']
           print(f"standard suite: executed={executed} passed={totals['tests'] - totals['failures'] - totals['errors'] - totals['skipped']} skipped={totals['skipped']} failures={totals['failures']} errors={totals['errors']}")
-          if executed < 362 or totals['skipped']:
-              raise SystemExit('executed test floor violated: expected at least 362 non-skipped tests')
+          if executed < 363 or totals['skipped']:
+              raise SystemExit('executed test floor violated: expected at least 363 non-skipped tests')
           PY
 
       - name: Run reverse-order suite
@@ -81,8 +81,8 @@ jobs:
                     for key in ('tests', 'failures', 'errors', 'skipped')}
           executed = totals['tests'] - totals['skipped']
           print(f"reverse suite: executed={executed} passed={totals['tests'] - totals['failures'] - totals['errors'] - totals['skipped']} skipped={totals['skipped']} failures={totals['failures']} errors={totals['errors']}")
-          if executed < 362 or totals['skipped']:
-              raise SystemExit('executed test floor violated: expected at least 362 non-skipped tests')
+          if executed < 363 or totals['skipped']:
+              raise SystemExit('executed test floor violated: expected at least 363 non-skipped tests')
           PY
 
   c5-docker-acceptance:
