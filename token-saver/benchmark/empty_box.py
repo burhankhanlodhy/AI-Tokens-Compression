@@ -19,7 +19,8 @@ AC-P1a):
 
 Gating contract (PM ruling, supersedes the single-seed check): run N
 seeded replications and gate on the FAILURE RATE —
-  - null false-positive rate  <= 5%   (|est| > 5pp or 95% CI excludes 0)
+  - null false-positive rate  <= 5%   (|est| > 5pp AND 95% CI excludes 0 — a
+    publishable false claim; the OR reading is unpassable by construction)
   - positive-control success  >= 90%  (est in [12,18] AND CI excludes 0)
 A single seed can be lucky (the old gate was green only 75.7% of 300
 seeds); the RATE is what "the instrument is calibrated" actually means.
