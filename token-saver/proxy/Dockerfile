@@ -7,6 +7,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY proxy/ ./proxy/
 
+# pricing.json is THE price source (loaded at startup — config.load_pricing);
+# without it the container silently falls back to the hardcoded table and
+# every cost_saved number drifts (QA caught the startup warning 2026-09-17).
+COPY pricing.json ./pricing.json
+
 EXPOSE 8000
 
 # Pre-download the compression model at build time is skipped on purpose:
