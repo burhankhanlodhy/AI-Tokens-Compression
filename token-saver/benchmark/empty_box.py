@@ -1,37 +1,52 @@
-"""Empty-box calibration for the corrected P1 estimator (AC-P1a mandatory gate).
+"""Empty-box calibration for the P1-1 re-run (AC-P1a-gate).
 
-WHY THIS EXISTS (the audit's exact failure mode, 2026-09):
-The audited P1-1 harness used a mean-of-per-prompt-ratios estimator with one
-sample per arm, which collapses to ~0% (and can report negative savings) under
-realistic output-length CV regardless of the true effect — it COULD NOT
-distinguish "no effect" from "~17% effect". Before any provider dollar is spent
-on a re-run, this script proves the corrected estimator can read the truth when
-the truth is KNOWN by construction:
+Measures the PRODUCTION estimator — imported BY REFERENCE from the harness
+(`run_benchmark.estimate`, backed by the shared `estimator.estimate`) —
+never a local re-implementation. If the estimator is patched or the harness
+stops routing through it, THIS GATE SEES IT: a gate that imports the
+estimator cannot stay green while the thing it calibrates is sabotaged
+(the defect class the 2026-09 audit caught in the first draft, proved by
+patching `mean_reduction = 99.0` and watching the gate stay green).
 
-  - EMPTY BOX (null effect):   treatment tokens drawn from the SAME distribution
-                               as baseline. A healthy instrument reports ~0%
-                               reduction with a 95% CI that CONTAINS 0.
-  - POSITIVE CONTROL (15%):    treatment tokens drawn at 85% of baseline.
-                               The instrument must report ~15% with a 95% CI
-                               that EXCLUDES 0.
+What the gate asserts (two synthetic experiments with KNOWN truth, per
+AC-P1a): 
+  - EMPTY BOX (null effect):   both arms drawn from the SAME measured
+    output-length distribution (CV=0.2415, on-file SD gate). A calibrated
+    instrument reports ~0%; a false positive here = claims savings that
+    are not there.
+  - POSITIVE CONTROL (15%):    treatment drawn at 85% of baseline. A
+    calibrated instrument must resolve it.
 
-Design follows AC-P1a exactly: ratio-of-sums headline, k >= 5 samples per arm,
-temperature pinned (simulated single temperature), bootstrap CI over paired
-per-prompt ratios, and per-prompt token variability seeded from the measured
-CV in results/sd_gate_z-ai__glm-5.3-flash.json (CV = 0.2415 — the C2 gate
-already on file). Synthetic, deterministic, offline, sub-second: no network, no
-API key, no upstream model.
+Gating contract (PM ruling, supersedes the single-seed check): run N
+seeded replications and gate on the FAILURE RATE —
+  - null false-positive rate  <= 5%   (|est| > 5pp or 95% CI excludes 0)
+  - positive-control success  >= 90%  (est in [12,18] AND CI excludes 0)
+A single seed can be lucky (the old gate was green only 75.7% of 300
+seeds); the RATE is what "the instrument is calibrated" actually means.
 
-Exit code 0 = both gates green (the corrected estimator is calibrated);
-exit code 1 = at least one gate red (do NOT spend provider money on a re-run).
+Simulation mirrors the harness: HARNESS_K samples per arm per prompt
+(estimator.py declares what the harness takes — 1 today), aggregated into
+per-prompt (baseline_total, treatment_total) pairs, fed to `estimate()`.
+
+HEAD STATUS: RED BY DESIGN. The current estimator is the k=1 mean-of-ratios
+the audit condemned; this gate must stay red until C-4b
+(@application-developer) replaces `estimate()` with the corrected AC-P1a
+mathematics (ratio-of-sums, bootstrap/Wilcoxon, t(39)=2.023, k >= 5).
+Red exit 1 = block open — no provider money on a P1-1 re-run until green.
 """
 from __future__ import annotations
 
+import argparse
 import math
 import random
-import statistics
 import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+
+from run_benchmark import estimate  # noqa: E402  — THE harness's estimator symbol
+from estimator import HARNESS_K    # noqa: E402  — samples/arm the harness takes
 
 # --------------------------------------------------------------------------
 # Measured inputs (committed artifact — change only with a new SD gate run)
@@ -39,12 +54,12 @@ from pathlib import Path
 MEASURED_CV = 0.2415309851520115   # sd_gate z-ai/glm-5.3-flash, n=5, temp=0.0
 MEASURED_MEAN_TOKENS = 3937.4      # same artifact, provider usage.completion_tokens
 EFFECT_15PCT = 0.85                # treatment multiplier for the positive control
-K_SAMPLES = 5                      # AC-P1a: k >= 5 per arm per prompt
 N_PROMPTS = 40                     # matches the pinned fixture-set size (AC-P1)
-BOOTSTRAP_REPS = 2000
-SEED = 20260916                    # deterministic across runs and machines
-TOLERANCE_PCT = 5.0                # null gate: |estimate| <= 5pp
-EFFECT_WINDOW = (12.0, 18.0)       # control gate: estimate inside [12, 18]pp
+SEED_BASE = 20260916               # deterministic across runs and machines
+NULL_TOL_PP = 5.0                  # null gate: |estimate| must stay within 5pp
+CONTROL_WINDOW = (12.0, 18.0)      # control gate: estimate inside [12, 18]pp
+NULL_FP_MAX = 0.05                 # rate contract: <= 5% false positives
+CONTROL_MIN_SUCCESS = 0.90         # rate contract: >= 90% in-window successes
 
 
 def _lognormal_params(mean: float, cv: float) -> tuple[float, float]:
@@ -54,115 +69,113 @@ def _lognormal_params(mean: float, cv: float) -> tuple[float, float]:
     return mu, sigma
 
 
-def draw_tokens(rng: random.Random, mean: float, cv: float) -> float:
-    """One output-token draw (float; used in sums, which is what billing sees)."""
+def _draw(rng: random.Random, mean: float, cv: float) -> float:
     mu, sigma = _lognormal_params(mean, cv)
     return math.exp(rng.gauss(mu, sigma))
 
 
-def sample_arm(rng: random.Random, base_means: list[float], multiplier: float,
-               cv: float, k: int) -> list[float]:
-    """k draws per prompt at the given multiplier; returns per-prompt sums."""
-    sums = []
+def _arm_totals(rng: random.Random, base_means: list[float],
+                multiplier: float, cv: float, k: int) -> list[float]:
+    """Per-prompt totals: k draws per prompt aggregated, exactly as the
+    harness aggregates its HARNESS_K samples before calling estimate()."""
+    totals = []
     for base in base_means:
         s = 0.0
         for _ in range(k):
-            s += draw_tokens(rng, max(base * multiplier, 1.0), cv)
-        sums.append(s)
-    return sums
+            s += _draw(rng, max(base * multiplier, 1.0), cv)
+        totals.append(s)
+    return totals
 
 
-def ratio_of_sums(treatment: list[float], baseline: list[float]) -> float:
-    """Headline metric (AC-P1): Sigma_treatment / Sigma_baseline."""
-    return sum(treatment) / sum(baseline)
+def _experiment(seed: int, multiplier: float | None, k: int) -> dict:
+    rng = random.Random(SEED_BASE + seed)
+    # Across-prompt baseline lengths vary (different prompts, different
+    # lengths): lognormal spread so the estimator must work on a realistic mix.
+    mu_b, sigma_b = _lognormal_params(MEASURED_MEAN_TOKENS, MEASURED_CV * 2.0)
+    base_means = [math.exp(rng.gauss(mu_b, sigma_b)) for _ in range(N_PROMPTS)]
+    baseline = _arm_totals(rng, base_means, 1.0, MEASURED_CV, k)
+    treatment = _arm_totals(rng, base_means,
+                            multiplier if multiplier is not None else 1.0,
+                            MEASURED_CV, k)
+    e = estimate(list(zip(baseline, treatment)))
+    lo = e["mean_reduction_pct"] - e["ci95"]
+    hi = e["mean_reduction_pct"] + e["ci95"]
+    return {"est": e["mean_reduction_pct"], "lo": lo, "hi": hi}
 
 
-def pct_reduction(treatment: list[float], baseline: list[float]) -> float:
-    return (1.0 - ratio_of_sums(treatment, baseline)) * 100.0
+def _null_is_false_positive(r: dict) -> bool:
+    """Null arm should read ~0. FP = the gate would have claimed savings."""
+    return abs(r["est"]) > NULL_TOL_PP or r["lo"] > 0.0 or r["hi"] < 0.0
 
 
-def bootstrap_ci(treatment: list[float], baseline: list[float], reps: int,
-                 rng: random.Random) -> tuple[float, float]:
-    """Percentile bootstrap CI over PROMPTS (the independent units).
-
-    Each resample picks prompts with replacement, recomputes the pooled
-    ratio-of-sums, and yields a reduction. 2.5% / 97.5% percentiles = 95% CI.
-    """
-    n = len(treatment)
-    reductions = []
-    for _ in range(reps):
-        idx = [rng.randrange(n) for _ in range(n)]
-        t = [treatment[i] for i in idx]
-        b = [baseline[i] for i in idx]
-        reductions.append(pct_reduction(t, b))
-    reductions.sort()
-    lo = reductions[int(0.025 * reps)]
-    hi = reductions[int(0.975 * reps)]
-    return lo, hi
-
-
-def simulate(cv: float, k: int, n_prompts: int, rng: random.Random,
-             effect: float | None) -> dict:
-    """One simulated experiment. effect=None => empty box; else treatment = effect*base."""
-    rng = random.Random(rng.randrange(1 << 63))  # child stream, reproducible from SEED
-    # Across-prompt baseline lengths vary (different prompts, different lengths):
-    # lognormal spread so the pooled estimator must work under realistic mixes.
-    mu_b, sigma_b = _lognormal_params(MEASURED_MEAN_TOKENS, cv * 2.0)
-    base_means = [math.exp(rng.gauss(mu_b, sigma_b)) for _ in range(n_prompts)]
-    baseline = sample_arm(rng, base_means, 1.0, cv, k)
-    mult = effect if effect is not None else 1.0
-    treatment = sample_arm(rng, base_means, mult, cv, k)
-    est = pct_reduction(treatment, baseline)
-    lo, hi = bootstrap_ci(treatment, baseline, BOOTSTRAP_REPS, rng)
-    return {"estimate_pct": est, "ci_lo": lo, "ci_hi": hi,
-            "baseline_total": sum(baseline), "treatment_total": sum(treatment)}
+def _control_is_success(r: dict) -> bool:
+    """True 15% effect must be resolved inside the window with CI > 0."""
+    in_window = CONTROL_WINDOW[0] <= r["est"] <= CONTROL_WINDOW[1]
+    return in_window and r["lo"] > 0.0
 
 
 def main() -> int:
-    rng = random.Random(SEED)
-    failures: list[str] = []
+    ap = argparse.ArgumentParser(description="AC-P1a empty-box calibration")
+    ap.add_argument("--seeds", type=int, default=200,
+                    help="seeded replications (rate contract needs ~200)")
+    ap.add_argument("--k", type=int, default=HARNESS_K,
+                    help=f"samples/arm/prompt to simulate (default: harness "
+                         f"HARNESS_K={HARNESS_K})")
+    ap.add_argument("--show-seeds", action="store_true",
+                    help="print per-seed estimates (debug)")
+    args = ap.parse_args()
 
-    # ---- gate 1: empty box (null effect) ----
-    null = simulate(MEASURED_CV, K_SAMPLES, N_PROMPTS, rng, effect=None)
-    contains_zero = null["ci_lo"] <= 0.0 <= null["ci_hi"]
-    small_est = abs(null["estimate_pct"]) <= TOLERANCE_PCT
-    null_pass = contains_zero and small_est
-    if not null_pass:
-        failures.append(
-            f"EMPTY BOX: estimate {null['estimate_pct']:+.2f}pp, "
-            f"95% CI [{null['ci_lo']:+.2f}, {null['ci_hi']:+.2f}] — an "
-            f"instrument that reports savings on a null effect is broken.")
+    if args.k < 1:
+        print("--k must be >= 1", file=sys.stderr)
+        return 2
 
-    # ---- gate 2: positive control (true 15% effect) ----
-    ctrl = simulate(MEASURED_CV, K_SAMPLES, N_PROMPTS, rng, effect=EFFECT_15PCT)
-    in_window = EFFECT_WINDOW[0] <= ctrl["estimate_pct"] <= EFFECT_WINDOW[1]
-    excludes_zero = ctrl["ci_lo"] > 0.0
-    ctrl_pass = in_window and excludes_zero
-    if not ctrl_pass:
-        failures.append(
-            f"POSITIVE CONTROL: estimate {ctrl['estimate_pct']:.2f}pp, "
-            f"95% CI [{ctrl['ci_lo']:.2f}, {ctrl['ci_hi']:.2f}] — the estimator "
-            f"cannot resolve a true 15% effect at k={K_SAMPLES}/arm (the "
-            f"audit's 'could not distinguish no effect from ~17% effect').")
+    null_fp, ctrl_ok = 0, 0
+    worst_null_est, worst_ctrl_est = 0.0, 0.0
+    for seed in range(args.seeds):
+        nr = _experiment(seed, None, args.k)          # empty box
+        cr = _experiment(seed, EFFECT_15PCT, args.k)  # positive control
+        if _null_is_false_positive(nr):
+            null_fp += 1
+        if _control_is_success(cr):
+            ctrl_ok += 1
+        worst_null_est = min(worst_null_est, nr["est"])
+        worst_ctrl_est = max(worst_ctrl_est, cr["est"])
+        if args.show_seeds and seed % 25 == 0:
+            print(f"  seed {seed:>3}: null {nr['est']:+6.2f}pp "
+                  f"CI[{nr['lo']:+6.2f},{nr['hi']:+6.2f}] | "
+                  f"ctrl {cr['est']:+6.2f}pp CI[{cr['lo']:+6.2f},{cr['hi']:+6.2f}]")
 
-    print(f"Empty-box calibration  |  k={K_SAMPLES}/arm, {N_PROMPTS} prompts, "
-          f"CV={MEASURED_CV:.4f} (measured), seed={SEED}, bootstrap={BOOTSTRAP_REPS}")
-    print(f"  empty box (null):     {null['estimate_pct']:+6.2f}pp  "
-          f"CI [{null['ci_lo']:+6.2f}, {null['ci_hi']:+6.2f}]  "
+    null_fp_rate = null_fp / args.seeds
+    ctrl_success_rate = ctrl_ok / args.seeds
+    null_pass = null_fp_rate <= NULL_FP_MAX
+    ctrl_pass = ctrl_success_rate >= CONTROL_MIN_SUCCESS
+    green = null_pass and ctrl_pass
+
+    print(f"\nAC-P1a empty-box calibration | estimator: run_benchmark.estimate "
+          f"(shared, imported) | HARNESS_K={HARNESS_K} | sim k={args.k} | "
+          f"seeds={args.seeds}")
+    print(f"  null false-positive rate:  {null_fp_rate:6.1%}  "
+          f"(contract <= {NULL_FP_MAX:.0%})  [worst estimate {worst_null_est:+.2f}pp]  "
           f"{'PASS' if null_pass else 'FAIL'}")
-    print(f"  positive control:     {ctrl['estimate_pct']:+6.2f}pp  "
-          f"CI [{ctrl['ci_lo']:+6.2f}, {ctrl['ci_hi']:+6.2f}]  "
-          f"{'PASS' if ctrl_pass else 'FAIL'}  (true effect: 15.00pp)")
+    print(f"  positive-control success:  {ctrl_success_rate:6.1%}  "
+          f"(contract >= {CONTROL_MIN_SUCCESS:.0%})  [worst estimate {worst_ctrl_est:+.2f}pp]  "
+          f"{'PASS' if ctrl_pass else 'FAIL'}")
 
-    if failures:
-        print("\nCALIBRATION FAILED:")
-        for f in failures:
-            print(f"  - {f}")
-        print("Do NOT run the P1-1 re-run on provider money until this is green.")
-        return 1
-    print("\nCALIBRATION PASSED — estimator reads ~0 on a null effect and "
-          "resolves a true 15% effect. Re-run harness is cleared to spend.")
-    return 0
+    if green:
+        print("\nCALIBRATED — estimator reads ~0 on a null effect and resolves "
+              "a true 15% effect at the rates the contract demands. "
+              "P1-1 re-run is cleared to spend.")
+        return 0
+
+    print("\nNOT CALIBRATED — no provider money on a P1-1 re-run.")
+    if HARNESS_K == 1 and not green:
+        print("Cause expected: the estimator is the k=1 mean-of-ratios the "
+              "2026-09 audit condemned. C-4b (@application-developer) must "
+              "land the corrected AC-P1a mathematics (ratio-of-sums, "
+              "bootstrap/Wilcoxon, t(39)=2.023, HARNESS_K >= 5) in "
+              "estimator.py; this gate flips green when it runs the real "
+              "shipped math. Do NOT weaken thresholds to force green.")
+    return 1
 
 
 if __name__ == "__main__":

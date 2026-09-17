@@ -27,13 +27,14 @@ import argparse
 import hashlib
 import json
 import os
-import statistics
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
+
+from estimator import estimate  # noqa: E402 — shared with the calibration gate
 
 ROOT = Path(__file__).resolve().parent
 FIXTURES = ROOT / "prompts.json"
@@ -182,17 +183,16 @@ def main() -> int:
               f"({pct:.1f}%) {'OK' if entry.get('ok', True) else 'ERR'}")
 
     valid = [r for r in results if r.get("baseline_ok") and r.get("treatment_ok")]
-    reductions = [100 * (r["baseline_tokens"] - r["treatment_tokens"]) / r["baseline_tokens"]
-                  for r in valid if r["baseline_tokens"] > 0]
     judged = [r for r in valid if r.get("mode") == "model_judge"]
     regressions = [r for r in judged if r.get("score_b", 10) < r.get("score_a", 10) - 1]
 
-    mean_reduction = statistics.mean(reductions) if reductions else 0.0
-    if len(reductions) >= 2:
-        se = statistics.stdev(reductions) / (len(reductions) ** 0.5)
-        ci95 = 1.96 * se
-    else:
-        ci95 = 0.0
+    # Production estimator — SHARED with the calibration gate (estimator.py).
+    # The gate and the re-run must measure the same math; a divergence here is
+    # the defect class the AC-P1a-gate exists to catch.
+    pairs = [(r["baseline_tokens"], r["treatment_tokens"]) for r in valid]
+    est = estimate(pairs)
+    mean_reduction = est["mean_reduction_pct"]
+    ci95 = est["ci95"]
 
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
