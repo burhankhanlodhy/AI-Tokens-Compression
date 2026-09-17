@@ -16,6 +16,7 @@ the same C-7a commit:
 """
 from __future__ import annotations
 
+import json
 import random
 import sys
 from pathlib import Path
@@ -178,3 +179,77 @@ def test_c7b_entry_tokens_are_percall_means_with_raw_totals_kept():
     assert unsampled["baseline_tokens"] == 750.0
     assert unsampled["treatment_tokens"] == 0.0
     assert unsampled["treatment_sampled"] is False
+
+
+# --- C-7c: the CLI print surface routes through the PUBLISHED fields -----
+
+def test_ac_p1g_cli_figure_suppresses_raw_percentage():
+    """The figure renderer prints the publication contract, not the raw
+    mean: a suppressed result renders status + note and never the
+    percentage the JSON withheld."""
+    hl = run_benchmark.summarize(_sub2pp_fixture())["headline"]
+    assert hl["reported_reduction_pct"] is None
+    line = run_benchmark._published_figure(hl)
+    assert "no measurable effect" in line
+    assert f"{hl['mean_output_reduction_pct']:.2f}%" not in line
+    assert "2pp" in line  # the suppression reason ships with it
+
+
+def test_ac_p1g_cli_figure_prints_published_pct_when_measurable():
+    """Suppression guards noise, not signal: a measurable figure (>= 2pp,
+    CI excluding 0) still renders the honest percent, taken verbatim from
+    reported_reduction_pct."""
+    entries = [
+        {"id": "a", "eligible": True,
+         "baseline_tokens": 10000.0, "treatment_tokens": 8300.0},  # 17%
+        {"id": "b", "eligible": True,
+         "baseline_tokens": 9000.0, "treatment_tokens": 7650.0},   # 15%
+    ]
+    hl = run_benchmark.summarize(entries)["headline"]
+    assert hl["publication_status"] == "measurable_reduction"
+    line = run_benchmark._published_figure(hl)
+    assert f"{hl['reported_reduction_pct']:.2f}%" in line
+
+
+def test_c7c_cli_print_routes_through_publication_fields(
+        monkeypatch, tmp_path, capsys):
+    """QA's C-7c probe, pinned end-to-end through main(): at a true 1%
+    effect the results JSON publishes reported_reduction_pct=null for BOTH
+    headline and blended — the CLI must print that same contract, never a
+    bare 'HEADLINE ... 1.00%' / 'Blended ... 0.27%'."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    monkeypatch.setattr(sys, "argv",
+                        ["run_benchmark", "--out", str(tmp_path)])
+    monkeypatch.setattr(run_benchmark, "fixture_checksum",
+                        lambda: run_benchmark.EXPECTED_FIXTURE_SHA256)
+    monkeypatch.setattr(run_benchmark.httpx, "get",
+                        lambda *a, **k: type("R", (), {"status_code": 200})())
+    monkeypatch.setattr(run_benchmark.httpx, "Client", lambda: object())
+
+    def _arm(client, base, model, p, conciseness, k):
+        per = 99.0 if conciseness else 100.0  # true 1% effect
+        return {"ok": True, "n_ok": k, "k": k, "sampled": k > 0,
+                "tokens_total": per * k, "text": "x",
+                "tokens_source": "usage.completion_tokens", "error": None}
+
+    monkeypatch.setattr(run_benchmark, "run_arm", _arm)
+    monkeypatch.setattr(
+        run_benchmark, "rubric_score",
+        lambda *a, **k: {"mode": "model_judge", "score_a": 10,
+                         "score_b": 10, "winner": "tie"})
+
+    assert run_benchmark.main() == 0
+    out = capsys.readouterr().out
+    summary = json.loads(next(tmp_path.glob("benchmark_*.json")).read_text())
+
+    for section, marker in (("headline", "HEADLINE"),
+                            ("blended_corpus_wide", "Blended")):
+        pub = summary[section]
+        assert pub["reported_reduction_pct"] is None
+        line = next(l for l in out.splitlines() if marker in l)
+        # the printed line carries the suppression, never the raw mean
+        assert "no measurable effect" in line
+        assert f"{pub['mean_output_reduction_pct']:.2f}%" not in line
+    # QA's exact observed leak, pinned as gone
+    assert "1.00%" not in out
+    assert "0.27%" not in out

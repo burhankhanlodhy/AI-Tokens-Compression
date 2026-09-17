@@ -358,6 +358,19 @@ def _publication(e: dict, n_valid: int) -> dict:
                                  "(2pp publication floor applies)")}
 
 
+def _published_figure(e: dict) -> str:
+    """AC-P1g CLI rendering of a published figure (C-7c): the percentage
+    comes from reported_reduction_pct VERBATIM — never from the raw mean —
+    so a result the publication contract suppresses cannot reach stdout
+    dressed as a number."""
+    if e["reported_reduction_pct"] is not None:
+        return (f"{e['reported_reduction_pct']:.2f}% "
+                f"(95% CI ±{e['ci95_halfwidth']:.2f}) "
+                f"[{e['publication_status']}]")
+    return (f"no measurable effect "
+            f"({e['publication_status']}: {e['publication_note']})")
+
+
 def summarize(valid_entries: list[dict]) -> dict:
     """Headline (eligible subset) + labelled blended (corpus-wide) stats."""
     eligible = [r for r in valid_entries if r.get("eligible")]
@@ -531,12 +544,16 @@ def main() -> int:
     path.write_text(json.dumps(summary, indent=2))
     hl = stats["headline"]
     bl = stats["blended_corpus_wide"]
+    # AC-P1g: the CLI prints the PUBLISHED fields and nothing else. Reading
+    # mean_output_reduction_pct here (pre-C-7c) printed a bare "1.00%" for a
+    # result the JSON itself suppressed as no_measurable_effect — the same
+    # noise-dressed-as-signal defect one surface over. The figure printed is
+    # reported_reduction_pct verbatim, so stdout and results JSON cannot
+    # diverge by construction.
     print(f"\nHEADLINE (eligible subset, n={stats['n_eligible']}): "
-          f"{hl['mean_output_reduction_pct']:.2f}% "
-          f"(95% CI ±{hl['ci95_halfwidth']:.2f})")
+          f"{_published_figure(hl)}")
     print(f"Blended (corpus-wide, n={bl['n']}, labelled, not the headline): "
-          f"{bl['mean_output_reduction_pct']:.2f}% "
-          f"(95% CI ±{bl['ci95_halfwidth']:.2f})")
+          f"{_published_figure(bl)}")
     print(f"Quality parity: {stats['quality_parity']['n_judged']} judged, "
           f"{stats['quality_parity']['n_regressions_over_1pt']} >1pt regressions")
     print(f"AC-P1 target on HEADLINE (>=15% mean, CI lower bound >=15): "
