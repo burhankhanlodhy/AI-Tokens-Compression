@@ -4,7 +4,9 @@ With L1_ENABLED=true:
 - upstream receives the CLEANED messages (whitespace-compacted JSON)
 - an identical re-request produces the same clean bytes (cache-key stability)
 - the ledger row records l1_tokens_stripped > 0 for a strippable prompt
-- L1_ENABLED=false (default) leaves messages untouched
+- L1_ENABLED=false (explicitly pinned; ON is the default since B-26) sends
+  the upstream body BYTE-IDENTICAL — the full messages list, not merely an
+  un-cleaned content string
 """
 from __future__ import annotations
 
@@ -125,7 +127,11 @@ async def test_ledger_records_l1_tokens(postgres_stats, capturing, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_l1_disabled_by_default_leaves_messages(l1_env, monkeypatch):
+async def test_l1_disabled_leaves_upstream_byte_identical(l1_env, monkeypatch):
+    # B-26: the default flipped to ON, so the off-case must pin the env
+    # explicitly — it is no longer the default the fixture inherits.
+    monkeypatch.setenv("L1_ENABLED", "false")
+    get_settings.cache_clear()
     captured: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -144,7 +150,44 @@ async def test_l1_disabled_by_default_leaves_messages(l1_env, monkeypatch):
         )
     await app.state.http.aclose()
     assert resp.status_code == 200
-    assert captured["body"]["messages"][0]["content"] == RAG  # untouched
+    # B-26 acceptance: BYTE-IDENTICAL upstream — the FULL messages list,
+    # not merely "content was not cleaned".
+    assert captured["body"]["messages"] == [
+        {"role": "user", "content": RAG}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_l1_on_by_default_cleans_upstream(l1_env):
+    # B-26 companion: with NO env pin at all (l1_env only clears the settings
+    # cache), the flipped default means the strippable prompt reaches the
+    # upstream already cleaned — exactly what clean_messages() produces.
+    from proxy.l1_clean import clean_messages
+
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json=UPSTREAM_RESPONSE)
+
+    app = _app(handler)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as c:
+        resp = await c.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer test-key-123"},
+            json={"model": "gpt-4o-mini",
+                  "messages": [{"role": "user", "content": RAG}]},
+        )
+    await app.state.http.aclose()
+    assert resp.status_code == 200
+    sent = captured["body"]["messages"][0]["content"]
+    raw = [{"role": "user", "content": RAG}]
+    assert sent != RAG  # default-on actually transformed the strippable body
+    assert captured["body"]["messages"] == [
+        {"role": "user", "content": clean_messages(raw)[0]["content"]}
+    ]
 
 
 # ---------------------------------------------------------------- B2 P0 (QA):

@@ -51,9 +51,12 @@ class Settings(BaseSettings):
     # --- B2: L1 lossless structural cleanup (Phase B) ---
     # Pure deterministic transform (proxy/l1_clean.py, frozen taxonomy
     # l1-taxonomy.md). Runs BEFORE the PA-4 cache key: cache key = clean
-    # bytes (AC-P1f). Off-by-default until B4 QA sign-off on round-trip
-    # equivalence.
-    l1_enabled: bool = False
+    # bytes (AC-P1f). ON by default since B-26: the §6 contract tests pin
+    # byte-identity on every non-target content class, so default-on is
+    # safe. Disable per-deployment with L1_ENABLED=false. Caveat: a message
+    # whose ENTIRE content is pretty-printed JSON (no surrounding prose)
+    # gets whitespace-compacted — see the README flag note.
+    l1_enabled: bool = True
 
     # --- PA-1: multi-provider routing ---
     # "off" (default): legacy single-upstream behavior — everything goes to

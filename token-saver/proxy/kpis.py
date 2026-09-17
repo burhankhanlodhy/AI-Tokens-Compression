@@ -64,6 +64,7 @@ def _fetch_kpis(
                    COALESCE(SUM(output_tokens), 0),
                    COALESCE(SUM(est_cost_before), 0),
                    COALESCE(SUM(est_cost_after), 0),
+                   COALESCE(SUM(est_cost_before) - SUM(est_cost_after), 0),
                    COALESCE(SUM(cache_savings), 0),
                    COALESCE(SUM(l1_tokens_stripped), 0),
                    COALESCE(SUM(l1_savings), 0),
@@ -74,7 +75,7 @@ def _fetch_kpis(
             """,
             params,
         )
-        (n, tin, tout_after, out, cb, ca, cache_sav, l1_tok, l1_sav,
+        (n, tin, tout_after, out, cb, ca, c_saved, cache_sav, l1_tok, l1_sav,
          cache_hits, errors, avg_lat) = cur.fetchone()
         tin = int(tin)
         tout_after = int(tout_after)
@@ -88,7 +89,7 @@ def _fetch_kpis(
             "output_tokens": int(out),
             "cost_before": float(cb),
             "cost_after": float(ca),
-            "cost_saved": float(cb) - float(ca),
+            "cost_saved": float(c_saved),       # SQL-side delta: byte-consistent with series (B-26)
             "cache_savings": float(cache_sav),   # reported separately (AC-A6)
             "l1_tokens_stripped": int(l1_tok),   # B3: L1 savings, separate from cache (taxonomy §1)
             "l1_cost_saved": float(l1_sav),      # B3: never summed with cache_savings on one request

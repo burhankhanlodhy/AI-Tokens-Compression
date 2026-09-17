@@ -82,6 +82,13 @@ All settings are env vars (see `.env.example` and `proxy/config.py`):
 
 - `UPSTREAM_BASE_URL` — any OpenAI-compatible provider (default: OpenRouter)
 - `COMPRESSION_ENABLED` / `OUTPUT_CONCISENESS_ENABLED` / `DISABLE_REASONING_BY_DEFAULT` — feature flags
+- `L1_ENABLED` — lossless L1 structural cleanup, **on by default** (since
+  B-26): whitespace-compacts JSON, removes duplicate/empty system blocks and
+  dead RAG metadata. All other content classes reach upstream byte-identical
+  (enforced by the l1-taxonomy §6 contract tests). One caveat: a message
+  whose *entire* content is pretty-printed JSON with no surrounding prose
+  gets whitespace-compacted — if you send "reformat this" as bare JSON, set
+  `L1_ENABLED=false`.
 - `LLMLINGUA_MODEL` / `COMPRESSION_RATE` — compression tuning
 - `DATABASE_PATH` — SQLite location (default `<repo>/data/stats.db`; leave unset)
 

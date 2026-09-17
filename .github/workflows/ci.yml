@@ -61,8 +61,8 @@ jobs:
                     for key in ('tests', 'failures', 'errors', 'skipped')}
           executed = totals['tests'] - totals['skipped']
           print(f"standard suite: executed={executed} passed={totals['tests'] - totals['failures'] - totals['errors'] - totals['skipped']} skipped={totals['skipped']} failures={totals['failures']} errors={totals['errors']}")
-          if executed < 288 or totals['skipped']:
-              raise SystemExit('executed test floor violated: expected at least 288 non-skipped tests')
+          if executed < 289 or totals['skipped']:
+              raise SystemExit('executed test floor violated: expected at least 289 non-skipped tests')
           PY
 
       - name: Run reverse-order suite
@@ -81,6 +81,6 @@ jobs:
                     for key in ('tests', 'failures', 'errors', 'skipped')}
           executed = totals['tests'] - totals['skipped']
           print(f"reverse suite: executed={executed} passed={totals['tests'] - totals['failures'] - totals['errors'] - totals['skipped']} skipped={totals['skipped']} failures={totals['failures']} errors={totals['errors']}")
-          if executed < 288 or totals['skipped']:
-              raise SystemExit('executed test floor violated: expected at least 288 non-skipped tests')
+          if executed < 289 or totals['skipped']:
+              raise SystemExit('executed test floor violated: expected at least 289 non-skipped tests')
           PY
