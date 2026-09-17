@@ -4,8 +4,9 @@
 
 `token-saver/` is the product: an OpenAI-compatible drop-in proxy that
 compresses prompts before they hit the upstream LLM, injects a conciseness
-instruction, suppresses hidden reasoning tokens by default, and tracks
-token/cost savings in SQLite.
+instruction, suppresses hidden reasoning tokens by default, and records
+token/cost savings in a Postgres ledger (SQLite remains the local fallback —
+see [Storage notes](#storage-notes)).
 
 BYOK: the client's own `Authorization` header is forwarded per-request —
 the proxy never stores API keys.
@@ -40,9 +41,14 @@ curl http://localhost:8000/v1/chat/completions \
   -d '{"model":"z-ai/glm-5.3-flash","messages":[{"role":"user","content":"<long prompt>"}]}'
 ```
 
-Note: `docker-compose.yml` publishes host port **8000**. If that port is
-already taken on your machine, change the left side of the `ports:` mapping
-in `docker-compose.yml` (e.g. `"8001:8000"`).
+> **First build:** pulls the Python base image and downloads the
+> LLMLingua-2 model weights, so expect **~10 minutes and ~9.4 GB of disk**
+> (image layers + model cache volume). Later starts are fast.
+
+Note: Compose publishes host ports **8000** (proxy) and **5433** (Postgres).
+If either is already taken on your machine, change the left side of the
+corresponding `ports:` mapping in `docker-compose.yml` (e.g. `"8001:8000"`
+and/or `"5434:5432"`).
 
 ## Quickstart (local)
 
@@ -50,7 +56,8 @@ in `docker-compose.yml` (e.g. `"8001:8000"`).
 cd token-saver
 python -m venv .venv && source .venv/bin/activate
 pip install -r proxy/requirements.txt
-cp .env.example .env
+cp .env.example .env             # local runs may leave POSTGRES_PASSWORD empty —
+                                 # SQLite is used unless TOKEN_SAVER_PG_DSN is set
 uvicorn proxy.main:app --port 8000
 ```
 
@@ -61,15 +68,26 @@ uvicorn proxy.main:app --port 8000
 | `POST /v1/chat/completions` | Main proxy path: classify → compress → forward (streaming supported) |
 | `POST /v1/embeddings` | Passthrough to upstream `/embeddings` |
 | `GET /v1/models` | Passthrough to upstream model list |
-| `GET /stats[?format=text]` | Aggregate token/cost savings (JSON or text) |
+| `GET /stats[?format=text]` | Aggregate token/cost savings from the **SQLite** stats DB (JSON or text; see Storage notes) |
+| `GET /dashboard` | Four-tab metrics dashboard (server-rendered shell + Chart.js; data loaded from `/api/kpis`) |
+| `GET /api/kpis[?bucket=minute\|hour\|day&from=&to=&tenant_id=&api_key_id=]` | Time-bucketed KPI aggregation over the **Postgres ledger** — the dashboard's data source |
 | `GET /metrics` | Prometheus text format (`format=json` for a JSON summary) |
 | `GET /health` | Liveness check |
 
 ### Reading metrics
 
-- **Quick look:** `curl http://localhost:8000/stats` (JSON) or
-  `curl http://localhost:8000/stats?format=text` (human-readable), or open
-  `http://localhost:8000/stats?format=html` in a browser for the dashboard.
+- **Dashboard (recommended):** open `http://localhost:8000/dashboard` in a
+  browser. It aggregates the **Postgres ledger** via `/api/kpis`, so it shows
+  everything the proxy recorded — cache hits, L1 savings, per-route and
+  per-day breakdowns — in four tabs.
+- **JSON/text KPIs:** `curl "http://localhost:8000/api/kpis?bucket=day"` for
+  the same Postgres-backed aggregates without a browser (`from=`/`to=` bound
+  the window, `tenant_id=`/`api_key_id=` scope the aggregates).
+- **Quick look (`/stats`):** `curl http://localhost:8000/stats` (JSON) or
+  `?format=text` (human-readable) reads the **SQLite** stats DB only. When
+  the Postgres ledger is configured (`TOKEN_SAVER_PG_DSN` set — always the
+  case under Docker), requests are recorded in Postgres and `/stats` reports
+  zeros; use `/dashboard` or `/api/kpis` for the real numbers.
 - **Prometheus/Grafana:** add `http://<proxy-host>:8000/metrics` as a scrape
   target. Exposed series:
   - `token_saver_requests_total` — total proxied requests
@@ -97,17 +115,43 @@ All settings are env vars (see `.env.example` and `proxy/config.py`):
   `L1_ENABLED=false`.
 - `LLMLINGUA_MODEL` / `COMPRESSION_RATE` — compression tuning
 - `DATABASE_PATH` — SQLite location (default `<repo>/data/stats.db`; leave unset)
+- `POSTGRES_PASSWORD` — **your own** Postgres credential; required before
+  first start (Compose refuses to start while it is empty). The two DSN
+  variables in `.env.example` interpolate `${POSTGRES_PASSWORD}`, so it is
+  set in exactly one place.
+- `TOKEN_SAVER_PG_DSN` — full Postgres ledger DSN. When set (Compose sets it
+  in the proxy container automatically), every request is logged to the
+  Postgres ledger and `/dashboard` + `/api/kpis` read it; when unset, the
+  proxy falls back to SQLite for both logging and `/stats`.
+- `TOKEN_SAVER_PG_BASE` — base DSN used only by the Postgres acceptance
+  tests (`pytest` skips those tests when it is unavailable); not needed to
+  run the proxy.
 
 Cost estimates use the `model_prices_per_m` table in `proxy/config.py`
 (USD per 1M tokens); unknown models fall back to `default_*_price_per_m`.
 
 ## Storage notes
 
-Stats live in a single SQLite database. `init_db()` enables
-`PRAGMA journal_mode=WAL`, so you will see `stats.db-wal` / `stats.db-shm`
-sidecar files next to the database — do not copy the `.db` without them
-while the proxy is running, and make sure any Docker volume/backups cover
-the whole `data/` directory.
+The proxy has two storage layers with distinct roles:
+
+**Postgres ledger** (`TOKEN_SAVER_PG_DSN` set — the Docker quickstart
+configures this automatically): every request is recorded in the Postgres
+`requests` ledger, including cache and L1 attribution columns, and
+`/dashboard` + `/api/kpis` aggregate it SQL-side. Data lives in the
+`postgres-data` Docker volume, initialized from
+`postgres-schema-v2.sql`; back up the volume, and remap host port **5433**
+if it is taken. On a fresh volume the schema is created at container init
+and the provider seed rows are inserted at proxy startup.
+
+**SQLite** (`data/stats.db`): remains the local fallback when
+`TOKEN_SAVER_PG_DSN` is unset (single-user/local mode), and is what the
+`/stats` endpoint reads. Mind the split: with Postgres configured, new
+requests are written to the Postgres ledger, so `/stats` (SQLite) stays at
+zeros — read the ledger through `/dashboard` or `/api/kpis`. `init_db()`
+enables `PRAGMA journal_mode=WAL`, so you will see `stats.db-wal` /
+`stats.db-shm` sidecar files next to the database — do not copy the `.db`
+without them while the proxy is running, and make sure any Docker
+volume/backups cover the whole `data/` directory.
 
 ## Tests
 
