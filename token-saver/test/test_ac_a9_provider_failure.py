@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from proxy import main as main_mod  # noqa: E402
+from proxy import stats as stats_mod  # noqa: E402
 from proxy.config import get_settings  # noqa: E402
 
 
@@ -63,14 +64,16 @@ def _run_failure(monkeypatch, tmp_path, transport: _FailureTransport):
             headers={"Authorization": "Bearer recorded-test-credential"},
             json=_post_body(),
         )
-        metrics = client.get("/metrics?format=json")
+        # K-4a: /metrics is now bound to the Postgres KPI path (spec §41),
+        # so the SQLite-mode ledger check reads the stats aggregate instead.
+        ledger_requests = stats_mod.aggregate_stats()["totals"]["requests"]
     get_settings.cache_clear()
-    return response, metrics, transport
+    return response, ledger_requests, transport
 
 
 def test_ac_a9_upstream_timeout_is_normalized_and_counted(monkeypatch, tmp_path):
     transport = _FailureTransport(exc=httpx.ReadTimeout("fixture timeout"))
-    response, metrics, transport = _run_failure(monkeypatch, tmp_path, transport)
+    response, ledger_requests, transport = _run_failure(monkeypatch, tmp_path, transport)
 
     assert len(transport.requests) == 1
     assert response.status_code == 504
@@ -82,8 +85,7 @@ def test_ac_a9_upstream_timeout_is_normalized_and_counted(monkeypatch, tmp_path)
             "code": 504,
         }
     }
-    assert metrics.status_code == 200
-    assert metrics.json()["requests"] == 1
+    assert ledger_requests == 1
 
 
 def test_ac_a9_upstream_5xx_is_normalized_and_counted(monkeypatch, tmp_path):
@@ -92,7 +94,7 @@ def test_ac_a9_upstream_5xx_is_normalized_and_counted(monkeypatch, tmp_path):
         body=json.dumps({"error": {"message": "fixture overloaded"}}).encode(),
         headers={"content-type": "application/json", "retry-after": "5"},
     )
-    response, metrics, transport = _run_failure(monkeypatch, tmp_path, transport)
+    response, ledger_requests, transport = _run_failure(monkeypatch, tmp_path, transport)
 
     assert len(transport.requests) == 1
     assert response.status_code == 503
@@ -104,5 +106,4 @@ def test_ac_a9_upstream_5xx_is_normalized_and_counted(monkeypatch, tmp_path):
             "code": 503,
         }
     }
-    assert metrics.status_code == 200
-    assert metrics.json()["requests"] == 1
+    assert ledger_requests == 1

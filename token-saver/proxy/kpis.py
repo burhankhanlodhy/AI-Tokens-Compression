@@ -258,4 +258,9 @@ async def kpis_endpoint(
     except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
         return JSONResponse({"error": "ledger unavailable", "detail": str(exc)},
                             status_code=503)
+    except RuntimeError as exc:
+        # K-4a: no DSN configured (get_pg_dsn) is a ledger-unavailable state,
+        # not a server bug — same envelope/status as an unreachable Postgres.
+        return JSONResponse({"error": "ledger unavailable", "detail": str(exc)},
+                            status_code=503)
     return JSONResponse(data)

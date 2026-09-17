@@ -89,12 +89,18 @@ uvicorn proxy.main:app --port 8000
   case under Docker), requests are recorded in Postgres and `/stats` reports
   zeros; use `/dashboard` or `/api/kpis` for the real numbers.
 - **Prometheus/Grafana:** add `http://<proxy-host>:8000/metrics` as a scrape
-  target. Exposed series:
+  target. Like `/api/kpis` (which it is bound to — same Postgres source of
+  truth), it requires `TOKEN_SAVER_PG_DSN`; with the ledger unavailable the
+  scrape **fails with 503** rather than reporting zeros, so a stalled target
+  is visible in Prometheus instead of looking like zero traffic. Exposed
+  series (label sets match the `/api/kpis` contract):
   - `token_saver_requests_total` — total proxied requests
   - `token_saver_tokens_saved` — input tokens removed by compression
   - `token_saver_cost_saved` — estimated USD saved
   - `token_saver_latency_ms` — average upstream latency
-  - `token_saver_requests_by_route{route=...}` / `token_saver_requests_by_day{day=...}` — breakdowns
+  - `token_saver_requests_by_model{model=...}` / `token_saver_requests_by_provider{provider=...}` / `token_saver_requests_by_day{day=...}` — breakdowns
+  - `token_saver_ledger_write_failures` — ledger writes that failed and were
+    swallowed (must stay 0; nonzero means telemetry is being lost)
 
 ## Configuration
 

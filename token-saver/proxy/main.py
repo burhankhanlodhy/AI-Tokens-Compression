@@ -894,40 +894,79 @@ async def embeddings(request: Request):
 # Metrics & health endpoints for monitoring systems.
 
 
+def _prom_label_escape(value: str) -> str:
+    """Prometheus text-format label escaping (backslash, quote, newline)."""
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
 @app.get("/metrics")
 async def metrics(format: str = "text"):
-    """Return Prometheus text-format metrics (or a JSON summary)."""
-    data = stats.aggregate_stats()
-    t = data["totals"]
+    """Return Prometheus text-format metrics (or a JSON summary).
+
+    K-4a (spec §41): /api/kpis is the single contract both the dashboard AND
+    the Prometheus path consume — /metrics now reads the Postgres KPI path,
+    never SQLite aggregate_stats(). Label mapping (deliberate):
+      - the four headline counters map to overview.{requests,
+        input_tokens_saved, cost_saved, avg_latency_ms};
+      - requests_by_day is derived from `series` (bucket=day), preserving the
+        old series name;
+      - requests_by_model / requests_by_provider come from the KPI contract's
+        by_model / by_provider;
+      - requests_by_route is DROPPED: the KPI contract has no route series
+        (route-level counts live in the ledger only).
+    When the ledger is unavailable (no DSN configured, Postgres down) the
+    scrape FAILS (503) instead of reporting zeros that are indistinguishable
+    from silently dropped ledger writes. token_saver_ledger_write_failures
+    stays a module-global counter (it must survive even a ledger outage).
+    """
+    try:
+        resp = await kpis_endpoint(bucket="day")
+    except RuntimeError as exc:  # no DSN configured (get_pg_dsn)
+        return JSONResponse({"error": "ledger unavailable", "detail": str(exc)},
+                            status_code=503)
+    if resp.status_code != 200:
+        # Postgres unreachable/errored: propagate the 503 — fail the scrape
+        # loudly rather than serving zeros.
+        return resp
+    data = json.loads(resp.body)
+    o = data["overview"]
     if format != "text":
         return {
-            "requests": t["requests"],
-            "tokens_saved": t["input_tokens_saved"],
-            "cost_saved": round(t["cost_saved"], 4),
-            "avg_latency_ms": round(t["avg_latency_ms"], 1),
+            "requests": o["requests"],
+            "tokens_saved": o["input_tokens_saved"],
+            "cost_saved": round(o["cost_saved"], 4),
+            "avg_latency_ms": round(o["avg_latency_ms"], 1),
             "ledger_write_failures": LEDGER_WRITE_FAILURES,
         }
     lines: list[str] = [
         "# HELP token_saver_requests_total total requests logged",
         "# TYPE token_saver_requests_total counter",
-        f'token_saver_requests_total {t["requests"]}',
+        f'token_saver_requests_total {o["requests"]}',
         "# HELP token_saver_tokens_saved tokens saved via compression",
         "# TYPE token_saver_tokens_saved counter",
-        f'token_saver_tokens_saved {t["input_tokens_saved"]}',
+        f'token_saver_tokens_saved {o["input_tokens_saved"]}',
         "# HELP token_saver_cost_saved estimated dollar cost saved",
         "# TYPE token_saver_cost_saved gauge",
-        f'token_saver_cost_saved {t["cost_saved"]:.4f}',
+        f'token_saver_cost_saved {o["cost_saved"]:.4f}',
         "# HELP token_saver_latency_ms average latency ms",
         "# TYPE token_saver_latency_ms gauge",
-        f'token_saver_latency_ms {t["avg_latency_ms"]:.1f}',
+        f'token_saver_latency_ms {o["avg_latency_ms"]:.1f}',
         "# HELP token_saver_ledger_write_failures ledger writes that failed and were swallowed (telemetry must not break the proxy)",
         "# TYPE token_saver_ledger_write_failures counter",
         f"token_saver_ledger_write_failures {LEDGER_WRITE_FAILURES}",
     ]
-    for r in data["by_route"]:
-        lines.append(f'token_saver_requests_by_route{{route="{r["route"]}"}} {r["requests"]}')
-    for d in data.get("by_day") or []:
-        lines.append(f'token_saver_requests_by_day{{day="{d["day"]}"}} {d["requests"]}')
+    for m in data["by_model"]:
+        lines.append(
+            f'token_saver_requests_by_model{{model="{_prom_label_escape(m["model"])}"}}'
+            f' {m["requests"]}'
+        )
+    for p in data["by_provider"]:
+        lines.append(
+            f'token_saver_requests_by_provider{{provider="{_prom_label_escape(p["provider"])}"}}'
+            f' {p["requests"]}'
+        )
+    for s in data["series"]:
+        lines.append(f'token_saver_requests_by_day{{day="{s["bucket"][:10]}"}} {s["requests"]}')
     return PlainTextResponse("\n".join(lines), media_type="text/plain; version=0.0.4; charset=utf-8")
 
 

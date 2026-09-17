@@ -77,26 +77,16 @@ def test_routes_are_unique():
 
 # ---------------------------------------------------------------- T5: metrics
 
-def test_metrics_is_prometheus_text(client):
-    r = client.get("/metrics")
-    assert r.status_code == 200
-    assert r.headers["content-type"].startswith("text/plain")
-    text = r.text
-    assert "\n" in text and "\\n" not in text  # real newlines, not escaped
-    assert "# HELP token_saver_requests_total" in text
-    assert "# TYPE token_saver_requests_total counter" in text
-    # values are unquoted numerics on series lines
-    for line in text.splitlines():
-        if line and not line.startswith("#"):
-            name, value = line.rsplit(" ", 1)
-            float(value)  # raises if quoted/garbage
-
-
-def test_metrics_json_summary(client):
-    r = client.get("/metrics?format=json")
-    assert r.status_code == 200
-    body = r.json()
-    assert {"requests", "tokens_saved", "cost_saved"} <= set(body)
+def test_metrics_fails_without_ledger(client):
+    """T5/K-4a: /metrics is bound to the Postgres KPI path (spec §41 —
+    /api/kpis is the single contract for the dashboard AND the Prometheus
+    path). With no DSN configured (this SQLite-mode client) the scrape FAILS
+    with 503 instead of reporting zeros that are indistinguishable from
+    silently dropped ledger writes. The PG-mode Prometheus text/JSON shape,
+    ledger-count reconciliation, and label mapping are pinned by
+    test_k4a_metrics_kpi_bound.py."""
+    assert client.get("/metrics").status_code == 503
+    assert client.get("/metrics?format=json").status_code == 503
 
 
 # ---------------------------------------------------------------- T12: /v1/models logging
