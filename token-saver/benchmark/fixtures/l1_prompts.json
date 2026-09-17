@@ -781,6 +781,110 @@
           "content": "Translate this sentence into Spanish exactly: The proxy strips only structural metadata, never answer content."
         }
       ]
+    },
+    {
+      "id": "control-007",
+      "category": "control",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Review this Python helper and explain whether its retry policy is bounded.\n\n```python\ndef fetch_with_retry(client, attempts=3):\n    for attempt in range(attempts):\n        try:\n            return client.fetch()\n        except TimeoutError:\n            if attempt == attempts - 1:\n                raise\n```"
+        }
+      ]
+    },
+    {
+      "id": "control-008",
+      "category": "control",
+      "messages": [
+        {
+          "role": "user",
+          "content": "This is user-authored YAML. Preserve its indentation and scalar values exactly:\n\nservice:\n  name: reranker\n  timeout_ms: 30000\n  labels:\n    owner: search\n    tier: backend\n"
+        }
+      ]
+    },
+    {
+      "id": "control-009",
+      "category": "control",
+      "messages": [
+        {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_weather_1",
+              "type": "function",
+              "function": {
+                "name": "lookup_weather",
+                "arguments": "{\"city\":\"Paris\",\"units\":\"metric\"}"
+              }
+            }
+          ]
+        },
+        {
+          "role": "tool",
+          "tool_call_id": "call_weather_1",
+          "content": "Paris: 18°C, light rain."
+        },
+        {
+          "role": "user",
+          "content": "Use the tool result to answer in one sentence."
+        }
+      ]
+    },
+    {
+      "id": "control-010",
+      "category": "control",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Describe the image and retain this instruction exactly."
+            },
+            {
+              "type": "image_url",
+              "image_url": {
+                "url": "https://example.invalid/diagram.png"
+              }
+            },
+            {
+              "type": "text",
+              "text": "Do not infer facts that are not visible."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "control-011",
+      "category": "control",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Summarize the deployment status from this table.\n\n| Service | Region | Status |\n| --- | --- | --- |\n| proxy | us-east | healthy |\n| ledger | us-east | delayed |\n"
+        }
+      ]
+    },
+    {
+      "id": "control-012",
+      "category": "control",
+      "messages": [
+        {
+          "role": "user",
+          "content": "The following note mixes prose and an example payload; preserve both parts exactly.\n\nThe client retries only once. Example payload:\n{\"content\":\"retry once\",\"score\":0.91,\"source\":\"runbook.md\"}\nThe final sentence is part of the note, not JSON."
+        }
+      ]
+    },
+    {
+      "id": "control-013",
+      "category": "control",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Do not normalize this JSON because it is inside a code fence:\n\n```json\n{\n  \"content\": \"answer-bearing text\",\n  \"score\": 0.91,\n  \"source\": \"runbook.md\"\n}\n```"
+        }
+      ]
     }
   ]
 }
