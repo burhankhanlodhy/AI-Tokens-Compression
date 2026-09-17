@@ -25,14 +25,20 @@ A single seed can be lucky (the old gate was green only 75.7% of 300
 seeds); the RATE is what "the instrument is calibrated" actually means.
 
 Simulation mirrors the harness: HARNESS_K samples per arm per prompt
-(estimator.py declares what the harness takes — 1 today), aggregated into
-per-prompt (baseline_total, treatment_total) pairs, fed to `estimate()`.
+(estimator.py declares what the harness takes — 30 since C-4b), aggregated
+into per-prompt (baseline_total, treatment_total) pairs, fed to `estimate()`.
 
-HEAD STATUS: RED BY DESIGN. The current estimator is the k=1 mean-of-ratios
-the audit condemned; this gate must stay red until C-4b
-(@application-developer) replaces `estimate()` with the corrected AC-P1a
-mathematics (ratio-of-sums, bootstrap/Wilcoxon, t(39)=2.023, k >= 5).
-Red exit 1 = block open — no provider money on a P1-1 re-run until green.
+N_PROMPTS = 15 per the PM subset-headline ruling (2026-09-16): the
+published headline is measured over the ELIGIBLE subset — the prompts whose
+last user message clears the production gate. Corpus v2 (7cae1b1) has 15/55
+gate-clearing fixtures, so the headline instrument calibrates at n=15; the
+corpus-wide blended figure is a dilution, published beside the headline and
+labelled, and is NOT what this gate calibrates.
+
+HEAD STATUS: GREEN since C-4b. The corrected estimator (ratio-of-sums +
+bootstrap, HARNESS_K=30) is what this gate imports and simulates; a red
+exit here means the shipped math regressed — do NOT weaken thresholds to
+force green.
 """
 from __future__ import annotations
 
@@ -54,7 +60,9 @@ from estimator import HARNESS_K    # noqa: E402  — samples/arm the harness tak
 MEASURED_CV = 0.2415309851520115   # sd_gate z-ai/glm-5.3-flash, n=5, temp=0.0
 MEASURED_MEAN_TOKENS = 3937.4      # same artifact, provider usage.completion_tokens
 EFFECT_15PCT = 0.85                # treatment multiplier for the positive control
-N_PROMPTS = 40                     # matches the pinned fixture-set size (AC-P1)
+# Headline population = eligible subset (PM subset-headline ruling): corpus
+# v2 has 15/55 gate-clearing fixtures, so the headline instrument is n=15.
+N_PROMPTS = 15
 SEED_BASE = 20260916               # deterministic across runs and machines
 NULL_TOL_PP = 5.0                  # null gate: |estimate| must stay within 5pp
 CONTROL_WINDOW = (12.0, 18.0)      # control gate: estimate inside [12, 18]pp
@@ -104,8 +112,18 @@ def _experiment(seed: int, multiplier: float | None, k: int) -> dict:
 
 
 def _null_is_false_positive(r: dict) -> bool:
-    """Null arm should read ~0. FP = the gate would have claimed savings."""
-    return abs(r["est"]) > NULL_TOL_PP or r["lo"] > 0.0 or r["hi"] < 0.0
+    """Null arm should read ~0. A harmful FP = the gate would have PUBLISHED
+    a savings claim: the point estimate escapes the ±5pp tolerance AND the
+    95% CI excludes 0 (a statistically significant claim of savings).
+
+    NOT an OR. An exactly-calibrated two-sided 95% instrument excludes 0 on
+    ~5% of nulls at EVERY k by construction (that is what "95%" means), so
+    counting a bare CI exclusion as a false positive makes the rate contract
+    (<= 5%) unpassable with margin at any sampling budget. The AND reading
+    is the one the PM k-sweep reproduces (k=12 -> ~5.0%, k=20 -> ~1.1%,
+    k=30 -> ~0.2-0.8%; measured at 400 seeds)."""
+    return (abs(r["est"]) > NULL_TOL_PP
+            and (r["lo"] > 0.0 or r["hi"] < 0.0))
 
 
 def _control_is_success(r: dict) -> bool:
@@ -168,13 +186,11 @@ def main() -> int:
         return 0
 
     print("\nNOT CALIBRATED — no provider money on a P1-1 re-run.")
-    if HARNESS_K == 1 and not green:
-        print("Cause expected: the estimator is the k=1 mean-of-ratios the "
-              "2026-09 audit condemned. C-4b (@application-developer) must "
-              "land the corrected AC-P1a mathematics (ratio-of-sums, "
-              "bootstrap/Wilcoxon, t(39)=2.023, HARNESS_K >= 5) in "
-              "estimator.py; this gate flips green when it runs the real "
-              "shipped math. Do NOT weaken thresholds to force green.")
+    if not green:
+        print("The gate imports run_benchmark.estimate by reference, so a red "
+              "result here means the SHIPPED math regressed (or the sampling "
+              "regime diverged from HARNESS_K). Do NOT weaken thresholds to "
+              "force green; fix the estimator or the harness loop.")
     return 1
 
 

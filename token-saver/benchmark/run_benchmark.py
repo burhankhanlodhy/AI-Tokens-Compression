@@ -1,17 +1,31 @@
-"""P1-1: output-conciseness benchmark runner (AC-P1/P1a/P1b).
+"""P1-1: output-conciseness benchmark runner (AC-P1/P1a/P1b/P1c).
 
 Design (per product-spec-v2.md):
-- Fixture set: benchmark/prompts.json (>= 40 prompts, committed pre-run,
-  mix >= 60% conversational/QA/RAG, <= 40% code) — AC-P1a anti-cherry-picking.
-- Each prompt is sent TWICE through the live proxy route: once with
-  OUTPUT_CONCISENESS_ENABLED=false (baseline), once =true (treatment).
-- Output tokens counted identically on both sides via proxy.counting.
-- Quality parity: model-based side-by-side pairwise judge (AC-P1) with a
-  rubric score (structural correctness + answer fidelity, 1-10).
-- Statistical claim: paired test at 95% CI (AC-P1a).
-- Honesty gate (AC-P1b): results JSON records the exact fixture checksum,
-  model, and config so QA can reproduce. The published headline must match
-  the committed run.
+- Fixture set: benchmark/prompts.json (pinned corpus v2, 55 prompts,
+  committed pre-run, mix >= 60% conversational/QA/RAG, <= 40% code) —
+  AC-P1a anti-cherry-picking. The corpus checksum is PINNED below; the
+  runner refuses to spend a single token against a corpus that does not
+  match the pin (AC-P1b).
+- Each prompt is sent 2 x HARNESS_K times through the live proxy route:
+  HARNESS_K samples with OUTPUT_CONCISENESS_ENABLED=false (baseline) and
+  HARNESS_K samples =true (treatment), aggregated into per-prompt token
+  sums (the aggregation the shared estimator and the calibration gate
+  both simulate).
+- Output tokens counted from the provider's usage.completion_tokens
+  (AC-P1a); the proxy-side counter is only a recorded fallback.
+- Temperature is pinned (TEMPERATURE) on every request and recorded in
+  the results JSON — an unpinned temperature is a confound the honesty
+  gate would not see.
+- Headline population (PM subset-headline ruling, 2026-09-16): the
+  headline is measured over the ELIGIBLE subset — prompts whose last user
+  message clears the production gate (should_inject_conciseness), i.e.
+  the requests where the feature actually fires. The corpus-wide blended
+  figure is published BESIDE it, explicitly labelled, never alone. Both
+  name the population they cover.
+- Quality parity: model-based side-by-side pairwise judge (AC-P1) with
+  randomised A/B order per prompt (both-orders randomisation).
+- Statistical claim: paired test at 95% CI (AC-P1a) via the shared
+  corrected estimator (ratio-of-sums + bootstrap).
 
 Usage:
   OPENROUTER_API_KEY=sk-... .venv/bin/python benchmark/run_benchmark.py \
@@ -19,7 +33,8 @@ Usage:
 
 Requires a running proxy (docker compose up) and a real API key in the env
 of the CLIENT calls (BYOK passthrough). No results are fabricated: if the
-proxy is unreachable the script exits non-zero with no results file.
+proxy is unreachable or the corpus checksum mismatches the pin, the script
+exits non-zero with no results file.
 """
 from __future__ import annotations
 
@@ -27,6 +42,7 @@ import argparse
 import hashlib
 import json
 import os
+import random
 import sys
 import time
 from datetime import datetime, timezone
@@ -34,10 +50,17 @@ from pathlib import Path
 
 import httpx
 
-from estimator import estimate  # noqa: E402 — shared with the calibration gate
+from estimator import estimate, HARNESS_K  # noqa: E402 — shared with the gate
 
 ROOT = Path(__file__).resolve().parent
 FIXTURES = ROOT / "prompts.json"
+
+# AC-P1b pin: the immutable corpus v2 this harness is allowed to spend
+# against (commit 7cae1b1). A mismatch aborts BEFORE any provider call.
+EXPECTED_FIXTURE_SHA256 = "e3fcde4d6862b97ec828bfb1e977fe12ff321d76b1f19a0c3a608c3f8cd154cd"
+
+# Pinned decoding temperature (SD-gate artifact was measured at temp=0.0).
+TEMPERATURE = 0.0
 
 
 def fixture_checksum() -> str:
@@ -45,7 +68,7 @@ def fixture_checksum() -> str:
 
 
 def count_output_tokens(text: str, model: str) -> int:
-    """Count via the proxy's own counter for identical treatment both sides."""
+    """Fallback counter (proxy's own) — only used if usage is missing."""
     sys.path.insert(0, str(ROOT.parent))
     from proxy.counting import count_text
 
@@ -59,12 +82,34 @@ def extract_text(payload: dict) -> str:
         return ""
 
 
+def usage_completion_tokens(payload: dict) -> int | None:
+    try:
+        val = payload["usage"]["completion_tokens"]
+        return int(val) if val is not None else None
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+
+
+def is_eligible(prompt: dict) -> bool:
+    """Production gate predicate on the prompt's LAST user message.
+
+    The same code path the live proxy uses to decide injection — the
+    headline population is "requests where the feature fires", measured
+    with the exact predicate that makes that decision.
+    """
+    sys.path.insert(0, str(ROOT.parent))
+    from proxy.counting import should_inject_conciseness
+
+    return should_inject_conciseness(prompt["messages"])
+
+
 def run_one(client: httpx.Client, base_url: str, model: str,
             prompt: dict, conciseness: bool) -> dict:
     body = {
         "model": model,
         "messages": prompt["messages"],
         "stream": False,
+        "temperature": TEMPERATURE,
     }
     headers = {
         "Authorization": f"Bearer {os.environ.get('OPENROUTER_API_KEY', '')}",
@@ -76,9 +121,17 @@ def run_one(client: httpx.Client, base_url: str, model: str,
             r = client.post(f"{base_url}/v1/chat/completions",
                             json=body, headers=headers, timeout=120)
             if r.status_code == 200:
-                text = extract_text(r.json())
+                payload = r.json()
+                text = extract_text(payload)
+                usage = usage_completion_tokens(payload)
+                if usage is not None:
+                    return {"ok": True, "text": text, "tokens": usage,
+                            "tokens_source": "usage.completion_tokens",
+                            "latency_ms": r.elapsed.total_seconds() * 1000}
+                # AC-P1a fallback, recorded so the honesty gate sees it.
                 return {"ok": True, "text": text,
                         "tokens": count_output_tokens(text, model),
+                        "tokens_source": "count_text_fallback",
                         "latency_ms": r.elapsed.total_seconds() * 1000}
             last_err = f"status {r.status_code}: {r.text[:150]}"
         except httpx.HTTPError as exc:
@@ -87,18 +140,41 @@ def run_one(client: httpx.Client, base_url: str, model: str,
     return {"ok": False, "text": "", "tokens": 0, "error": last_err}
 
 
-def rubric_score(baseline: str, treatment: str, question: str) -> dict:
-    """Model-based pairwise judge (AC-P1). Returns parity + preference.
+def run_arm(client: httpx.Client, base_url: str, model: str,
+            prompt: dict, conciseness: bool, k: int = HARNESS_K) -> dict:
+    """Take k samples of one arm; aggregate into the per-prompt token sum
+    the estimator consumes. All k samples must succeed for the arm to
+    count (a partial arm is a failed pair, never silently averaged)."""
+    samples = [run_one(client, base_url, model, prompt, conciseness)
+               for _ in range(k)]
+    n_ok = sum(1 for s in samples if s["ok"])
+    first_ok = next((s for s in samples if s["ok"]), None)
+    err = next((s.get("error") for s in samples if not s["ok"]), None)
+    return {"ok": n_ok == k, "n_ok": n_ok, "k": k,
+            "tokens_total": sum(s.get("tokens", 0) for s in samples),
+            "text": first_ok["text"] if first_ok else "",
+            "tokens_source": (first_ok or {}).get("tokens_source"),
+            "error": err}
 
-    Uses the same upstream model in judge mode via a direct (unproxied) call;
-    falls back to a length-blind heuristic ONLY if no judge key is available —
-    and records that fact so the honesty gate (AC-P1b) catches it.
+
+def rubric_score(baseline: str, treatment: str, question: str,
+                 rng: random.Random) -> dict:
+    """Model-based pairwise judge (AC-P1) with randomised A/B order.
+
+    Uses the same upstream model in judge mode via a direct (unproxied)
+    call; falls back to a length-blind heuristic ONLY if no judge key is
+    available — and records that fact so the honesty gate (AC-P1b) catches
+    it. The winner is mapped back so `winner` is always reported relative
+    to (baseline, treatment), whichever slot the model saw first.
     """
     judge_key = os.environ.get("OPENROUTER_API_KEY")
     judge_model = os.environ.get("BENCHMARK_JUDGE_MODEL", "openai/gpt-4o")
     if not judge_key:
         return {"mode": "no_judge_key", "parity": None, "winner": "unknown"}
 
+    swap = rng.random() < 0.5
+    answer_a, answer_b = ((treatment, baseline) if swap
+                          else (baseline, treatment))
     prompt = (
         "You are a strict evaluator. Compare two AI answers to the same "
         "question. Score each 1-10 on: structural correctness and answer "
@@ -106,8 +182,8 @@ def rubric_score(baseline: str, treatment: str, question: str) -> dict:
         "hallucination). Brevity is NOT rewarded; only correctness and "
         "completeness of the actual answer.\n\n"
         f"QUESTION: {question}\n\n"
-        f"ANSWER A:\n{baseline[:4000]}\n\n"
-        f"ANSWER B:\n{treatment[:4000]}\n\n"
+        f"ANSWER A:\n{answer_a[:4000]}\n\n"
+        f"ANSWER B:\n{answer_b[:4000]}\n\n"
         'Respond ONLY with JSON: {"score_a": <int>, "score_b": <int>, '
         '"winner": "a"|"b"|"tie"}'
     )
@@ -124,11 +200,60 @@ def rubric_score(baseline: str, treatment: str, question: str) -> dict:
                     "winner": "unknown"}
         content = r.json()["choices"][0]["message"]["content"]
         data = json.loads(content[content.index("{"):content.rindex("}") + 1])
-        return {"mode": "model_judge",
-                "score_a": int(data["score_a"]), "score_b": int(data["score_b"]),
-                "winner": data.get("winner", "tie")}
+        score_a, score_b = int(data["score_a"]), int(data["score_b"])
+        winner = data.get("winner", "tie")
+        if swap:  # map back to baseline/treatment reference frame
+            score_a, score_b = score_b, score_a
+            winner = {"a": "b", "b": "a", "tie": "tie"}.get(winner, "tie")
+        return {"mode": "model_judge", "judge_order_swapped": swap,
+                "score_a": score_a, "score_b": score_b, "winner": winner}
     except Exception as exc:  # noqa: BLE001
-        return {"mode": f"judge_error: {exc}", "parity": None, "winner": "unknown"}
+        return {"mode": f"judge_error: {exc}", "parity": None,
+                "winner": "unknown"}
+
+
+def last_user_message(prompt: dict) -> str:
+    user_msgs = [m for m in prompt["messages"] if m.get("role") == "user"]
+    return user_msgs[-1].get("content", "") if user_msgs else ""
+
+
+def summarize(valid_entries: list[dict]) -> dict:
+    """Headline (eligible subset) + labelled blended (corpus-wide) stats."""
+    eligible = [r for r in valid_entries if r.get("eligible")]
+    blended_pairs = [(r["baseline_tokens"], r["treatment_tokens"])
+                     for r in valid_entries]
+    eligible_pairs = [(r["baseline_tokens"], r["treatment_tokens"])
+                      for r in eligible]
+    headline = estimate(eligible_pairs)
+    blended = estimate(blended_pairs)
+    judged = [r for r in valid_entries if r.get("mode") == "model_judge"]
+    regressions = [r for r in judged
+                   if r.get("score_b", 10) < r.get("score_a", 10) - 1]
+    return {
+        "headline_population": "eligible_subset",
+        "n_eligible": len(eligible),
+        "headline": {
+            "mean_output_reduction_pct": round(headline["mean_reduction_pct"], 2),
+            "ci95_halfwidth": round(headline["ci95"], 2),
+            "ci95_interval": [round(v, 2) for v in headline["ci95_interval"]],
+            "meets_15pct": bool(headline["mean_reduction_pct"] >= 15
+                                and headline["mean_reduction_pct"] - headline["ci95"] >= 15),
+        },
+        "blended_corpus_wide": {
+            "label": ("corpus-wide blended over ALL valid prompts — NOT the "
+                      "headline; dilutes the eligible-subset effect with "
+                      "byte-identical arms"),
+            "n": len(blended_pairs),
+            "mean_output_reduction_pct": round(blended["mean_reduction_pct"], 2),
+            "ci95_halfwidth": round(blended["ci95"], 2),
+            "ci95_interval": [round(v, 2) for v in blended["ci95_interval"]],
+        },
+        "quality_parity": {
+            "n_judged": len(judged),
+            "n_regressions_over_1pt": len(regressions),
+            "parity_holds": bool(judged) and len(regressions) == 0,
+        },
+    }
 
 
 def main() -> int:
@@ -140,6 +265,17 @@ def main() -> int:
 
     if not os.environ.get("OPENROUTER_API_KEY"):
         print("ERROR: OPENROUTER_API_KEY not set. No results will be fabricated.",
+              file=sys.stderr)
+        return 1
+
+    # AC-P1b checksum pin: verify BEFORE anything else, before even the
+    # health check — a wrong corpus never reaches the spend path.
+    checksum = fixture_checksum()
+    if checksum != EXPECTED_FIXTURE_SHA256:
+        print(f"ERROR: pinned corpus checksum mismatch.\n"
+              f"  expected {EXPECTED_FIXTURE_SHA256}\n"
+              f"  found    {checksum}\n"
+              f"The benchmark refuses to run against an unpinned corpus.",
               file=sys.stderr)
         return 1
 
@@ -158,57 +294,56 @@ def main() -> int:
 
     client = httpx.Client()
     results = []
-    print(f"Running {len(prompts)} prompts x 2 arms (baseline/treatment)...")
+    eligible_ids = [p["id"] for p in prompts if is_eligible(p)]
+    print(f"Running {len(prompts)} prompts x 2 arms x HARNESS_K={HARNESS_K} "
+          f"samples (eligible subset: {len(eligible_ids)})...")
     for p in prompts:
-        question = next((m["content"] for m in p["messages"]
-                         if m["role"] == "user"), "")
-        base = run_one(client, args.base_url, args.model, p, conciseness=False)
-        treat = run_one(client, args.base_url, args.model, p, conciseness=True)
+        eligible = is_eligible(p)
+        question = last_user_message(p)
+        base = run_arm(client, args.base_url, args.model, p, conciseness=False)
+        treat = run_arm(client, args.base_url, args.model, p, conciseness=True)
         entry = {
-            "id": p["id"], "category": p["category"],
-            "baseline_tokens": base.get("tokens", 0),
-            "treatment_tokens": treat.get("tokens", 0),
+            "id": p["id"], "category": p["category"], "eligible": eligible,
+            "baseline_tokens": base.get("tokens_total", 0),
+            "treatment_tokens": treat.get("tokens_total", 0),
             "baseline_ok": base["ok"], "treatment_ok": treat["ok"],
+            "baseline_n_ok": base["n_ok"], "treatment_n_ok": treat["n_ok"],
+            "tokens_source": base.get("tokens_source"),
         }
         if base["ok"] and treat["ok"]:
-            entry.update(rubric_score(base["text"], treat["text"], question))
+            # deterministic per-prompt judge order (str seeds are stable
+            # across processes, unlike hash())
+            entry.update(rubric_score(base["text"], treat["text"],
+                                      question,
+                                      random.Random(f"judge-order:{p['id']}")))
             entry["baseline_text"] = base["text"][:800]
             entry["treatment_text"] = treat["text"][:800]
         else:
             entry["error"] = base.get("error") or treat.get("error")
         results.append(entry)
-        pct = (100 * (base["tokens"] - treat["tokens"]) / base["tokens"]
-               if base.get("tokens") and treat["ok"] else float("nan"))
-        print(f"  {p['id']}: {base.get('tokens', 0)} -> {treat.get('tokens', 0)} "
-              f"({pct:.1f}%) {'OK' if entry.get('ok', True) else 'ERR'}")
+        pct = (100 * (entry["baseline_tokens"] - entry["treatment_tokens"])
+               / entry["baseline_tokens"]
+               if entry["baseline_tokens"] and treat["ok"] else float("nan"))
+        print(f"  {p['id']}{'*' if eligible else ' '}: "
+              f"{entry['baseline_tokens']} -> {entry['treatment_tokens']} "
+              f"({pct:.1f}%) {'OK' if base['ok'] and treat['ok'] else 'ERR'}")
 
     valid = [r for r in results if r.get("baseline_ok") and r.get("treatment_ok")]
-    judged = [r for r in valid if r.get("mode") == "model_judge"]
-    regressions = [r for r in judged if r.get("score_b", 10) < r.get("score_a", 10) - 1]
 
     # Production estimator — SHARED with the calibration gate (estimator.py).
     # The gate and the re-run must measure the same math; a divergence here is
     # the defect class the AC-P1a-gate exists to catch.
-    pairs = [(r["baseline_tokens"], r["treatment_tokens"]) for r in valid]
-    est = estimate(pairs)
-    mean_reduction = est["mean_reduction_pct"]
-    ci95 = est["ci95"]
+    stats = summarize(valid)
 
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "fixture_checksum": fixture_checksum(),
+        "fixture_checksum": checksum,
+        "fixture_checksum_pinned": EXPECTED_FIXTURE_SHA256,
+        "temperature": TEMPERATURE,
+        "harness_k": HARNESS_K,
         "n_fixture": len(prompts),
         "n_valid": len(valid),
-        "model": args.model,
-        "mean_output_reduction_pct": round(mean_reduction, 2),
-        "ci95_halfwidth": round(ci95, 2),
-        "ci95_interval": [round(mean_reduction - ci95, 2), round(mean_reduction + ci95, 2)],
-        "meets_15pct": bool(mean_reduction >= 15 and mean_reduction - ci95 >= 15),
-        "quality_parity": {
-            "n_judged": len(judged),
-            "n_regressions_over_1pt": len(regressions),
-            "parity_holds": bool(judged) and len(regressions) == 0,
-        },
+        **stats,
         "ac_p1c_floor_note": ("If >= 15% at parity is unachievable, the honest "
                               "achieved number >= 10% ships instead (AC-P1c)."),
         "results": results,
@@ -218,10 +353,18 @@ def main() -> int:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     path = out / f"benchmark_{args.model.replace('/', '_')}_{stamp}.json"
     path.write_text(json.dumps(summary, indent=2))
-    print(f"\nMean output reduction: {mean_reduction:.2f}% (95% CI ±{ci95:.2f})")
-    print(f"Quality parity: {len(judged)} judged, {len(regressions)} >1pt regressions")
-    print(f"AC-P1 target (>=15% mean, CI lower bound >=15): "
-          f"{'MET' if summary['meets_15pct'] else 'NOT MET'}")
+    hl = stats["headline"]
+    bl = stats["blended_corpus_wide"]
+    print(f"\nHEADLINE (eligible subset, n={stats['n_eligible']}): "
+          f"{hl['mean_output_reduction_pct']:.2f}% "
+          f"(95% CI ±{hl['ci95_halfwidth']:.2f})")
+    print(f"Blended (corpus-wide, n={bl['n']}, labelled, not the headline): "
+          f"{bl['mean_output_reduction_pct']:.2f}% "
+          f"(95% CI ±{bl['ci95_halfwidth']:.2f})")
+    print(f"Quality parity: {stats['quality_parity']['n_judged']} judged, "
+          f"{stats['quality_parity']['n_regressions_over_1pt']} >1pt regressions")
+    print(f"AC-P1 target on HEADLINE (>=15% mean, CI lower bound >=15): "
+          f"{'MET' if hl['meets_15pct'] else 'NOT MET'}")
     print(f"Results written to {path}")
     return 0
 

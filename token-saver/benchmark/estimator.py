@@ -7,43 +7,81 @@ fail when the estimator it is meant to calibrate is sabotaged (the exact
 defect the 2026-09 PM audit caught in the first empty_box draft — a patched
 `mean_reduction = 99.0` left the gate green).
 
-CURRENT BODY: the production estimator as it ships today — mean-of-
-per-prompt-ratios with a normal 1.96·SE CI, fed by HARNESS_K = 1 sample per
-arm per prompt. This is the estimator the 2026-09 audit condemned
-(collapses toward ~0% under realistic output-length CV; cannot distinguish
-"no effect" from "~17% effect").
+CURRENT BODY (C-4b, the corrected AC-P1a mathematics that replaced the
+condemned k=1 mean-of-per-prompt-ratios):
 
-C-4b contract (@application-developer): replace `estimate()` with the
-corrected AC-P1a estimator — ratio-of-sums headline, bootstrap/Wilcoxon
-inference, t(39)=2.023, and HARNESS_K >= 5 samples per arm — keeping the
-same signature. Nothing else changes: empty_box.py automatically re-simulates
-the new regime and flips green, which is C-4b's acceptance evidence.
+- HEADLINE: ratio-of-sums — 100 · (1 − Σtᵢ/Σbᵢ) over the per-prompt token
+  pairs. The mean-of-ratios it replaces collapses toward ~0% under realistic
+  output-length CV and cannot distinguish "no effect" from "~17% effect".
+- INFERENCE: paired prompt-level bootstrap (percentile 95% CI) over the
+  prompts themselves, seeded deterministically so every run of the same
+  input yields the identical interval (AC-P1b reproducibility). The public
+  halfwidth is the conservative symmetric max distance from the headline to
+  either percentile bound, so consumers reading `est ± ci95` never see a
+  narrower interval than the bootstrap produced.
+- SAMPLING: HARNESS_K samples per arm per prompt, aggregated into
+  per-prompt (baseline_total, treatment_total) sums by the harness BEFORE
+  estimate() is called. HARNESS_K = 30 per the PM ruling measured at
+  n=15 (2026-09-16): k=12 fails the control-success contract (81.2%),
+  k=20 lands on the threshold inside its own binomial noise, k=30 passes
+  (null FP 0.8%, control success 97.0% at 400 seeds).
+
+`estimate()` returns the headline population it is handed: the harness feeds
+it the ELIGIBLE subset (prompts where the conciseness gate fires — the
+published headline, per the PM subset-headline ruling) and separately the
+full corpus (published beside it, explicitly labelled blended). The
+estimator itself is population-agnostic.
 """
 from __future__ import annotations
 
-import statistics
+import random
 
 # Samples per arm per prompt the harness ACTUALLY takes (run_benchmark.py
-# currently calls run_one once per arm). The gate simulates this regime.
-# C-4b raises this to >= 5; do NOT change it here without changing the
-# harness to match.
-HARNESS_K = 1
+# loops run_one HARNESS_K times per arm and aggregates the token sums).
+# Keep this and the harness sampling loop in lockstep — the calibration
+# gate simulates exactly this regime.
+HARNESS_K = 30
+
+# Paired bootstrap resamples for the 95% CI. Deterministic seed so the same
+# input always produces the same interval (results JSON is reproducible).
+BOOTSTRAP_RESAMPLES = 1000
+_BOOTSTRAP_SEED = 20260916
 
 
 def estimate(pairs: list[tuple[float, float]]) -> dict:
     """Headline reduction + 95% CI from per-prompt token pairs.
 
     pairs: list of (baseline_tokens, treatment_tokens) per prompt, already
-    aggregated over the arm's HARNESS_K samples (k=1 today).
-    Returns {"mean_reduction_pct": float, "ci95": float}.
+    aggregated over the arm's HARNESS_K samples.
+    Returns {"mean_reduction_pct": float, "ci95": float,
+             "ci95_interval": [lo, hi]}  (percentile bounds).
     """
-    reductions = [100.0 * (b - t) / b for b, t in pairs if b > 0]
-    if not reductions:
-        return {"mean_reduction_pct": 0.0, "ci95": 0.0}
-    mean = statistics.mean(reductions)
-    if len(reductions) >= 2:
-        se = statistics.stdev(reductions) / (len(reductions) ** 0.5)
-        ci95 = 1.96 * se
-    else:
-        ci95 = 0.0
-    return {"mean_reduction_pct": mean, "ci95": ci95}
+    valid = [(b, t) for b, t in pairs if b > 0]
+    if not valid:
+        return {"mean_reduction_pct": 0.0, "ci95": 0.0,
+                "ci95_interval": [0.0, 0.0]}
+
+    sum_b = sum(b for b, _ in valid)
+    sum_t = sum(t for _, t in valid)
+    headline = 100.0 * (sum_b - sum_t) / sum_b
+
+    n = len(valid)
+    if n < 2:
+        # A single prompt carries no resampling information: report the
+        # point estimate with a degenerate interval rather than crash.
+        return {"mean_reduction_pct": headline, "ci95": 0.0,
+                "ci95_interval": [headline, headline]}
+
+    rng = random.Random(_BOOTSTRAP_SEED)
+    boot: list[float] = []
+    for _ in range(BOOTSTRAP_RESAMPLES):
+        sample = rng.choices(valid, k=n)
+        sb = sum(b for b, _ in sample)
+        st = sum(t for _, t in sample)
+        boot.append(100.0 * (sb - st) / sb)
+    boot.sort()
+    lo = boot[int(0.025 * BOOTSTRAP_RESAMPLES)]
+    hi = boot[min(int(0.975 * BOOTSTRAP_RESAMPLES), BOOTSTRAP_RESAMPLES - 1)]
+    ci95 = max(headline - lo, hi - headline)
+    return {"mean_reduction_pct": headline, "ci95": ci95,
+            "ci95_interval": [lo, hi]}
