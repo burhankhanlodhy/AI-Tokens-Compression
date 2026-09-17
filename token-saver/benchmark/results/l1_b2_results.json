@@ -1,6 +1,6 @@
 {
   "schema": "l1_b2_v1",
-  "fixture_sha256": "230528ed9cd9b46fd379efc49d978a6d34e6de2f03a4aa3cb2eb2c50823e8111",
+  "fixture_sha256": "ba42b4fa22a432f5c1c65195d7ad7e4f651b9ee0f8fd1e2993e4ed669e27943c",
   "counting_model": "gpt-4o",
   "tokenizer": "tiktoken (proxy.counting), not len//4",
   "taxonomy_version": "1.0 + PM provenance amendment (negative list)",
@@ -12,14 +12,14 @@
         "reduction_pct": 29.9
       },
       "control": {
-        "before": 155,
-        "after": 155,
+        "before": 487,
+        "after": 487,
         "reduction_pct": 0.0
       },
       "per_category": {
         "control": {
-          "before": 155,
-          "after": 155,
+          "before": 487,
+          "after": 487,
           "reduction_pct": 0.0
         },
         "json_doc": {
@@ -51,14 +51,14 @@
         "reduction_pct": 14.6
       },
       "control": {
-        "before": 155,
-        "after": 155,
+        "before": 487,
+        "after": 487,
         "reduction_pct": 0.0
       },
       "per_category": {
         "control": {
-          "before": 155,
-          "after": 155,
+          "before": 487,
+          "after": 487,
           "reduction_pct": 0.0
         },
         "json_doc": {
@@ -90,14 +90,14 @@
         "reduction_pct": 63.7
       },
       "control": {
-        "before": 155,
-        "after": 155,
+        "before": 487,
+        "after": 487,
         "reduction_pct": 0.0
       },
       "per_category": {
         "control": {
-          "before": 155,
-          "after": 155,
+          "before": 487,
+          "after": 487,
           "reduction_pct": 0.0
         },
         "json_doc": {
@@ -129,14 +129,14 @@
         "reduction_pct": 70.4
       },
       "control": {
-        "before": 155,
-        "after": 155,
+        "before": 487,
+        "after": 487,
         "reduction_pct": 0.0
       },
       "per_category": {
         "control": {
-          "before": 155,
-          "after": 155,
+          "before": 487,
+          "after": 487,
           "reduction_pct": 0.0
         },
         "json_doc": {
@@ -171,16 +171,16 @@
       "routed_compress": 0
     },
     "control": {
-      "before": 155,
-      "after": 155,
+      "before": 487,
+      "after": 487,
       "reduction_pct": 0.0
     },
     "per_category": {
       "control": {
-        "before": 155,
-        "after": 155,
+        "before": 487,
+        "after": 487,
         "reduction_pct": 0.0,
-        "routed_compress": 6
+        "routed_compress": 9
       },
       "json_doc": {
         "before": 1682,
