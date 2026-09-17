@@ -1,6 +1,8 @@
 """AC-P1g publication-contract regressions for the PM's C-7a amendments.
 
-QA's test_ac_p1bcd.py pins the headline sub-2pp case and the estimator
+QA's test_ac_p1bcd.py pins the headline sub-3pp case (floor amended from
+2pp to the MEASURED calibrator blind-spot width, PM B4 2026-09-17 — graded
+sabotage: 3.0pp and below passed through undetected) and the estimator
 interval consumption. This file pins the three amendment rulings that rode
 the same C-7a commit:
 
@@ -9,8 +11,8 @@ the same C-7a commit:
    noise-dressed-as-signal publication one field over);
 2. a degenerate interval (fewer than 2 valid pairs / zero-width CI) never
    publishes a percentage, even at a healthy point estimate;
-3. a genuine measurable effect (>= 2pp, CI excluding 0) DOES carry the
-   honest percent — the guard must suppress noise, not signal;
+3. a genuine measurable effect (clears the 3pp floor, CI excluding 0) DOES
+   carry the honest percent — the guard must suppress noise, not signal;
 4. a CI that includes 0 is ``no_measurable_effect`` regardless of the
    point estimate magnitude.
 """
@@ -30,6 +32,8 @@ import run_benchmark  # noqa: E402
 
 
 def _sub2pp_fixture() -> list[dict]:
+    # Historical name (predates the B4 amendment): the 1.5pp headline sits
+    # inside both the old 2pp and the ratified 3pp floor.
     return [
         {"id": "eligible", "eligible": True,
          "baseline_tokens": 10000.0, "treatment_tokens": 9850.0},
@@ -46,7 +50,7 @@ def test_ac_p1g_publication_keys_on_blended_corpus_wide():
     assert "publication_note" in blended
     assert blended["publication_status"] == "no_measurable_effect"
     assert blended["reported_reduction_pct"] is None
-    assert "2pp" in blended["publication_note"]
+    assert "3pp" in blended["publication_note"]
 
 
 def test_ac_p1g_degenerate_interval_never_publishes_a_percentage():
@@ -65,8 +69,8 @@ def test_ac_p1g_degenerate_interval_never_publishes_a_percentage():
 
 def test_ac_p1g_measurable_reduction_publishes_the_percentage():
     """The guard suppresses noise, not signal: 15 valid pairs, every one
-    reducing 12-18%, estimate >= 2pp, 95% CI excluding 0 -> the honest
-    measured percent is published."""
+    reducing 12-18%, estimate clears the 3pp floor, 95% CI excluding 0 ->
+    the honest measured percent is published."""
     entries = [{"id": f"p{i}", "eligible": True,
                 "baseline_tokens": 900.0 + i * 7.0,
                 "treatment_tokens": (900.0 + i * 7.0) * 0.85}
@@ -192,13 +196,13 @@ def test_ac_p1g_cli_figure_suppresses_raw_percentage():
     line = run_benchmark._published_figure(hl)
     assert "no measurable effect" in line
     assert f"{hl['mean_output_reduction_pct']:.2f}%" not in line
-    assert "2pp" in line  # the suppression reason ships with it
+    assert "3pp" in line  # the suppression reason ships with it
 
 
 def test_ac_p1g_cli_figure_prints_published_pct_when_measurable():
-    """Suppression guards noise, not signal: a measurable figure (>= 2pp,
-    CI excluding 0) still renders the honest percent, taken verbatim from
-    reported_reduction_pct."""
+    """Suppression guards noise, not signal: a measurable figure (clears
+    the 3pp floor, CI excluding 0) still renders the honest percent, taken
+    verbatim from reported_reduction_pct."""
     entries = [
         {"id": "a", "eligible": True,
          "baseline_tokens": 10000.0, "treatment_tokens": 8300.0},  # 17%

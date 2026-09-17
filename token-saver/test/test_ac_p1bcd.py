@@ -88,7 +88,8 @@ def test_ac_p1b_randomized_judge_order_maps_back_to_baseline_treatment(monkeypat
 
 
 # ---------------------------------------------------------------------------
-# AC-P1c: below 2pp is not a publishable savings percentage
+# AC-P1c: at or below the 3pp publication floor is not a publishable savings
+# percentage (floor = MEASURED calibrator blind-spot width, PM B4 2026-09-17)
 # ---------------------------------------------------------------------------
 
 
@@ -105,7 +106,7 @@ def test_ac_p1c_sub_two_point_headline_is_no_measurable_effect():
     assert headline["mean_output_reduction_pct"] == 1.5
     assert headline["publication_status"] == "no_measurable_effect"
     assert headline["reported_reduction_pct"] is None
-    assert "2pp" in headline["publication_note"]
+    assert "3pp" in headline["publication_note"]
 
 
 # ---------------------------------------------------------------------------

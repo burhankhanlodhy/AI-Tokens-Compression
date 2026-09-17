@@ -329,14 +329,17 @@ def entry_from_arms(p: dict, eligible: bool, base: dict, treat: dict) -> dict:
     return entry
 
 
-# AC-P1c publication floor (C-10, ratified): the sabotage-sweep blind-spot
-# width. Below this the instrument cannot resolve signal from noise, so a
-# figure there is noise dressed as signal — never publishable.
-PUBLICATION_FLOOR_PP = 2.0
+# AC-P1c publication floor (C-10 ratified; amended PM B4 2026-09-17): the
+# MEASURED sabotage-sweep blind-spot width, not an assumption. Graded
+# sabotage: injected savings of 20/10/4.5pp were caught; 3.0pp and below
+# passed through undetected, so estimates at or below 3.0pp cannot be told
+# from noise — never publishable.
+PUBLICATION_FLOOR_PP = 3.0
 
 
 def _publication(e: dict, n_valid: int) -> dict:
-    """AC-P1g publication contract (C-10, ratified) — applies to EVERY
+    """AC-P1g publication contract (C-10, ratified; floor amended B4
+    2026-09-17 to the MEASURED blind-spot width) — applies to EVERY
     published figure, headline AND blended alike (PM amendment: a suppressed
     headline sitting next to a bare blended percentage is the same
     noise-dressed-as-signal publication one field over).
@@ -346,24 +349,26 @@ def _publication(e: dict, n_valid: int) -> dict:
       - the interval excludes 0 on the reduction side (the AC-P1a-gate
         null-FP AND contract — a CI including 0 is no measured effect
         regardless of the point estimate),
-      - the point estimate clears the 2pp publication floor.
+      - the point estimate clears the 3pp publication floor (at or below
+        the measured blind spot is suppressed).
     Otherwise publication_status = "no_measurable_effect" (the literal is
     pinned by the committed CI-blocking test, so it is contract, not style)
     and reported_reduction_pct is null.
 
     Branch order encodes the QA-pinned precedence: a sub-floor estimate
-    reports the 2pp blind-spot reason even when the interval is ALSO
+    reports the 3pp blind-spot reason even when the interval is ALSO
     degenerate (the committed test feeds a single pair at 1.5pp and asserts
-    "2pp" in the note); a healthy estimate with a degenerate interval still
+    "3pp" in the note); a healthy estimate with a degenerate interval still
     ships no percentage — that is the n=1-at-3.1pp zero-width-CI case.
     """
     est = e["mean_reduction_pct"]
     lo, hi = e["ci95_interval"]
     degenerate = n_valid < 2 or not hi > lo
-    if est < PUBLICATION_FLOOR_PP:
-        note = (f"estimated {round(est, 2)}pp is below the 2pp publication "
-                "floor — inside the measured blind-spot width where signal "
-                "cannot be told from noise")
+    if est <= PUBLICATION_FLOOR_PP:
+        note = (f"estimated {round(est, 2)}pp is at or below the 3pp "
+                "publication floor — inside the measured blind-spot width "
+                "(graded sabotage: up to 3.0pp passed through undetected) "
+                "where signal cannot be told from noise")
         if degenerate:
             note += (" (interval is also degenerate: fewer than 2 valid "
                      "pairs / zero-width CI)")
@@ -382,7 +387,7 @@ def _publication(e: dict, n_valid: int) -> dict:
                 "reported_reduction_pct": round(est, 2),
                 "publication_note": (f"measured {round(est, 2)}pp reduction: "
                                      "95% CI excludes 0 and the estimate "
-                                     "clears the 2pp publication floor")}
+                                     "clears the 3pp publication floor")}
     if hi < 0.0:
         return {"publication_status": "no_measurable_effect",
                 "reported_reduction_pct": None,
@@ -394,7 +399,7 @@ def _publication(e: dict, n_valid: int) -> dict:
             "reported_reduction_pct": None,
             "publication_note": ("95% CI includes 0 — no measured effect "
                                  "regardless of the point estimate "
-                                 "(2pp publication floor applies)")}
+                                 "(3pp publication floor applies)")}
 
 
 def _published_figure(e: dict) -> str:
