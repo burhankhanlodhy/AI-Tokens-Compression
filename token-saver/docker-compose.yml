@@ -29,7 +29,7 @@ services:
       - .env
     environment:
       # Override in .env if targeting another OpenAI-compatible provider.
-      UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL:-https://api.openai.com/v1}
+      UPSTREAM_BASE_URL: ${UPSTREAM_BASE_URL:-https://openrouter.ai/api/v1}
       # L1 lossless structural cleanup — ON by default since B-26; set
       # L1_ENABLED=false in .env to disable (see README flag note).
       L1_ENABLED: ${L1_ENABLED:-true}

@@ -518,6 +518,17 @@ def main() -> int:
 
     valid = [r for r in results if r.get("baseline_ok") and r.get("treatment_ok")]
 
+    # Zero-pairs abort: if NO pair survived, the harness never reached the
+    # provider (bad key, wrong upstream, network down). summarize([]) would
+    # publish a clean-looking no_measurable_effect / null figure — a total
+    # connection failure serializing identically to a real null result.
+    # Abort instead: non-zero exit, NO results file.
+    if not valid:
+        print(f"FATAL: 0/{len(results)} pairs survived — the harness never "
+              f"measured anything (auth/upstream/network failure?). No "
+              f"results file written.", file=sys.stderr)
+        return 1
+
     # Production estimator — SHARED with the calibration gate (estimator.py).
     # The gate and the re-run must measure the same math; a divergence here is
     # the defect class the AC-P1a-gate exists to catch.
