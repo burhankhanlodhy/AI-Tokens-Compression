@@ -466,7 +466,8 @@ async def chat_completions(request: Request):
     except UnknownProviderError as exc:
         _log(model, route or "passthrough", in_before, in_after, 0,
              (time.perf_counter() - started) * 1000, compressed, 400,
-             cache_status=cache_status)
+             cache_status=cache_status,
+             provider=provider if s.provider_routing else "legacy")
         return JSONResponse(
             status_code=400,
             content={"error": {"message": str(exc),
@@ -475,7 +476,8 @@ async def chat_completions(request: Request):
     except httpx.TimeoutException as exc:
         _log(model, route or "passthrough", in_before, in_after, 0,
              (time.perf_counter() - started) * 1000, compressed, 504,
-             cache_status=cache_status)
+             cache_status=cache_status,
+             provider=provider if s.provider_routing else "legacy")
         return JSONResponse(
             status_code=504,
             content=_normalized_error(504, f"upstream timeout: {exc}",
@@ -484,7 +486,8 @@ async def chat_completions(request: Request):
     except httpx.ConnectError as exc:
         _log(model, route or "passthrough", in_before, in_after, 0,
              (time.perf_counter() - started) * 1000, compressed, 502,
-             cache_status=cache_status)
+             cache_status=cache_status,
+             provider=provider if s.provider_routing else "legacy")
         return JSONResponse(
             status_code=502,
             content=_normalized_error(502, f"upstream unreachable: {exc}",

@@ -6,7 +6,8 @@ passed provider=None and stats.log_request re-derived the provider from
 PREFIX_ROUTES — so an ``anthropic/claude-sonnet-5`` request egressed to
 OpenRouter was ledgered as provider_id=anthropic.  The ledger's provider
 column means "who actually served/egressed this request", so routing-off rows
-must land on the seeded 'legacy' providers row.
+must land on the seeded 'legacy' providers row — on the success path AND on
+the transport-failure paths (504/502/unknown-provider 400).
 """
 from __future__ import annotations
 
@@ -27,22 +28,34 @@ from proxy.config import get_settings  # noqa: E402
 
 DB_NAME = unique_db_name("ts_legacy_attribution")
 
+_UPSTREAM_OK = {
+    "id": "chatcmpl-legacy-attr",
+    "object": "chat.completion",
+    "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+}
+
 
 class CaptureTransport(httpx.AsyncBaseTransport):
+    """Returns a valid completion, or raises the fixture-injected error."""
+
+    def __init__(self, error: Exception | None = None):
+        self._error = error
+
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "id": "chatcmpl-legacy-attr",
-                "object": "chat.completion",
-                "choices": [{"message": {"role": "assistant", "content": "ok"}}],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1},
-            },
-        )
+        if self._error is not None:
+            raise self._error
+        return httpx.Response(200, json=_UPSTREAM_OK)
 
 
 @pytest.fixture()
-def legacy_env(monkeypatch):
+def legacy_env(request, monkeypatch):
+    """Real-ASGI + real-Postgres app with the legacy upstream captured.
+
+    Indirect-parametrize with an exception instance to make the upstream
+    transport raise it (transport-failure attribution cases).
+    """
+    upstream_error = getattr(request, "param", None)
     dsn = make_database(DB_NAME)
     monkeypatch.setenv("TOKEN_SAVER_PG_DSN", dsn)
     monkeypatch.setenv("DATABASE_PATH", tempfile.mktemp(suffix=".db"))
@@ -52,7 +65,8 @@ def legacy_env(monkeypatch):
     from proxy import main as main_mod
 
     upstream = httpx.AsyncClient(
-        base_url="http://upstream.test/v1", transport=CaptureTransport()
+        base_url="http://upstream.test/v1",
+        transport=CaptureTransport(upstream_error),
     )
     try:
         with TestClient(main_mod.app) as client:
@@ -73,14 +87,14 @@ def _chat(client: TestClient, model: str):
     )
 
 
-def _provider_for_model(dsn: str, model: str) -> str | None:
+def _last_row(dsn: str, model: str):
     with psycopg.connect(dsn) as pg:
-        row = pg.execute(
-            "SELECT p.name FROM requests r JOIN providers p ON p.id = r.provider_id"
+        return pg.execute(
+            "SELECT p.name, r.status FROM requests r"
+            " JOIN providers p ON p.id = r.provider_id"
             " WHERE r.model = %s ORDER BY r.id DESC LIMIT 1",
             (model,),
         ).fetchone()
-    return row[0] if row else None
 
 
 def test_routing_off_anthropic_prefix_ledgers_legacy(legacy_env):
@@ -88,7 +102,7 @@ def test_routing_off_anthropic_prefix_ledgers_legacy(legacy_env):
     client, dsn = legacy_env
     resp = _chat(client, "anthropic/claude-sonnet-5")
     assert resp.status_code == 200
-    assert _provider_for_model(dsn, "anthropic/claude-sonnet-5") == "legacy"
+    assert _last_row(dsn, "anthropic/claude-sonnet-5") == ("legacy", 200)
 
 
 def test_routing_off_openai_prefix_ledgers_legacy(legacy_env):
@@ -96,4 +110,19 @@ def test_routing_off_openai_prefix_ledgers_legacy(legacy_env):
     client, dsn = legacy_env
     resp = _chat(client, "openai/gpt-4o")
     assert resp.status_code == 200
-    assert _provider_for_model(dsn, "openai/gpt-4o") == "legacy"
+    assert _last_row(dsn, "openai/gpt-4o") == ("legacy", 200)
+
+
+@pytest.mark.parametrize(
+    "legacy_env",
+    [httpx.ConnectTimeout("upstream down"), httpx.ConnectError("refused")],
+    indirect=True,
+)
+def test_routing_off_transport_failure_still_ledgers_legacy(legacy_env):
+    """504/502 error rows must attribute to legacy too, not the prefix table."""
+    client, dsn = legacy_env
+    resp = _chat(client, "anthropic/claude-sonnet-5")
+    assert resp.status_code in (502, 504)
+    row = _last_row(dsn, "anthropic/claude-sonnet-5")
+    assert row[0] == "legacy"
+    assert row[1] in (502, 504)
