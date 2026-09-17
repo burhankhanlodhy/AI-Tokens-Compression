@@ -244,6 +244,74 @@ def last_user_message(prompt: dict) -> str:
     return user_msgs[-1].get("content", "") if user_msgs else ""
 
 
+# AC-P1c publication floor (C-10, ratified): the sabotage-sweep blind-spot
+# width. Below this the instrument cannot resolve signal from noise, so a
+# figure there is noise dressed as signal — never publishable.
+PUBLICATION_FLOOR_PP = 2.0
+
+
+def _publication(e: dict, n_valid: int) -> dict:
+    """AC-P1g publication contract (C-10, ratified) — applies to EVERY
+    published figure, headline AND blended alike (PM amendment: a suppressed
+    headline sitting next to a bare blended percentage is the same
+    noise-dressed-as-signal publication one field over).
+
+    A figure carries a percentage ONLY when it is a measured effect:
+      - >= 2 valid pairs with a non-degenerate (hi > lo) 95% interval,
+      - the interval excludes 0 on the reduction side (the AC-P1a-gate
+        null-FP AND contract — a CI including 0 is no measured effect
+        regardless of the point estimate),
+      - the point estimate clears the 2pp publication floor.
+    Otherwise publication_status = "no_measurable_effect" (the literal is
+    pinned by the committed CI-blocking test, so it is contract, not style)
+    and reported_reduction_pct is null.
+
+    Branch order encodes the QA-pinned precedence: a sub-floor estimate
+    reports the 2pp blind-spot reason even when the interval is ALSO
+    degenerate (the committed test feeds a single pair at 1.5pp and asserts
+    "2pp" in the note); a healthy estimate with a degenerate interval still
+    ships no percentage — that is the n=1-at-3.1pp zero-width-CI case.
+    """
+    est = e["mean_reduction_pct"]
+    lo, hi = e["ci95_interval"]
+    degenerate = n_valid < 2 or not hi > lo
+    if est < PUBLICATION_FLOOR_PP:
+        note = (f"estimated {round(est, 2)}pp is below the 2pp publication "
+                "floor — inside the measured blind-spot width where signal "
+                "cannot be told from noise")
+        if degenerate:
+            note += (" (interval is also degenerate: fewer than 2 valid "
+                     "pairs / zero-width CI)")
+        return {"publication_status": "no_measurable_effect",
+                "reported_reduction_pct": None,
+                "publication_note": note}
+    if degenerate:
+        return {"publication_status": "no_measurable_effect",
+                "reported_reduction_pct": None,
+                "publication_note": ("degenerate inference: fewer than 2 "
+                                     "valid pairs or a zero-width 95% CI — "
+                                     "no variance information, no "
+                                     "percentage shipped")}
+    if lo > 0.0:
+        return {"publication_status": "measurable_reduction",
+                "reported_reduction_pct": round(est, 2),
+                "publication_note": (f"measured {round(est, 2)}pp reduction: "
+                                     "95% CI excludes 0 and the estimate "
+                                     "clears the 2pp publication floor")}
+    if hi < 0.0:
+        return {"publication_status": "no_measurable_effect",
+                "reported_reduction_pct": None,
+                "publication_note": ("95% CI excludes 0 on the INCREASE "
+                                     "side — a measured regression, not a "
+                                     "reduction; no reduction percentage "
+                                     "is publishable")}
+    return {"publication_status": "no_measurable_effect",
+            "reported_reduction_pct": None,
+            "publication_note": ("95% CI includes 0 — no measured effect "
+                                 "regardless of the point estimate "
+                                 "(2pp publication floor applies)")}
+
+
 def summarize(valid_entries: list[dict]) -> dict:
     """Headline (eligible subset) + labelled blended (corpus-wide) stats."""
     eligible = [r for r in valid_entries if r.get("eligible")]
@@ -258,6 +326,11 @@ def summarize(valid_entries: list[dict]) -> dict:
     judged = [r for r in valid_entries if r.get("mode") == "model_judge"]
     regressions = [r for r in judged
                    if r.get("score_b", 10) < r.get("score_a", 10) - 1]
+    # AC-P1a "valid pair" = baseline > 0 (the estimator's own filter): the
+    # n >= 2 arm of the publication guard counts the SAME rows the estimate
+    # was computed from, not raw entries.
+    n_valid_headline = sum(1 for b, _ in eligible_pairs if b > 0)
+    n_valid_blended = sum(1 for b, _ in blended_pairs if b > 0)
     return {
         "headline_population": "eligible_subset",
         "n_eligible": len(eligible),
@@ -267,6 +340,7 @@ def summarize(valid_entries: list[dict]) -> dict:
             "ci95_interval": [round(v, 2) for v in headline["ci95_interval"]],
             "meets_15pct": bool(headline["mean_reduction_pct"] >= 15
                                 and headline["mean_reduction_pct"] - headline["ci95"] >= 15),
+            **_publication(headline, n_valid_headline),
         },
         "blended_corpus_wide": {
             "label": ("corpus-wide blended over ALL valid prompts — NOT the "
@@ -281,6 +355,7 @@ def summarize(valid_entries: list[dict]) -> dict:
             "mean_output_reduction_pct": round(blended["mean_reduction_pct"], 2),
             "ci95_halfwidth": round(blended["ci95"], 2),
             "ci95_interval": [round(v, 2) for v in blended["ci95_interval"]],
+            **_publication(blended, n_valid_blended),
         },
         "quality_parity": {
             "n_judged": len(judged),

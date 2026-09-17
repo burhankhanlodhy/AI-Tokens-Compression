@@ -107,8 +107,11 @@ def _experiment(seed: int, multiplier: float | None, k: int) -> dict:
                             multiplier if multiplier is not None else 1.0,
                             MEASURED_CV, k)
     e = estimate(list(zip(baseline, treatment)))
-    lo = e["mean_reduction_pct"] - e["ci95"]
-    hi = e["mean_reduction_pct"] + e["ci95"]
+    # AC-P1b: consume the estimator's exact ci95_interval percentile bounds —
+    # never rebuild a symmetric interval as est +/- ci95. An asymmetric
+    # bootstrap interval is the honest one; the halfwidth is the conservative
+    # symmetric summary for consumers, not the gate's read.
+    lo, hi = e["ci95_interval"]
     return {"est": e["mean_reduction_pct"], "lo": lo, "hi": hi}
 
 
