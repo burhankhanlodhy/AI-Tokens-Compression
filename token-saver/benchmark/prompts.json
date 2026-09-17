@@ -1,46 +1,624 @@
 {
-  "version": 1,
-  "description": "P1-1 output-conciseness benchmark fixture set (AC-P1/P1a). Mix per spec: conversational/QA/RAG-ledger >= 60%, code/precise-spec <= 40%. n fixed and committed BEFORE any run (AC-P1a anti-cherry-picking). id is stable; do not edit after a run has been recorded.",
+  "version": 2,
+  "description": "P1-1 output-conciseness benchmark fixture set (AC-P1/P1a). v2 = C-6 PM expansion: +15 gate-clearing fixtures (5 conversational / 5 qa / 5 rag), each with a last user message > 400 chars, so the pinned corpus now exercises should_inject_conciseness() (15/55 trip the gate; old corpus tripped 0/40). Mix per spec: conversational/QA/RAG-ledger >= 60% (currently 45/55 = 81.8%), code/precise-spec <= 40% (10/55 = 18.2%). n fixed and committed BEFORE any run (AC-P1a anti-cherry-picking). id is stable; do not edit after a run has been recorded.",
   "prompts": [
-    {"id": "conv-001", "category": "conversational", "messages": [{"role": "user", "content": "Explain what a REST API is to someone who has never programmed before."}]},
-    {"id": "conv-002", "category": "conversational", "messages": [{"role": "user", "content": "What are the pros and cons of working remotely?"}]},
-    {"id": "conv-003", "category": "conversational", "messages": [{"role": "user", "content": "Give me advice for staying focused while studying."}]},
-    {"id": "conv-004", "category": "conversational", "messages": [{"role": "user", "content": "Summarize the key differences between introverts and extroverts."}]},
-    {"id": "conv-005", "category": "conversational", "messages": [{"role": "user", "content": "How do I start learning to cook as a complete beginner?"}]},
-    {"id": "conv-006", "category": "conversational", "messages": [{"role": "user", "content": "What should I look for when buying a used car?"}]},
-    {"id": "conv-007", "category": "conversational", "messages": [{"role": "user", "content": "Explain the concept of compound interest simply."}]},
-    {"id": "conv-008", "category": "conversational", "messages": [{"role": "user", "content": "What's the best way to give constructive feedback at work?"}]},
-    {"id": "conv-009", "category": "conversational", "messages": [{"role": "user", "content": "How much water should a person drink per day and why?"}]},
-    {"id": "conv-010", "category": "conversational", "messages": [{"role": "user", "content": "What are some effective morning routines?"}]},
-    {"id": "qa-011", "category": "qa", "messages": [{"role": "user", "content": "What is the capital of Australia, and what is that city known for?"}]},
-    {"id": "qa-012", "category": "qa", "messages": [{"role": "user", "content": "Who wrote 'Pride and Prejudice' and when was it published?"}]},
-    {"id": "qa-013", "category": "qa", "messages": [{"role": "user", "content": "What is the boiling point of water at sea level in Celsius and Fahrenheit?"}]},
-    {"id": "qa-014", "category": "qa", "messages": [{"role": "user", "content": "How many bones are in the adult human body?"}]},
-    {"id": "qa-015", "category": "qa", "messages": [{"role": "user", "content": "What year did the Berlin Wall fall, and what followed it?"}]},
-    {"id": "qa-016", "category": "qa", "messages": [{"role": "user", "content": "What is the largest planet in our solar system and what is it made of?"}]},
-    {"id": "qa-017", "category": "qa", "messages": [{"role": "user", "content": "In what country is Mount Everest, and how tall is it?"}]},
-    {"id": "qa-018", "category": "qa", "messages": [{"role": "user", "content": "What does HTTP status code 404 mean?"}]},
-    {"id": "qa-019", "category": "qa", "messages": [{"role": "user", "content": "Who developed the theory of general relativity and in what decade?"}]},
-    {"id": "qa-020", "category": "qa", "messages": [{"role": "user", "content": "What is the currency of Japan and what is its approximate exchange rate trend?"}]},
-    {"id": "rag-021", "category": "rag", "messages": [{"role": "system", "content": "You are a support assistant. Use only the provided policy text. POLICY: Returns are accepted within 30 days of purchase with a receipt. Items must be unused and in original packaging. Refunds are issued to the original payment method within 5-7 business days. Sale items are final sale unless defective. Digital products are non-refundable once downloaded."}, {"role": "user", "content": "Can I return a sale-item jacket I bought two weeks ago? It's unused and I have the receipt."}]},
-    {"id": "rag-022", "category": "rag", "messages": [{"role": "system", "content": "You are an HR assistant. Use only the provided policy. POLICY: Employees accrue 1.5 days of paid leave per month worked. Unused leave carries over up to a maximum of 15 days. Leave requests require 2 weeks notice for absences longer than 3 days. Sick leave does not require notice but requires a doctor's note for absences over 2 consecutive days."}, {"role": "user", "content": "I've been here 10 months and taken 3 days off. How much leave do I have and can I take a 5-day vacation next month?"}]},
-    {"id": "rag-023", "category": "rag", "messages": [{"role": "system", "content": "You are a data assistant. LEDGER DATA: 2026-01: revenue $42,000, expenses $38,500. 2026-02: revenue $45,200, expenses $39,800. 2026-03: revenue $51,300, expenses $41,200. 2026-04: revenue $48,900, expenses $44,100. 2026-05: revenue $55,700, expenses $43,600."}, {"role": "user", "content": "What was our profit trend from January to May? Which month was most profitable?"}]},
-    {"id": "rag-024", "category": "rag", "messages": [{"role": "system", "content": "You are a compliance assistant. Use only the provided regulation text. REGULATION 4.2: Data breach notifications must be made to affected users within 72 hours of discovery. Notifications must include: nature of the breach, data categories affected, corrective measures taken, and a contact point. Regulators must be notified within 48 hours for breaches affecting more than 10,000 users."}, {"role": "user", "content": "We discovered a breach affecting 15,000 users on Monday morning. What are our notification obligations and deadlines?"}]},
-    {"id": "rag-025", "category": "rag", "messages": [{"role": "system", "content": "You are a contract assistant. Use only the provided contract excerpt. CLAUSE 7 (TERMINATION): Either party may terminate with 60 days written notice. Termination for cause requires 10 days notice with opportunity to cure. Upon termination, Client pays for all Services rendered through the effective date. Contractor retains ownership of pre-existing IP; work product created under this agreement transfers to Client upon full payment."}, {"role": "user", "content": "If we terminate for convenience today, what do we owe and who owns the software built so far?"}]},
-    {"id": "rag-026", "category": "rag", "messages": [{"role": "system", "content": "You are an inventory assistant. STOCK DATA: SKU-A: 340 units, reorder point 100. SKU-B: 85 units, reorder point 100. SKU-C: 412 units, reorder point 50. SKU-D: 95 units, reorder point 120. SKU-E: 210 units, reorder point 75."}, {"role": "user", "content": "Which SKUs are below their reorder point and need immediate reordering?"}]},
-    {"id": "rag-027", "category": "rag", "messages": [{"role": "system", "content": "You are a medical information assistant using only this excerpt. EXCERPT: Medication X: standard adult dosage is 500mg twice daily with food. Maximum daily dose 2000mg. Common side effects: nausea, headache. Do not combine with alcohol. Patients with liver impairment require dose reduction to 250mg twice daily."}, {"role": "user", "content": "My patient has mild liver impairment. What's the correct dosage of Medication X?"}]},
-    {"id": "rag-028", "category": "rag", "messages": [{"role": "system", "content": "You are a travel assistant. Use only this schedule. TRAIN SCHEDULE: Express departs Central 07:15, 09:45, 12:30, 16:00, 18:45 — journey 2h10m. Local departs Central 06:30, 08:00, 10:15, 13:45, 17:20, 20:00 — journey 3h05m. Express is seat-reservation only; Local accepts walk-ons."}, {"role": "user", "content": "I need to arrive by 3pm without a reservation. What are my options?"}]},
-    {"id": "rag-029", "category": "rag", "messages": [{"role": "system", "content": "You are a mortgage assistant. Use only the provided rate sheet. RATES (30yr fixed): credit 760+ = 6.125%, 720-759 = 6.375%, 680-719 = 6.750%, below 680 = 7.250%. Points: 0.5% fee reduces rate by 0.125%. Maximum loan-to-value 95%."}, {"role": "user", "content": "My credit score is 735. What rate do I qualify for and what would buying points do?"}]},
-    {"id": "rag-030", "category": "rag", "messages": [{"role": "system", "content": "You are an IT helpdesk assistant. Use only the provided runbook. RUNBOOK: Password reset requires verification of employee ID + manager approval via ticket. VPN issues: first step is restarting the authentication service (takes ~5 min). Laptop encrypted disk unlock requires in-person IT visit. New hardware requests need department budget code and director approval."}, {"role": "user", "content": "I forgot my password and I'm traveling. What do I do?"}]},
-    {"id": "code-031", "category": "code", "messages": [{"role": "user", "content": "Write a Python function that deduplicates a list while preserving order. Include type hints. Output only the function, no explanation."}]},
-    {"id": "code-032", "category": "code", "messages": [{"role": "user", "content": "Write a SQL query: given table orders(id, customer_id, total, created_at), return the top 5 customers by total spend in the last 30 days. Output only the query."}]},
-    {"id": "code-033", "category": "code", "messages": [{"role": "user", "content": "Write a regex that validates an ISO 8601 date string (YYYY-MM-DD). Output only the regex."}]},
-    {"id": "code-034", "category": "code", "messages": [{"role": "user", "content": "Write a bash one-liner that finds the 10 largest files under /var/log recursively. Output only the command."}]},
-    {"id": "code-035", "category": "code", "messages": [{"role": "user", "content": "Write a Python function `chunk_list(items, size)` that splits a list into consecutive chunks of at most `size` elements. Output only the function."}]},
-    {"id": "code-036", "category": "code", "messages": [{"role": "user", "content": "Write a JSON schema for a user object with required fields name (string), email (string, format email), age (integer, minimum 0). Output only the schema."}]},
-    {"id": "code-037", "category": "code", "messages": [{"role": "user", "content": "Write a git command to undo the last commit but keep the changes staged. Output only the command."}]},
-    {"id": "code-038", "category": "code", "messages": [{"role": "user", "content": "Write a Dockerfile for a Python 3.12 FastAPI app in ./app with requirements.txt, exposing port 8000. Output only the Dockerfile."}]},
-    {"id": "code-039", "category": "code", "messages": [{"role": "user", "content": "Write a Python decorator `@timer` that prints the execution time of the wrapped function in milliseconds. Output only the decorator."}]},
-    {"id": "code-040", "category": "code", "messages": [{"role": "user", "content": "Write a CSS rule centering a div both horizontally and vertically within its parent using flexbox. Output only the CSS."}]}
+    {
+      "id": "conv-001",
+      "category": "conversational",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Explain what a REST API is to someone who has never programmed before."
+        }
+      ]
+    },
+    {
+      "id": "conv-002",
+      "category": "conversational",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What are the pros and cons of working remotely?"
+        }
+      ]
+    },
+    {
+      "id": "conv-003",
+      "category": "conversational",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Give me advice for staying focused while studying."
+        }
+      ]
+    },
+    {
+      "id": "conv-004",
+      "category": "conversational",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Summarize the key differences between introverts and extroverts."
+        }
+      ]
+    },
+    {
+      "id": "conv-005",
+      "category": "conversational",
+      "messages": [
+        {
+          "role": "user",
+          "content": "How do I start learning to cook as a complete beginner?"
+        }
+      ]
+    },
+    {
+      "id": "conv-006",
+      "category": "conversational",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What should I look for when buying a used car?"
+        }
+      ]
+    },
+    {
+      "id": "conv-007",
+      "category": "conversational",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Explain the concept of compound interest simply."
+        }
+      ]
+    },
+    {
+      "id": "conv-008",
+      "category": "conversational",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What's the best way to give constructive feedback at work?"
+        }
+      ]
+    },
+    {
+      "id": "conv-009",
+      "category": "conversational",
+      "messages": [
+        {
+          "role": "user",
+          "content": "How much water should a person drink per day and why?"
+        }
+      ]
+    },
+    {
+      "id": "conv-010",
+      "category": "conversational",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What are some effective morning routines?"
+        }
+      ]
+    },
+    {
+      "id": "qa-011",
+      "category": "qa",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the capital of Australia, and what is that city known for?"
+        }
+      ]
+    },
+    {
+      "id": "qa-012",
+      "category": "qa",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Who wrote 'Pride and Prejudice' and when was it published?"
+        }
+      ]
+    },
+    {
+      "id": "qa-013",
+      "category": "qa",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the boiling point of water at sea level in Celsius and Fahrenheit?"
+        }
+      ]
+    },
+    {
+      "id": "qa-014",
+      "category": "qa",
+      "messages": [
+        {
+          "role": "user",
+          "content": "How many bones are in the adult human body?"
+        }
+      ]
+    },
+    {
+      "id": "qa-015",
+      "category": "qa",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What year did the Berlin Wall fall, and what followed it?"
+        }
+      ]
+    },
+    {
+      "id": "qa-016",
+      "category": "qa",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the largest planet in our solar system and what is it made of?"
+        }
+      ]
+    },
+    {
+      "id": "qa-017",
+      "category": "qa",
+      "messages": [
+        {
+          "role": "user",
+          "content": "In what country is Mount Everest, and how tall is it?"
+        }
+      ]
+    },
+    {
+      "id": "qa-018",
+      "category": "qa",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What does HTTP status code 404 mean?"
+        }
+      ]
+    },
+    {
+      "id": "qa-019",
+      "category": "qa",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Who developed the theory of general relativity and in what decade?"
+        }
+      ]
+    },
+    {
+      "id": "qa-020",
+      "category": "qa",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the currency of Japan and what is its approximate exchange rate trend?"
+        }
+      ]
+    },
+    {
+      "id": "rag-021",
+      "category": "rag",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a support assistant. Use only the provided policy text. POLICY: Returns are accepted within 30 days of purchase with a receipt. Items must be unused and in original packaging. Refunds are issued to the original payment method within 5-7 business days. Sale items are final sale unless defective. Digital products are non-refundable once downloaded."
+        },
+        {
+          "role": "user",
+          "content": "Can I return a sale-item jacket I bought two weeks ago? It's unused and I have the receipt."
+        }
+      ]
+    },
+    {
+      "id": "rag-022",
+      "category": "rag",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are an HR assistant. Use only the provided policy. POLICY: Employees accrue 1.5 days of paid leave per month worked. Unused leave carries over up to a maximum of 15 days. Leave requests require 2 weeks notice for absences longer than 3 days. Sick leave does not require notice but requires a doctor's note for absences over 2 consecutive days."
+        },
+        {
+          "role": "user",
+          "content": "I've been here 10 months and taken 3 days off. How much leave do I have and can I take a 5-day vacation next month?"
+        }
+      ]
+    },
+    {
+      "id": "rag-023",
+      "category": "rag",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a data assistant. LEDGER DATA: 2026-01: revenue $42,000, expenses $38,500. 2026-02: revenue $45,200, expenses $39,800. 2026-03: revenue $51,300, expenses $41,200. 2026-04: revenue $48,900, expenses $44,100. 2026-05: revenue $55,700, expenses $43,600."
+        },
+        {
+          "role": "user",
+          "content": "What was our profit trend from January to May? Which month was most profitable?"
+        }
+      ]
+    },
+    {
+      "id": "rag-024",
+      "category": "rag",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a compliance assistant. Use only the provided regulation text. REGULATION 4.2: Data breach notifications must be made to affected users within 72 hours of discovery. Notifications must include: nature of the breach, data categories affected, corrective measures taken, and a contact point. Regulators must be notified within 48 hours for breaches affecting more than 10,000 users."
+        },
+        {
+          "role": "user",
+          "content": "We discovered a breach affecting 15,000 users on Monday morning. What are our notification obligations and deadlines?"
+        }
+      ]
+    },
+    {
+      "id": "rag-025",
+      "category": "rag",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a contract assistant. Use only the provided contract excerpt. CLAUSE 7 (TERMINATION): Either party may terminate with 60 days written notice. Termination for cause requires 10 days notice with opportunity to cure. Upon termination, Client pays for all Services rendered through the effective date. Contractor retains ownership of pre-existing IP; work product created under this agreement transfers to Client upon full payment."
+        },
+        {
+          "role": "user",
+          "content": "If we terminate for convenience today, what do we owe and who owns the software built so far?"
+        }
+      ]
+    },
+    {
+      "id": "rag-026",
+      "category": "rag",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are an inventory assistant. STOCK DATA: SKU-A: 340 units, reorder point 100. SKU-B: 85 units, reorder point 100. SKU-C: 412 units, reorder point 50. SKU-D: 95 units, reorder point 120. SKU-E: 210 units, reorder point 75."
+        },
+        {
+          "role": "user",
+          "content": "Which SKUs are below their reorder point and need immediate reordering?"
+        }
+      ]
+    },
+    {
+      "id": "rag-027",
+      "category": "rag",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a medical information assistant using only this excerpt. EXCERPT: Medication X: standard adult dosage is 500mg twice daily with food. Maximum daily dose 2000mg. Common side effects: nausea, headache. Do not combine with alcohol. Patients with liver impairment require dose reduction to 250mg twice daily."
+        },
+        {
+          "role": "user",
+          "content": "My patient has mild liver impairment. What's the correct dosage of Medication X?"
+        }
+      ]
+    },
+    {
+      "id": "rag-028",
+      "category": "rag",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a travel assistant. Use only this schedule. TRAIN SCHEDULE: Express departs Central 07:15, 09:45, 12:30, 16:00, 18:45 — journey 2h10m. Local departs Central 06:30, 08:00, 10:15, 13:45, 17:20, 20:00 — journey 3h05m. Express is seat-reservation only; Local accepts walk-ons."
+        },
+        {
+          "role": "user",
+          "content": "I need to arrive by 3pm without a reservation. What are my options?"
+        }
+      ]
+    },
+    {
+      "id": "rag-029",
+      "category": "rag",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a mortgage assistant. Use only the provided rate sheet. RATES (30yr fixed): credit 760+ = 6.125%, 720-759 = 6.375%, 680-719 = 6.750%, below 680 = 7.250%. Points: 0.5% fee reduces rate by 0.125%. Maximum loan-to-value 95%."
+        },
+        {
+          "role": "user",
+          "content": "My credit score is 735. What rate do I qualify for and what would buying points do?"
+        }
+      ]
+    },
+    {
+      "id": "rag-030",
+      "category": "rag",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are an IT helpdesk assistant. Use only the provided runbook. RUNBOOK: Password reset requires verification of employee ID + manager approval via ticket. VPN issues: first step is restarting the authentication service (takes ~5 min). Laptop encrypted disk unlock requires in-person IT visit. New hardware requests need department budget code and director approval."
+        },
+        {
+          "role": "user",
+          "content": "I forgot my password and I'm traveling. What do I do?"
+        }
+      ]
+    },
+    {
+      "id": "code-031",
+      "category": "code",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Write a Python function that deduplicates a list while preserving order. Include type hints. Output only the function, no explanation."
+        }
+      ]
+    },
+    {
+      "id": "code-032",
+      "category": "code",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Write a SQL query: given table orders(id, customer_id, total, created_at), return the top 5 customers by total spend in the last 30 days. Output only the query."
+        }
+      ]
+    },
+    {
+      "id": "code-033",
+      "category": "code",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Write a regex that validates an ISO 8601 date string (YYYY-MM-DD). Output only the regex."
+        }
+      ]
+    },
+    {
+      "id": "code-034",
+      "category": "code",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Write a bash one-liner that finds the 10 largest files under /var/log recursively. Output only the command."
+        }
+      ]
+    },
+    {
+      "id": "code-035",
+      "category": "code",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Write a Python function `chunk_list(items, size)` that splits a list into consecutive chunks of at most `size` elements. Output only the function."
+        }
+      ]
+    },
+    {
+      "id": "code-036",
+      "category": "code",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Write a JSON schema for a user object with required fields name (string), email (string, format email), age (integer, minimum 0). Output only the schema."
+        }
+      ]
+    },
+    {
+      "id": "code-037",
+      "category": "code",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Write a git command to undo the last commit but keep the changes staged. Output only the command."
+        }
+      ]
+    },
+    {
+      "id": "code-038",
+      "category": "code",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Write a Dockerfile for a Python 3.12 FastAPI app in ./app with requirements.txt, exposing port 8000. Output only the Dockerfile."
+        }
+      ]
+    },
+    {
+      "id": "code-039",
+      "category": "code",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Write a Python decorator `@timer` that prints the execution time of the wrapped function in milliseconds. Output only the decorator."
+        }
+      ]
+    },
+    {
+      "id": "code-040",
+      "category": "code",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Write a CSS rule centering a div both horizontally and vertically within its parent using flexbox. Output only the CSS."
+        }
+      ]
+    },
+    {
+      "id": "conv-041",
+      "category": "conversational",
+      "messages": [
+        {
+          "role": "user",
+          "content": "I recently migrated my small online store from a hosted platform to my own server and I am now responsible for things I never had to think about before, like TLS certificate renewal, database backups, and keeping the payment webhook endpoint reachable. I would like a complete operational checklist that covers a typical week including when each task should run, which tool or command I should use for it, what a healthy output looks like, and what I should do first if that output looks wrong, written so that someone without a dedicated devops background can follow it without panicking."
+        }
+      ]
+    },
+    {
+      "id": "conv-042",
+      "category": "conversational",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Do you know about the GDPR?"
+        },
+        {
+          "role": "assistant",
+          "content": "Yes, I can help with GDPR questions."
+        },
+        {
+          "role": "user",
+          "content": "Great. My company is a B2B SaaS that processes employee records for client companies, and we are expanding into Germany next quarter. I need a practical compliance workplan that someone like me, a product lead with no legal background, can execute with outside counsel. Please walk through data mapping and the records of processing, how to handle employee consent versus the legal bases we might rely on, what a data processing agreement with our subprocessors must actually contain, the timeline for appointing a representative in the EU if we need one, and how breach notification obligations work in practice, including which roles in our team should own each workstream and the rough order we should tackle them in?"
+        }
+      ]
+    },
+    {
+      "id": "conv-043",
+      "category": "conversational",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Here is the raw transcript of our last product sync. The engineering lead reported that the caching rewrite is at risk because two of the three integration tests are flaky on CI, the designer shared the final flows for the onboarding wizard and wants a decision on whether we ship the optional analytics step, marketing confirmed the launch date can move by at most one week, and support reported a spike in tickets about authentication expiring mid-session on mobile. Please produce a structured summary with the decision that actually needs to be made, the owner and deadline for each open item, the risks that are blocking, and a suggested agenda for the next sync that spends time only on items that changed since this call."
+        }
+      ]
+    },
+    {
+      "id": "conv-044",
+      "category": "conversational",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Below is a draft welcome email for new customers who just bought our annual plan. It is currently too long and too generic. Please rewrite it so it is under one hundred and twenty words, leads with the single most valuable action they should take in the first week, includes one concrete tip that only makes sense for their plan tier, replaces every marketing adjective with a specific benefit, keeps a friendly but professional tone, and closes with a single call to action. Also point out the three biggest problems with the original draft and why you rewrote each one the way you did. Draft text: Welcome aboard! We are thrilled and delighted that you chose our incredible platform which is simply the best in the business and we are confident you will love every amazing feature we have packed in for you and your wonderful team."
+        }
+      ]
+    },
+    {
+      "id": "conv-045",
+      "category": "conversational",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Our analytics show users who upload a dataset in their first session retain much better than users who only browse templates, but almost nobody uploads anything on mobile. Give me a thorough brainstorm of product changes that could close that gap, organized into three groups: onboarding friction we can remove without building anything, small additions like sample datasets or import wizards that would take under two weeks, and bigger bets that change the product direction. For each idea, say who the experiment would target, what metric we would watch, and how we would know it failed fast. End with your recommendation on the one combination of changes you would run as a single coherent experiment next quarter."
+        }
+      ]
+    },
+    {
+      "id": "qa-046",
+      "category": "qa",
+      "messages": [
+        {
+          "role": "user",
+          "content": "I am studying for the qualifying exam and I need a single detailed answer that covers all of the following about the Federal Reserve's response to the 2008 financial crisis: the specific facilities created and what each one was designed to stabilize, the order in which the tools were deployed as the crisis escalated, how the balance sheet expanded in dollar terms at the peak, the role of the discount window versus the term auction facility, why the Fed did not rescue Lehman but did rescue AIG, and the legislation passed afterward that changed the Fed's powers and how those changes would have altered the response had they existed in 2008?"
+        }
+      ]
+    },
+    {
+      "id": "qa-047",
+      "category": "qa",
+      "messages": [
+        {
+          "role": "user",
+          "content": "I have a time series of daily revenue for a retail chain with strong seasonality, a known promotion calendar, two store closures, and one data quality incident where a region stopped reporting for six weeks. Please give me a detailed step-by-step methodology for estimating the counterfactual revenue for a specific promotion week so I can measure the promotion's true incremental effect. Cover the model choices I should compare, how to handle the missing six weeks without imputing them naively, how many weeks of history I should use, how to validate the counterfactual on weeks without promotions, what confidence intervals I can honestly report, and the two most common mistakes in this kind of causal analysis that make the number look better than it is."
+        }
+      ]
+    },
+    {
+      "id": "qa-048",
+      "category": "qa",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Write a comprehensive answer to the following exam question: 'Compare and contrast the political and economic paths of Japan after the Meiji Restoration and China after the end of the Qing dynasty, analyzing how each state approached industrialization, the role of the military in domestic politics, the timing and nature of their engagement with Western imperial powers, the reforms each government pursued in education and land ownership, and how the different starting conditions in 1868 and 1912 shaped the crises each country faced by the 1930s.' Structure your answer with an introduction that states a clear thesis, thematic body paragraphs that argue rather than merely list, and a conclusion that explains which difference you consider decisive and why."
+        }
+      ]
+    },
+    {
+      "id": "qa-049",
+      "category": "qa",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Using only the information in the documents below, answer the following questions about the data retention policy. Document one states that customer transaction records are kept for seven years and that backups are encrypted at rest with AES-256. Document two states that access logs are retained for ninety days unless a legal hold is in place, and that any deletion requires two-person authorization. Document three states that deleted records must remain unrecoverable from backups within thirty days of deletion. First, state whether a transaction record older than seven years can remain in a backup and for how long. Second, explain the exact process that must happen before an access log older than ninety days can be removed. Third, identify any conflict you see between the three documents and which one would prevail under a strict reading."
+        }
+      ]
+    },
+    {
+      "id": "qa-050",
+      "category": "qa",
+      "messages": [
+        {
+          "role": "user",
+          "content": "I need a careful explanation of the difference between an employee and an independent contractor under current UK employment law as it applies to a company that uses a mobile app to coordinate delivery workers. The test has several components and the courts have emphasized that the reality of the relationship matters more than the contract label. Please cover each of the relevant factors, explain how mutuality of obligation and personal service work as gateway requirements, describe what the Uber and Pimlico Plumbers decisions actually held and how they apply to app-based platforms, explain what rights a 'worker' status grants that an independent contractor does not have, and describe what practical changes a company could make to its platform to genuinely shift the balance toward contractor status rather than merely relabeling the same relationship."
+        }
+      ]
+    },
+    {
+      "id": "rag-051",
+      "category": "rag",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a support agent for the Acme billing platform. Answer using only the retrieved knowledge snippets provided by the user."
+        },
+        {
+          "role": "user",
+          "content": "Retrieved knowledge: [1] Refunds migrate to the original payment method within 5-7 business days; international cards can take up to 14. [2] Partial refunds are allowed on any invoice that is not fully voided; the remainder must stay payable. [3] If the original payment method was deleted, funds go to the account balance and can be withdrawn via the same bank verification flow. [4] Chargebacks require evidence submitted within 10 days; evidence bundles must include the refund attempt trail. A customer paid with a corporate card, their finance team deleted the card before the refund posted, and they now ask whether they can get the money back on a new card instead of the account balance, why the balance route takes longer, and what document they should request from us if they need to prove the refund attempt to their procurement team for a chargeback dispute. Please answer all three parts, cite the relevant snippet numbers, and clearly flag anything the retrieved knowledge does not cover."
+        }
+      ]
+    },
+    {
+      "id": "rag-052",
+      "category": "rag",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a technical assistant for the internal deployment runbook. Base your answer strictly on the provided documentation."
+        },
+        {
+          "role": "user",
+          "content": "Runbook excerpt: 'Rollouts use a canary of 10% for fifteen minutes, then 50% for thirty minutes, then full. Automatic rollback triggers on error rate above 0.5% or p99 latency above 800ms during any phase. Feature flags are evaluated server-side and cached for sixty seconds. Database migrations run before the canary starts and are reverse-only, never additive, within the same release window. Health checks must pass for three consecutive probes at each phase gate.' We recently observed a release that stayed healthy during all three phases but produced a sharp cache-invalidation storm thirty minutes after full rollout, and the incident review suspects the flag cache TTL combined with the migration order. Please explain, citing the runbook, whether the observed sequence violates any documented rollout rule, what the cache TTL implies for flag propagation timing, and what we should change in either the runbook or the release process to prevent the storm from recurring."
+        }
+      ]
+    },
+    {
+      "id": "rag-053",
+      "category": "rag",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a senior support engineer. Answer using only the three knowledge sources quoted in the user's message."
+        },
+        {
+          "role": "user",
+          "content": "Source A (shipping FAQ): 'Standard shipping takes 3-5 business days to contiguous US; international delivery is 10-20 business days and requires a customs form.' Source B (warehouse policy): 'Orders marked as delivered cannot be re-shipped unless the carrier provides a proof-of-delivery exception signed by the driver.' Source C (carrier contract): 'Claims for lost international parcels must be filed within 30 days of the expected delivery date, and the sender must provide the customs form plus the original tracking number.' A customer in Germany ordered a limited-edition item, it was marked delivered nineteen days after the expected date, they never received it, and they are asking whether we can re-ship given the item is now sold out, what evidence the carrier needs for a lost-parcel claim under the contract, and whether the delivery exception in the warehouse policy applies here. Answer all three parts with the source each answer relies on and state plainly what we should tell the customer."
+        }
+      ]
+    },
+    {
+      "id": "rag-054",
+      "category": "rag",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are an SRE assistant. Use only the log excerpt and the on-call playbook in the user message."
+        },
+        {
+          "role": "user",
+          "content": "Log excerpt: '2026-09-15T02:11:04Z WARN gateway: upstream_timeout path=/v1/chat/completions region=eu-west duration_ms=12130; 2026-09-15T02:11:06Z WARN gateway: upstream_timeout duration_ms=11870; 2026-09-15T02:11:09Z ERROR gateway: circuit_open provider=anthropic; 2026-09-15T02:11:31Z INFO gateway: circuit_half_open; 2026-09-15T02:15:00Z WARN cache: eviction_rate 0.7'. Playbook: 'Upstream timeouts over 10s trigger a provider circuit breaker, half-open after 20s, and the cache TTL drops to 60s while the circuit is open. Eviction rate above 0.5 is the signal to scale the cache shards.' A customer-facing incident started at the first timeout and their dashboard showed elevated 504s. Please reconstruct the exact sequence the system followed, identify each playbook rule that fired or was violated, explain whether the eviction warning at 02:15 is likely a consequence of the circuit behavior, and state the two most important monitoring improvements that would have shortened time-to-detect for this incident."
+        }
+      ]
+    },
+    {
+      "id": "rag-055",
+      "category": "rag",
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a code assistant. Base your analysis only on the code context provided in the user message."
+        },
+        {
+          "role": "user",
+          "content": "Code context: the repository has a worker pool (`workers.py`) that pulls jobs from a Postgres table using SELECT ... FOR UPDATE SKIP LOCKED with a timeout, processes them, and writes results back in the same transaction. The retry column increments inside the transaction, and the job is considered failed after five attempts. Recently, jobs that process very large payloads occasionally disappear from the failed-jobs queue entirely, and the only anomaly in the logs is a transaction serialization error followed by a successful retry. Please explain the most plausible way a serialization error could cause the job to be both retried and then silently dropped, what role the savepoint or subtransaction handling inside the worker likely plays, what query we should run against the jobs table to confirm the mechanism, and what code change would make the system fail loudly instead of losing the job."
+        }
+      ]
+    }
   ]
 }
