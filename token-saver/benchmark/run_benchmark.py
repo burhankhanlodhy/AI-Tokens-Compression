@@ -108,6 +108,34 @@ def is_eligible(prompt: dict) -> bool:
     return should_inject_conciseness(prompt["messages"])
 
 
+def _reasoning_control(model: str) -> dict:
+    """The reasoning control sent EXPLICITLY on both benchmark arms (PM v4
+    ruling, consequence 2): the run must pin the same control the proxy
+    would inject, so arm behavior never depends on proxy config and the
+    headline carries the same audit evidence as the SD gate. One source of
+    truth: proxy.config.reasoning_control_for."""
+    sys.path.insert(0, str(ROOT.parent))
+    from proxy.config import reasoning_control_for
+    return reasoning_control_for(model)
+
+
+def _reasoning_evidence(resp, payload: dict, model: str) -> dict:
+    """Per-sample audit evidence for the headline (PM v4 ruling): raw
+    reasoning count, whether the provider REPORTS the field (absence is a
+    distinct fact from zero), the proxy's evidence header, and the control
+    actually sent. Defensive about test-double responses (no headers attr)."""
+    u = payload.get("usage") or {}
+    details = u.get("completion_tokens_details") or {}
+    headers = getattr(resp, "headers", None)
+    header = headers.get("x-token-saver-reasoning") if headers else None
+    return {
+        "reasoning_control": _reasoning_control(model),
+        "reasoning_tokens": int(details.get("reasoning_tokens", 0) or 0),
+        "reasoning_field_present": "reasoning_tokens" in details,
+        "evidence_header": header,
+    }
+
+
 def run_one(client: httpx.Client, base_url: str, model: str,
             prompt: dict, conciseness: bool) -> dict:
     body = {
@@ -115,6 +143,9 @@ def run_one(client: httpx.Client, base_url: str, model: str,
         "messages": prompt["messages"],
         "stream": False,
         "temperature": TEMPERATURE,
+        # Same MINIMAL control on BOTH arms (PM v4): pin it client-side so
+        # the run never depends on proxy config for its control.
+        **_reasoning_control(model),
     }
     headers = {
         "Authorization": f"Bearer {os.environ.get('OPENROUTER_API_KEY', '')}",
@@ -129,14 +160,17 @@ def run_one(client: httpx.Client, base_url: str, model: str,
                 payload = r.json()
                 text = extract_text(payload)
                 usage = usage_completion_tokens(payload)
+                evidence = _reasoning_evidence(r, payload, model)
                 if usage is not None:
                     return {"ok": True, "text": text, "tokens": usage,
                             "tokens_source": "usage.completion_tokens",
+                            "reasoning_evidence": evidence,
                             "latency_ms": r.elapsed.total_seconds() * 1000}
                 # AC-P1a fallback, recorded so the honesty gate sees it.
                 return {"ok": True, "text": text,
                         "tokens": count_output_tokens(text, model),
                         "tokens_source": "count_text_fallback",
+                        "reasoning_evidence": evidence,
                         "latency_ms": r.elapsed.total_seconds() * 1000}
             last_err = f"status {r.status_code}: {r.text[:150]}"
         except httpx.HTTPError as exc:
@@ -161,10 +195,15 @@ def run_arm(client: httpx.Client, base_url: str, model: str,
     n_ok = sum(1 for s in samples if s["ok"])
     first_ok = next((s for s in samples if s["ok"]), None)
     err = next((s.get("error") for s in samples if not s["ok"]), None)
+    # PM v4 (consequence 2): per-sample reasoning evidence travels with the
+    # arm into the results artifact — the headline's composition must be
+    # verifiable, not just its total.
     return {"ok": n_ok == k, "n_ok": n_ok, "k": k, "sampled": True,
             "tokens_total": sum(s.get("tokens", 0) for s in samples),
             "text": first_ok["text"] if first_ok else "",
             "tokens_source": (first_ok or {}).get("tokens_source"),
+            "samples_evidence": [s["reasoning_evidence"]
+                                 for s in samples if s["ok"]],
             "error": err}
 
 
@@ -504,6 +543,13 @@ def main() -> int:
         treat = run_arm(client, args.base_url, args.model, p,
                         conciseness=True, k=plan["treatment_k"])
         entry = entry_from_arms(p, eligible, base, treat)
+        # PM v4 (consequence 2): per-sample reasoning evidence is published
+        # with the entry, so the headline's composition is auditable.
+        entry["reasoning_evidence"] = {
+            "arm_control": _reasoning_control(args.model),
+            "baseline_samples": base.get("samples_evidence", []),
+            "treatment_samples": treat.get("samples_evidence", []),
+        }
         results.append(entry)
         pct = (100 * (entry["baseline_tokens"] - entry["treatment_tokens"])
                / entry["baseline_tokens"]

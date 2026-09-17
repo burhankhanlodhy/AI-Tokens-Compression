@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Str
 from . import stats
 from .classifier import classify
 from .compression import compress_messages, has_compressible_content
-from .config import estimate_cost, get_settings, load_pricing
+from .config import estimate_cost, get_settings, load_pricing, reasoning_control_for
 from .counting import (
     count_messages,
     count_output,
@@ -450,28 +450,37 @@ async def chat_completions(request: Request):
             body = {**body, "messages": new_messages}
         route = "compress"  # route stays for stats
 
-    # --- Reasoning-token cost control ---
-    # Only add this if the client didn't already specify their own
-    # `reasoning` field — never override an explicit client choice — and
-    # skip models we already know reject a disabled reasoning field.
+    # --- Reasoning-token cost control (PM v4 ruling) ---
+    # Inject the model-family control (Gemini family: thinking_level MINIMAL
+    # flooring; others: reasoning disabled). Only if the client didn't
+    # already set their own control — never override an explicit client
+    # choice — and skip models we already know reject a control.
     injected_reasoning = False
+    injected_keys: set[str] = set()
     if (
         s.disable_reasoning_by_default
         and "reasoning" not in body
+        and "thinking_level" not in body
         and model not in _reasoning_mandatory_models
     ):
-        body = {**body, "reasoning": {"enabled": False}}
+        control = reasoning_control_for(model)
+        body = {**body, **control}
+        injected_keys = set(control)
         injected_reasoning = True
 
     # Reasoning-evidence header (P1-1 SD gate): the runner must be able to
-    # RECORD whether the upstream accepted our `reasoning:{enabled:false}`
-    # override or rejected it (the proxy's silent 400-retry would otherwise
-    # be invisible to clients, and the gate would reward the failure mode).
-    #   injected                     -> override was sent upstream
+    # RECORD whether the injected control was actually sent upstream or
+    # rejected it (the proxy's silent 400-retry would otherwise be invisible
+    # to clients, and the gate would reward the failure mode). The value
+    # names what was injected so the artifact says what the control was:
+    #   injected:<keys>              -> control was sent upstream
     #   rejected_retry_without_override -> upstream 400'd it; retried bare
+    #   rejected_400_relayed         -> upstream 400'd it; not retryable
     reasoning_headers: dict[str, str] = {}
     if injected_reasoning:
-        reasoning_headers["x-token-saver-reasoning"] = "injected"
+        reasoning_headers["x-token-saver-reasoning"] = (
+            "injected:" + ",".join(sorted(injected_keys))
+        )
 
     in_after = count_messages(body.get("messages") or [], model)
     payload = json.dumps(body).encode()
@@ -523,13 +532,14 @@ async def chat_completions(request: Request):
 
         if "reasoning" in err_msg.lower() and "mandatory" in err_msg.lower():
             # This model requires reasoning and won't allow disabling it —
-            # remember that, and retry once without our override instead of
+            # remember that, and retry once without our control instead of
             # failing every request to it.
             _reasoning_mandatory_models.add(model)
             reasoning_headers["x-token-saver-reasoning"] = (
                 "rejected_retry_without_override"
             )
-            retry_body = {k: v for k, v in body.items() if k != "reasoning"}
+            retry_body = {k: v for k, v in body.items()
+                          if k not in injected_keys}
             in_after = count_messages(retry_body.get("messages") or [], model)
             resp = await _forward(
                 request, json.dumps(retry_body).encode(), "chat/completions"

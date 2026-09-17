@@ -216,16 +216,46 @@ async def test_reasoning_disabled_by_default(capturing_client):
 
 @pytest.mark.asyncio
 async def test_reasoning_evidence_header_on_injected_override(capturing_client):
-    """P1-1 SD gate evidence: the client can RECORD that the override was
+    """P1-1 SD gate evidence: the client can RECORD that the control was
     sent upstream (otherwise a silent mapping failure looks identical to
-    working suppression)."""
+    working suppression). The header names what was injected."""
     c, captured = capturing_client
     resp = await c.post(
         "/v1/chat/completions",
         headers={"Authorization": "Bearer test-key-123"},
         json={"model": "z-ai/glm-5.3-flash", "messages": [{"role": "user", "content": "hi"}]},
     )
-    assert resp.headers.get("x-token-saver-reasoning") == "injected"
+    assert resp.headers.get("x-token-saver-reasoning") == "injected:reasoning"
+
+
+@pytest.mark.asyncio
+async def test_gemini_family_gets_minimal_flooring_control(capturing_client):
+    """PM v4 ruling: the Gemini family's injected control is the MINIMAL
+    FLOORING control (reasoning-mandatory endpoints reject {"enabled":
+    false}, and MINIMAL is their lowest floor), not the suppress control."""
+    c, captured = capturing_client
+    await c.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-key-123"},
+        json={"model": "google/gemini-3.5-flash-lite",
+              "messages": [{"role": "user", "content": "hi"}]},
+    )
+    assert captured["body"]["thinking_level"] == "MINIMAL"
+    assert "reasoning" not in captured["body"]
+
+
+@pytest.mark.asyncio
+async def test_client_supplied_thinking_level_is_respected(capturing_client):
+    """A client that explicitly sets thinking_level is never overridden."""
+    c, captured = capturing_client
+    await c.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-key-123"},
+        json={"model": "google/gemini-3.5-flash-lite",
+              "messages": [{"role": "user", "content": "hi"}],
+              "thinking_level": "HIGH"},
+    )
+    assert captured["body"]["thinking_level"] == "HIGH"
 
 
 @pytest.mark.asyncio
@@ -277,11 +307,15 @@ async def test_reasoning_mandatory_model_retries_without_override(tmp_db, slug):
 
     main_module._reasoning_mandatory_models.clear()
     calls: list[dict] = []
+    # The mock upstream rejects the control this slug would carry (as the
+    # live OpenRouter endpoint did for gemini) so the retry path is exercised.
+    rejected_keys = ({"reasoning"} if slug == "z-ai/glm-5.3-flash"
+                     else {"thinking_level"})
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         calls.append(body)
-        if "reasoning" in body:
+        if rejected_keys & body.keys():
             return httpx.Response(
                 400,
                 json={"error": {"message": "Reasoning is mandatory for this "
@@ -306,8 +340,14 @@ async def test_reasoning_mandatory_model_retries_without_override(tmp_db, slug):
     assert resp.status_code == 200
     assert resp.json()["choices"][0]["message"]["content"] == "Hello!"
     assert len(calls) == 2
-    assert "reasoning" in calls[0]
-    assert "reasoning" not in calls[1]
+    # calls[0] carries the slug's injected control; the retry (calls[1])
+    # drops ALL of the injected keys, whatever family they belong to.
+    expected_control = ({"reasoning": {"enabled": False}}
+                        if slug == "z-ai/glm-5.3-flash"
+                        else {"thinking_level": "MINIMAL"})
+    for k, v in expected_control.items():
+        assert calls[0][k] == v
+    assert not any(k in calls[1] for k in expected_control)
     assert slug in main_module._reasoning_mandatory_models
     # The rejection must be visible to the client, not swallowed by the
     # proxy's silent retry — otherwise zero observed reasoning tokens after

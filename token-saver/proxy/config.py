@@ -39,13 +39,25 @@ class Settings(BaseSettings):
     # the Output conciseness section below was a dead trap (removed B2-c).
     output_conciseness_enabled: bool = False
 
-    # Reasoning models (e.g. glm-5.3-flash) can spend an unpredictable number
-    # of hidden "thinking" tokens per request — often far more than anything
-    # compression saves on the input side, and with no correlation to prompt
-    # content. Suppress it by default via OpenRouter's `reasoning` param so
-    # cost stays predictable; a client that explicitly sets its own
-    # `reasoning` field in the request body is always respected instead.
+    # Reasoning control (PM v4 ruling): the proxy injects a model-family-
+    # specific control by default. The old `{"enabled": false}` suppress
+    # control was rejected outright by reasoning-mandatory endpoints (OpenRouter
+    # 400s on gemini-3.5-flash-lite), and "zero thinking" is unsatisfiable on
+    # models whose floor is MINIMAL. So the Gemini family gets the MINIMAL
+    # FLOORING control (bounds hidden reasoning to the model's cheapest level;
+    # efficacy is verified by the SD gate's differential probe, never assumed),
+    # while families that accept suppression keep it. A client that explicitly
+    # sets its own `reasoning` or `thinking_level` field is always respected
+    # instead. Keys are BODY-LEVEL keys: the dict is merged into the request
+    # body verbatim.
     disable_reasoning_by_default: bool = True
+    reasoning_control_default: dict[str, dict] = {
+        "reasoning": {"enabled": False},
+    }
+    reasoning_control_by_prefix: dict[str, dict] = {
+        "google/": {"thinking_level": "MINIMAL"},
+        "gemini": {"thinking_level": "MINIMAL"},
+    }
 
     # --- PA-4: exact-prefix cache detection ---
     cache_enabled: bool = True
@@ -234,3 +246,19 @@ def estimate_cost(model: str, input_tokens: int, output_tokens: float) -> float:
             )
     in_price, out_price = prices
     return (input_tokens * in_price + output_tokens * out_price) / 1_000_000
+
+
+def reasoning_control_for(model: str) -> dict:
+    """The reasoning control injected for `model` (PM v4 ruling).
+
+    Longest matching prefix in reasoning_control_by_prefix wins; unmatched
+    models get reasoning_control_default. Returns BODY-LEVEL key/value
+    pairs merged verbatim into the request body, e.g.:
+      google/gemini-3.5-flash-lite -> {"thinking_level": "MINIMAL"}
+      z-ai/glm-5.3-flash           -> {"reasoning": {"enabled": False}}
+    """
+    s = get_settings()
+    for prefix in sorted(s.reasoning_control_by_prefix, key=len, reverse=True):
+        if model.startswith(prefix):
+            return dict(s.reasoning_control_by_prefix[prefix])
+    return dict(s.reasoning_control_default)
