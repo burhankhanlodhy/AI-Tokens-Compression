@@ -105,13 +105,19 @@ def run_sample(model: str, base_url: str, key: str) -> dict | None:
     completion = int(u.get("completion_tokens", 0))
     details = u.get("completion_tokens_details") or {}
     rt = int(details.get("reasoning_tokens", 0) or 0)
+    # Absence of the field is NOT the same fact as a zero value (PM, 6f60399
+    # review): a provider that never reports reasoning_tokens can be thinking
+    # at its default level while billing us — record presence separately.
+    rt_present = "reasoning_tokens" in details
     override = (r.headers.get("x-token-saver-reasoning") or "").strip().lower()
     injected = override == "injected"
     rejected = override.startswith("rejected")
-    print(f"provider completion_tokens={completion} (reasoning={rt}) | "
+    print(f"provider completion_tokens={completion} (reasoning={rt}, "
+          f"field_present={rt_present}) | "
           f"words={len(text.split())} | chars={len(text)} | "
           f"reasoning-override={override or 'none'}")
     return {"completion_tokens": completion, "reasoning_tokens": rt,
+            "reasoning_field_present": rt_present,
             "words": len(text.split()), "chars": len(text),
             "reasoning_override_injected": injected,
             "reasoning_override_rejected": rejected}
@@ -131,29 +137,42 @@ def compute_gate(
     summary: dict,
     reasoning_tokens: list[int],
     field_accepted: bool | None,
+    field_present: bool = True,
 ) -> dict:
-    """P1-1 SD gate, post-swap semantics (PM ruling at 9b1ac2d).
+    """P1-1 SD gate, post-swap semantics (PM rulings at 9b1ac2d + 6f60399).
 
-    Two recorded facts, kept separate:
+    Three recorded facts, kept separate:
       - reasoning_field_accepted: did the upstream ACCEPT our
         `reasoning:{enabled:false}` override (True), REJECT it via the
         proxy's 400-retry path (False), or was no override sent at all
         (None — e.g. disable_reasoning_by_default off or a client-supplied
         reasoning field)?
+      - reasoning_field_present: did the provider actually REPORT a
+        reasoning_tokens field? A field-absent response (details = {}) is
+        indistinguishable from silence while thinking at the default level
+        — unattributable, same fail class as field_accepted None.
       - reasoning_tokens_observed: the raw per-sample counts. ZERO is the
         PASS value: a working suppression shows all zeros; a SILENT mapping
         failure (override ignored, model thinks anyway) shows nonzero.
-    Suppression is CONFIRMED only when the field was accepted AND every
-    observed reasoning count is zero. `qualifies` keys off confirmation,
-    never off "reasoning tokens were seen" (the old v1 predicate, which
-    rewarded the silent-failure mode and punished the working one).
+    Suppression is CONFIRMED only when the field was accepted AND reported
+    AND every observed reasoning count is zero. `qualifies` keys off
+    confirmation, never off "reasoning tokens were seen" (v1, which rewarded
+    loud failure) nor off zeros-with-no-report (v2 hole: rewarded quiet
+    failure). mean_completion_tokens is persisted here so a ~3,000-token
+    "zero-reasoning" result is self-evidently a lie in the record.
     """
-    suppression_confirmed = bool(field_accepted is True and reasoning_tokens
-                                 and all(rt == 0 for rt in reasoning_tokens))
+    suppression_confirmed = bool(
+        field_accepted is True
+        and field_present
+        and reasoning_tokens
+        and all(rt == 0 for rt in reasoning_tokens)
+    )
     return {
         "billed_cv": summary["cv"],
         "cv_lt_0.35": bool(summary["cv"] < 0.35),
+        "mean_completion_tokens": summary["mean"],
         "reasoning_field_accepted": field_accepted,
+        "reasoning_field_present": bool(field_present),
         "reasoning_tokens_observed": reasoning_tokens,
         "suppression_confirmed": suppression_confirmed,
         "qualifies": bool(summary["cv"] < 0.35 and suppression_confirmed),
@@ -188,6 +207,7 @@ def main(argv: list[str] | None = None) -> int:
               f"~{summary[f'n_for_80pct_at_{true_eff}']:.0f} samples/arm for 80% power")
 
     reasoning_separately_reported = any(rt > 0 for rt in reasoning_tokens)
+    present_flags = [s["reasoning_field_present"] for s in raw]
     if all(rejected_flags):
         field_accepted: bool | None = False
     elif any(rejected_flags):
@@ -197,26 +217,32 @@ def main(argv: list[str] | None = None) -> int:
     else:
         field_accepted = None  # no override was sent on any sample
 
-    gate = compute_gate(summary, reasoning_tokens, field_accepted)
+    gate = compute_gate(summary, reasoning_tokens, field_accepted,
+                        field_present=all(present_flags))
     if field_accepted is False:
         print("reasoning override REJECTED by upstream (proxy retried without "
               "it) — suppression NOT confirmed")
     elif field_accepted is None:
         print("no reasoning override was sent on any sample — "
               "suppression CANNOT be attributed")
+    elif not gate["reasoning_field_present"]:
+        print("provider did NOT report a reasoning_tokens field on every "
+              "sample — zeros are unverifiable, suppression CANNOT be "
+              "attributed (unattributable, not suppressed)")
     elif gate["suppression_confirmed"]:
-        print("reasoning override accepted AND all reasoning-token counts are "
-              "zero — SUPPRESSION CONFIRMED")
+        print("reasoning override accepted, reasoning_tokens field present "
+              "AND all counts zero — SUPPRESSION CONFIRMED")
     else:
         print("reasoning override accepted but reasoning tokens observed "
               f"({reasoning_tokens}) — suppression FAILED (silent mapping loss)")
 
-    # C2 gate fields (schema v2): billed-token CV < 0.35 AND suppression
-    # CONFIRMED (field accepted + zero observed reasoning). Failing gate is
-    # a recorded negative result. reasoning_separately_reported is kept as a
-    # diagnostic (v1 field) but no longer gates qualification.
+    # C2 gate fields (schema v3): billed-token CV < 0.35 AND suppression
+    # CONFIRMED (field accepted + field PRESENT + zero observed reasoning).
+    # Failing gate is a recorded negative result.
+    # reasoning_separately_reported is kept as a diagnostic (v1 field) but
+    # no longer gates qualification.
     result = {
-        "schema": "sd_gate_v2",
+        "schema": "sd_gate_v3",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "model": args.model,
         "n_requested": args.n,

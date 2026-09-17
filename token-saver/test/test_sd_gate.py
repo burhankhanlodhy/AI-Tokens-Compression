@@ -24,7 +24,9 @@ from measure_sd import compute_gate  # noqa: E402
 
 
 def _summary(cv: float) -> dict:
-    return {"cv": cv}
+    # 862.0 = the fixed prompt's expected visible-answer mean (glm on-file:
+    # 3,937 billed, of which 3,075 reasoning — mean is a gate cross-check).
+    return {"cv": cv, "mean": 862.0}
 
 
 def test_working_suppression_qualifies_despite_no_reasoning_tokens():
@@ -37,6 +39,35 @@ def test_working_suppression_qualifies_despite_no_reasoning_tokens():
     assert gate["suppression_confirmed"] is True
     assert gate["qualifies"] is True
     assert gate["cv_lt_0.35"] is True
+
+
+def test_field_absent_does_not_qualify_even_at_zero_tokens_and_good_cv():
+    """THE v2 hole (PM repro at 6f60399): details = {}, override accepted,
+    CV 0.20 — provider never reported reasoning_tokens, so the zeros are
+    unverifiable (the model can be thinking at default level and just not
+    saying so). Unattributable => FAIL, same class as field_accepted None.
+    """
+    gate = compute_gate(_summary(0.20), [0, 0, 0, 0, 0],
+                        field_accepted=True, field_present=False)
+    assert gate["reasoning_field_present"] is False
+    assert gate["suppression_confirmed"] is False
+    assert gate["qualifies"] is False
+
+
+def test_mixed_field_presence_does_not_qualify():
+    """One sample with the field absent poisons the record: gate must fail
+    closed, not average the evidence."""
+    gate = compute_gate(_summary(0.10), [0, 0, 0], field_accepted=True,
+                        field_present=False)
+    assert gate["qualifies"] is False
+
+
+def test_mean_completion_tokens_persisted_as_cross_check():
+    """PM (b): the gate block must carry the billed mean so a ~3,000-token
+    'zero-reasoning' result is self-evidently a lie in the pass/fail record
+    (glm billed 3,937 tok/call, 3,075 reasoning, ~862 visible)."""
+    gate = compute_gate(_summary(0.10), [0, 0, 0], field_accepted=True)
+    assert gate["mean_completion_tokens"] == _summary(0.10)["mean"]
 
 
 def test_silent_mapping_failure_does_not_qualify():
@@ -66,6 +97,17 @@ def test_no_override_sent_cannot_confirm_suppression():
     assert gate["reasoning_field_accepted"] is None
     assert gate["suppression_confirmed"] is False
     assert gate["qualifies"] is False
+
+
+def test_pm_field_absent_repro_is_a_fail():
+    """Verbatim repro of the PM's finding at 6f60399: details={},
+    override accepted, CV 0.20 -> the v2 gate printed qualifies: True.
+    v3 must print qualifies: False."""
+    gate = compute_gate({"cv": 0.20, "mean": 862.0}, [0, 0, 0, 0, 0],
+                        field_accepted=True, field_present=False)
+    assert gate["suppression_confirmed"] is False
+    assert gate["qualifies"] is False
+    assert gate["mean_completion_tokens"] == 862.0
 
 
 def test_high_cv_fails_even_with_confirmed_suppression():
