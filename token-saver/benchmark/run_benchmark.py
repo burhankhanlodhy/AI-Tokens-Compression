@@ -382,7 +382,8 @@ PUBLICATION_FLOOR_PP = 3.0
 
 
 def _publication(e: dict, n_valid: int,
-                 population_incomplete: bool = False) -> dict:
+                 population_incomplete: bool = False,
+                 parity_holds: bool | None = None) -> dict:
     """AC-P1g publication contract (C-10, ratified; floor amended B4
     2026-09-17 to the MEASURED blind-spot width) — applies to EVERY
     published figure, headline AND blended alike (PM amendment: a suppressed
@@ -402,6 +403,15 @@ def _publication(e: dict, n_valid: int,
     Otherwise publication_status = "no_measurable_effect" (the literal is
     pinned by the committed CI-blocking test, so it is contract, not style)
     and reported_reduction_pct is null.
+
+    P2 (P3 ratification, option (a), 2026-09-18): `parity_holds` is the
+    subset's OWN parity verdict — None (no parity evidence / vacuous)
+    changes nothing, but an explicit False suppresses the figure even when
+    the interval is healthy: a sellable percentage beside a red parity
+    gate is the exact noise-dressed-as-signal publication AC-P1g exists to
+    forbid, one field over. Precedence: population incompleteness (0) >
+    parity failure (1) > 3pp floor (2) — a population/parity failure
+    invalidates the MEASUREMENT, the floor only its publishability.
 
     Branch order encodes the QA-pinned precedence: population
     incompleteness is precedence-0 — above the 3pp check — because a
@@ -426,6 +436,16 @@ def _publication(e: dict, n_valid: int,
                                      "off a partial population is never "
                                      "publishable, regardless of the "
                                      "estimate")}
+    if parity_holds is False:
+        return {"publication_status": "no_measurable_effect",
+                "reported_reduction_pct": None,
+                "publication_note": ("quality parity gate FAILED on this "
+                                     "population (mean regression above "
+                                     "the 1pt spec gate — see "
+                                     "quality_parity beside this figure): "
+                                     "the effect is measured but "
+                                     "suppressed-pending-fix, never "
+                                     "folded into a sellable claim")}
     if est <= PUBLICATION_FLOOR_PP:
         note = (f"estimated {round(est, 2)}pp is at or below the 3pp "
                 "publication floor — inside the measured blind-spot width "
@@ -477,9 +497,166 @@ def _published_figure(e: dict) -> str:
             f"({e['publication_status']}: {e['publication_note']})")
 
 
+# ---------------------------------------------------------------------------
+# P2: per-category + ratified headline-carve emission (option (a), user
+# 2026-09-17, @product-manager in-file). Before this block the published
+# 57.71pp carve was a hand computation that existed nowhere in
+# machine-emitted output — the artifact carried only headline / blended /
+# quality_parity. These blocks close that audit hole: every published
+# subset figure is emitted by the same summarize() that produces the
+# headline, under the same AC-P1g contract.
+# ---------------------------------------------------------------------------
+
+# Option (a) carve: the published headline claim is the eligible
+# NON-CODE NON-RAG subset. RAG is published beside it, never hidden —
+# its by_category block carries the measured figure with its own
+# AC-P1g triplet (suppressed-pending-fix when its parity gate fails).
+CARVE_EXCLUDED_CATEGORIES = ("code", "rag")
+
+# Calibration caveat that MUST ship with the carve (ratified 09fc87c):
+# the n=10 clearance rests on the measured gemini CV, and the committed
+# empty-box artifact at N_PROMPTS=10 is the evidence (P4).
+CARVE_CALIBRATION_CAVEAT = (
+    "n=10 gate clearance rests on the MEASURED instrument CV=0.137 "
+    "(sd_gate_google__gemini-3.5-flash-lite.json): at n=10/k=30, null FP "
+    "0.00%, control 99.50%. The archived CV=0.2415 FAILS at n=10/k=30 "
+    "(control 89.0% < 90% contract); a noisier instrument requires "
+    "k>=40. Evidence: the committed empty-box artifact run at "
+    "N_PROMPTS=10 with this CV pinned (P4).")
+
+
+def _subset_parity(sub_entries: list[dict],
+                   planned_ids_for_sub: list[str] | None) -> dict:
+    """Parity/population accounting for ONE publication subset.
+
+    Mirrors the top-level quality_parity rules exactly (planned-population
+    anchor when the subset's planned ids are supplied, attempted-only
+    otherwise, fails closed), but scoped to the subset: a category whose
+    items were lost upstream must not inherit a green from the run-level
+    population. `planned_ids_for_sub` is the subset's PLANNED judged
+    population, derived by the caller from planned_judge_ids + the
+    planned items' categories — NEVER by intersecting the planned list
+    with the surviving rows (a lost item never reaches `valid`, so an
+    intersection is the survivor anchor again).
+
+    Sign conventions: `mean_regression_pt` is the gate convention
+    (score_a - score_b, POSITIVE = treatment scored lower); the ratio
+    `signed_mean_regression_pt` (score_b - score_a, NEGATIVE = treatment
+    scored lower) matches the ratified carve arithmetic as quoted by the
+    PM (qa-049 = -3.0) — both ship so the artifact can never be misread.
+
+    parity_holds is None when the subset judged nothing (vacuous — a
+    zero-eligible category carries no parity evidence and must not be
+    suppressed by a gate that never ran), True/False otherwise.
+    """
+    attempted = [r for r in sub_entries if "mode" in r]
+    judged = [r for r in attempted if r.get("mode") == "model_judge"]
+    excluded_judge_ids = [r.get("id") for r in attempted
+                          if r.get("mode") != "model_judge"]
+    judged_ids = {r.get("id") for r in judged}
+    if planned_ids_for_sub is not None:
+        upstream_lost_ids = [pid for pid in planned_ids_for_sub
+                             if pid not in judged_ids
+                             and pid not in set(excluded_judge_ids)]
+        population_complete = (len(judged) == len(planned_ids_for_sub)
+                               and not excluded_judge_ids
+                               and not upstream_lost_ids
+                               and len(judged_ids) == len(planned_ids_for_sub))
+        population_incomplete = not population_complete
+    else:
+        upstream_lost_ids = []
+        population_complete = (bool(attempted)
+                               and len(judged) == len(attempted))
+        # No planned denominator: keep the pre-1b stats-helper semantics —
+        # incompleteness suppression only activates on the run path.
+        population_incomplete = False
+    gate_regression = (round(sum(r.get("score_a", 10) - r.get("score_b", 10)
+                                 for r in judged) / len(judged), 2)
+                       if judged else None)
+    signed_regression = (round(sum(r.get("score_b", 10) - r.get("score_a", 10)
+                                   for r in judged) / len(judged), 2)
+                         if judged else None)
+    n_over_1pt = sum(1 for r in judged
+                     if r.get("score_b", 10) < r.get("score_a", 10) - 1)
+    parity_holds = None
+    if judged:
+        parity_holds = (population_complete
+                        and gate_regression is not None
+                        and gate_regression <= 1.0)
+    return {
+        "n_judged": len(judged),
+        "n_attempted": len(attempted),
+        "n_judged_planned": (len(planned_ids_for_sub)
+                             if planned_ids_for_sub is not None else None),
+        "population_complete": population_complete,
+        "excluded_judge_ids": excluded_judge_ids,
+        "upstream_lost_ids": upstream_lost_ids,
+        "n_regressions_over_1pt": n_over_1pt,
+        "mean_regression_pt": gate_regression,
+        "signed_mean_regression_pt": signed_regression,
+        "signed_regression_sign_convention": (
+            "score_b - score_a: NEGATIVE = treatment scored lower "
+            "(regression) — matches the ratified carve arithmetic"),
+        "parity_rule": "mean_regression_le_1pt_full_population",
+        "parity_holds": parity_holds,
+        "_population_incomplete": population_incomplete,
+    }
+
+
+def _subset_block(label: str, population: str, sub_entries: list[dict],
+                  planned_ids_for_sub: list[str] | None = None,
+                  calibration_caveat: str | None = None) -> dict:
+    """One publication-shaped subset figure (P2): estimate + CI + the full
+    AC-P1g triplet + the subset's own quality_parity, all computed by the
+    shared estimator and the same _publication() contract as the headline.
+
+    Zero-eligible subsets (code: all 10 fixtures are gate-negative, K-6)
+    emit the triplet with a construction note rather than a floor note —
+    there is nothing measured, and "estimated 0.0pp" would misstate why.
+    """
+    pairs = [(r["baseline_tokens"], r["treatment_tokens"])
+             for r in sub_entries]
+    n_valid = sum(1 for b, _ in pairs if b > 0)
+    e = estimate(pairs)
+    parity = _subset_parity(sub_entries, planned_ids_for_sub)
+    if not sub_entries:
+        publication = {
+            "publication_status": "no_measurable_effect",
+            "reported_reduction_pct": None,
+            "publication_note": ("no eligible prompts in this population — "
+                                 "the production gate does not fire on any "
+                                 "of its fixtures, so there is nothing to "
+                                 "measure (0pp by construction, not by "
+                                 "estimate)"),
+        }
+    else:
+        publication = _publication(
+            e, n_valid,
+            population_incomplete=parity.pop("_population_incomplete"),
+            parity_holds=parity["parity_holds"])
+    parity.pop("_population_incomplete", None)
+    block = {
+        "label": label,
+        "population": population,
+        "n_eligible": len(sub_entries),
+        "n_valid": n_valid,
+        "mean_output_reduction_pct": round(e["mean_reduction_pct"], 2),
+        "ci95_halfwidth": round(e["ci95"], 2),
+        "ci95_interval": [round(v, 2) for v in e["ci95_interval"]],
+        "meets_15pct": bool(e["mean_reduction_pct"] >= 15
+                            and e["mean_reduction_pct"] - e["ci95"] >= 15),
+        **publication,
+        "quality_parity": parity,
+    }
+    if calibration_caveat is not None:
+        block["calibration_caveat"] = calibration_caveat
+    return block
+
+
 def summarize(valid_entries: list[dict],
               n_eligible_planned: int | None = None,
-              planned_judge_ids: list[str] | None = None) -> dict:
+              planned_judge_ids: list[str] | None = None,
+              planned_categories: dict[str, str] | None = None) -> dict:
     """Headline (eligible subset) + labelled blended (corpus-wide) stats.
 
     AC-P1b population anchor (PM ratification, option (a)): the parity
@@ -567,6 +744,64 @@ def summarize(valid_entries: list[dict],
     # the pre-1b semantics.
     population_incomplete = (n_eligible_planned is not None
                              and not population_complete)
+    # P2: per-category + ratified headline-carve emission. Each block is
+    # computed over the ELIGIBLE subset of its population (the ineligible
+    # corpus is byte-identical arms by gate design — folding it in would
+    # dilute, not measure). Every block carries the full AC-P1g triplet
+    # and its own quality_parity; the carve also ships the ratified
+    # calibration caveat. RAG lands here with its parity failure attached:
+    # 26.18pp measured, suppressed-pending-fix by the contract — visible,
+    # never sellable.
+    #
+    # Subset planned populations: with planned_categories supplied (the
+    # run path — main() passes {id: category} for every planned item),
+    # each subset's planned ids come from the PLANNED items' categories,
+    # never from intersecting with the surviving rows (a lost item never
+    # reaches `valid`, so an intersection would re-anchor on survivors —
+    # the exact false-green AC-P1b's planned anchor forbids). Stats-helper
+    # callers without the map keep the survivor-derived fallback.
+    def _planned_for(pred) -> list[str] | None:
+        if planned_judge_ids is None:
+            return None
+        if planned_categories is None:
+            # No category map: the planned population cannot be scoped to
+            # a subset (a lost item's category is unknowable from rows) —
+            # fall back to the attempted-only anchor, exactly the pre-1b
+            # stats-helper semantics the top-level gate keeps.
+            return None
+        return [pid for pid in planned_judge_ids
+                if pred(planned_categories.get(pid) or "unknown")]
+
+    categories = sorted({(r.get("category") or "unknown")
+                         for r in valid_entries})
+    by_category = {
+        "label": ("per-category figures over the ELIGIBLE subset of each "
+                  "category (AC-P1 'report per-category'; the ineligible "
+                  "corpus is byte-identical arms by gate design). Each "
+                  "block carries the AC-P1g publication contract and its "
+                  "own quality_parity."),
+        "categories": {
+            cat: _subset_block(
+                f"eligible {cat} subset",
+                f"eligible {cat} prompts (gate-fired)",
+                [r for r in eligible
+                 if (r.get("category") or "unknown") == cat],
+                planned_ids_for_sub=_planned_for(
+                    lambda c, _cat=cat: c == _cat))
+            for cat in categories
+        },
+    }
+    carve_sub = [r for r in eligible
+                 if (r.get("category") or "unknown")
+                 not in CARVE_EXCLUDED_CATEGORIES]
+    headline_carve = _subset_block(
+        "RATIFIED headline (option (a), user 2026-09-17): eligible "
+        "non-code non-RAG — the published claim",
+        "eligible non-code non-RAG prompts (gate-fired)",
+        carve_sub,
+        planned_ids_for_sub=_planned_for(
+            lambda c: c not in CARVE_EXCLUDED_CATEGORIES),
+        calibration_caveat=CARVE_CALIBRATION_CAVEAT)
     return {
         "headline_population": "eligible_subset",
         "n_eligible": len(eligible),
@@ -595,6 +830,8 @@ def summarize(valid_entries: list[dict],
             **_publication(blended, n_valid_blended,
                            population_incomplete=population_incomplete),
         },
+        "headline_carve": headline_carve,
+        "by_category": by_category,
         "quality_parity": {
             "n_judged": len(judged),
             "n_attempted": len(attempted),
@@ -711,6 +948,11 @@ def main() -> int:
     # (arms failed before judging) are recorded beside excluded_judge_ids.
     planned_judge_ids = planned_judged_ids(plans, eligible_only)
     n_judge_planned = len(planned_judge_ids)
+    # P2: the planned items' categories — the only way a subset (carve,
+    # per-category) can anchor its planned population without intersecting
+    # with survivors (a lost item never reaches `valid`).
+    planned_categories = {p["id"]: (p.get("category") or "unknown")
+                          for p, _ in plans}
     # spend estimate BEFORE the first provider call — never a silent budget
     est_calls = sum(
         sampling_plan(e, eligible_only)["baseline_k"]
@@ -767,7 +1009,8 @@ def main() -> int:
     # The gate and the re-run must measure the same math; a divergence here is
     # the defect class the AC-P1a-gate exists to catch.
     stats = summarize(valid, n_eligible_planned=n_judge_planned,
-                      planned_judge_ids=planned_judge_ids)
+                      planned_judge_ids=planned_judge_ids,
+                      planned_categories=planned_categories)
 
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -798,6 +1041,15 @@ def main() -> int:
     # diverge by construction.
     print(f"\nHEADLINE (eligible subset, n={stats['n_eligible']}): "
           f"{_published_figure(hl)}")
+    # P2: the ratified carve is a first-class published figure — it goes to
+    # stdout through the same _published_figure() contract (the printed
+    # figure is reported_reduction_pct verbatim, never the raw mean).
+    carve = stats["headline_carve"]
+    print(f"HEADLINE CARVE ({carve['population']}, n={carve['n_eligible']}): "
+          f"{_published_figure(carve)}")
+    for cat, blk in stats["by_category"]["categories"].items():
+        print(f"  [{cat}] eligible n={blk['n_eligible']}: "
+              f"{_published_figure(blk)}")
     print(f"Blended (corpus-wide, n={bl['n']}, labelled, not the headline): "
           f"{_published_figure(bl)}")
     qp = stats["quality_parity"]

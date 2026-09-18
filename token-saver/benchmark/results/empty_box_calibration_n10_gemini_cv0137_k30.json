@@ -1,0 +1,34 @@
+{
+  "schema": "empty_box_calibration_v1",
+  "generated_at": "2026-09-18T15:42:11.035224+00:00",
+  "estimator": "run_benchmark.estimate (shared, imported by reference \u2014 the gate calibrates the shipped math)",
+  "params": {
+    "n_prompts": 10,
+    "cv": 0.137,
+    "mean_tokens": 1050.6,
+    "k": 30,
+    "seeds": 2000,
+    "null_tolerance_pp": 5.0,
+    "control_window_pp": [
+      12.0,
+      18.0
+    ],
+    "null_fp_max": 0.05,
+    "control_min_success": 0.9
+  },
+  "cv_source": "sd_gate_google__gemini-3.5-flash-lite.json (measured CV=0.13697, quoted 0.137; archived CV=0.2415 FAILS at n=10/k=30)",
+  "results": {
+    "null_false_positive_rate": 0.0,
+    "null_false_positives": 0,
+    "control_success_rate": 0.995,
+    "control_successes": 1990,
+    "worst_null_estimate_pp": -4.372997950698382,
+    "worst_control_estimate_pp": 18.231908660238602
+  },
+  "verdicts": {
+    "null_pass": true,
+    "control_pass": true,
+    "calibrated": true
+  },
+  "clearance": "CALIBRATED at n_prompts=10, cv=0.1370, k=30 over 2000 seeds"
+}

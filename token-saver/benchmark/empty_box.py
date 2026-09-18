@@ -36,6 +36,17 @@ gate-clearing fixtures, so the headline instrument calibrates at n=15; the
 corpus-wide blended figure is a dilution, published beside the headline and
 labelled, and is NOT what this gate calibrates.
 
+P4 (ratified carve, option (a) 2026-09-18): the PUBLISHED claim is the
+non-code non-RAG carve at n=10, so the gate must ALSO clear at n=10 with
+the RUN instrument's measured CV (gemini: 0.137,
+`sd_gate_google__gemini-3.5-flash-lite.json` — the archived CV=0.2415
+FAILS at n=10/k=30, control 89.0% < 90%). N_PROMPTS, CV and mean tokens
+are therefore CLI parameters (`--n-prompts`, `--cv`, `--mean-tokens`);
+the constants above are only their DEFAULTS. `--out` commits a JSON
+artifact (params + rates + verdicts) — until that artifact exists at
+N_PROMPTS=10/CV=0.137/k=30, the 57.71pp carve is uncalibrated and must
+not be published.
+
 HEAD STATUS: GREEN since C-4b. The corrected estimator (ratio-of-sums +
 bootstrap, HARNESS_K=30) is what this gate imports and simulates; a red
 exit here means the shipped math regressed — do NOT weaken thresholds to
@@ -44,6 +55,7 @@ force green.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import random
 import sys
@@ -96,16 +108,19 @@ def _arm_totals(rng: random.Random, base_means: list[float],
     return totals
 
 
-def _experiment(seed: int, multiplier: float | None, k: int) -> dict:
+def _experiment(seed: int, multiplier: float | None, k: int,
+                n_prompts: int = N_PROMPTS,
+                mean_tokens: float = MEASURED_MEAN_TOKENS,
+                cv: float = MEASURED_CV) -> dict:
     rng = random.Random(SEED_BASE + seed)
     # Across-prompt baseline lengths vary (different prompts, different
     # lengths): lognormal spread so the estimator must work on a realistic mix.
-    mu_b, sigma_b = _lognormal_params(MEASURED_MEAN_TOKENS, MEASURED_CV * 2.0)
-    base_means = [math.exp(rng.gauss(mu_b, sigma_b)) for _ in range(N_PROMPTS)]
-    baseline = _arm_totals(rng, base_means, 1.0, MEASURED_CV, k)
+    mu_b, sigma_b = _lognormal_params(mean_tokens, cv * 2.0)
+    base_means = [math.exp(rng.gauss(mu_b, sigma_b)) for _ in range(n_prompts)]
+    baseline = _arm_totals(rng, base_means, 1.0, cv, k)
     treatment = _arm_totals(rng, base_means,
                             multiplier if multiplier is not None else 1.0,
-                            MEASURED_CV, k)
+                            cv, k)
     e = estimate(list(zip(baseline, treatment)))
     # AC-P1b: consume the estimator's exact ci95_interval percentile bounds —
     # never rebuild a symmetric interval as est +/- ci95. An asymmetric
@@ -143,6 +158,25 @@ def main() -> int:
     ap.add_argument("--k", type=int, default=HARNESS_K,
                     help=f"samples/arm/prompt to simulate (default: harness "
                          f"HARNESS_K={HARNESS_K})")
+    # P4: the ratified carve headline is n=10 (non-code non-RAG), so the
+    # gate must run at --n-prompts 10 with the run instrument's measured
+    # CV (--cv 0.137 for the gemini instrument). Defaults preserve the
+    # n=15 / archived-CV shape this gate historically cleared.
+    ap.add_argument("--n-prompts", type=int, default=N_PROMPTS,
+                    help=f"prompts per replication (default: {N_PROMPTS}, "
+                         f"the PM subset-headline ruling; P4 uses 10)")
+    ap.add_argument("--cv", type=float, default=MEASURED_CV,
+                    help="measured output-length CV of the instrument "
+                         f"(default: {MEASURED_CV:.4f}; gemini run uses "
+                         "0.137)")
+    ap.add_argument("--mean-tokens", type=float, default=MEASURED_MEAN_TOKENS,
+                    help="measured mean completion tokens of the instrument")
+    ap.add_argument("--cv-source", default=None,
+                    help="label recorded in the artifact for where the CV "
+                         "came from (e.g. the SD-gate artifact name)")
+    ap.add_argument("--out", default=None,
+                    help="write a JSON calibration artifact to this path "
+                         "(P4: REQUIRED for the carve clearance evidence)")
     ap.add_argument("--show-seeds", action="store_true",
                     help="print per-seed estimates (debug)")
     args = ap.parse_args()
@@ -150,12 +184,23 @@ def main() -> int:
     if args.k < 1:
         print("--k must be >= 1", file=sys.stderr)
         return 2
+    if args.n_prompts < 2:
+        print("--n-prompts must be >= 2 (a single prompt carries no "
+              "resampling information)", file=sys.stderr)
+        return 2
+    if args.cv <= 0:
+        print("--cv must be > 0", file=sys.stderr)
+        return 2
 
     null_fp, ctrl_ok = 0, 0
     worst_null_est, worst_ctrl_est = 0.0, 0.0
     for seed in range(args.seeds):
-        nr = _experiment(seed, None, args.k)          # empty box
-        cr = _experiment(seed, EFFECT_15PCT, args.k)  # positive control
+        nr = _experiment(seed, None, args.k,
+                         n_prompts=args.n_prompts,
+                         mean_tokens=args.mean_tokens, cv=args.cv)
+        cr = _experiment(seed, EFFECT_15PCT, args.k,
+                         n_prompts=args.n_prompts,
+                         mean_tokens=args.mean_tokens, cv=args.cv)
         if _null_is_false_positive(nr):
             null_fp += 1
         if _control_is_success(cr):
@@ -175,13 +220,58 @@ def main() -> int:
 
     print(f"\nAC-P1a empty-box calibration | estimator: run_benchmark.estimate "
           f"(shared, imported) | HARNESS_K={HARNESS_K} | sim k={args.k} | "
-          f"seeds={args.seeds}")
+          f"n_prompts={args.n_prompts} | cv={args.cv:.4f} | "
+          f"mean_tokens={args.mean_tokens:.1f} | seeds={args.seeds}")
     print(f"  null false-positive rate:  {null_fp_rate:6.1%}  "
           f"(contract <= {NULL_FP_MAX:.0%})  [worst estimate {worst_null_est:+.2f}pp]  "
           f"{'PASS' if null_pass else 'FAIL'}")
     print(f"  positive-control success:  {ctrl_success_rate:6.1%}  "
           f"(contract >= {CONTROL_MIN_SUCCESS:.0%})  [worst estimate {worst_ctrl_est:+.2f}pp]  "
           f"{'PASS' if ctrl_pass else 'FAIL'}")
+
+    if args.out:
+        from datetime import datetime, timezone
+        artifact = {
+            "schema": "empty_box_calibration_v1",
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "estimator": "run_benchmark.estimate (shared, imported by "
+                         "reference — the gate calibrates the shipped math)",
+            "params": {
+                "n_prompts": args.n_prompts,
+                "cv": args.cv,
+                "mean_tokens": args.mean_tokens,
+                "k": args.k,
+                "seeds": args.seeds,
+                "null_tolerance_pp": NULL_TOL_PP,
+                "control_window_pp": list(CONTROL_WINDOW),
+                "null_fp_max": NULL_FP_MAX,
+                "control_min_success": CONTROL_MIN_SUCCESS,
+            },
+            "cv_source": (args.cv_source
+                          or "empty_box.py MEASURED_CV default (archived "
+                             "SD gate)"),
+            "results": {
+                "null_false_positive_rate": null_fp_rate,
+                "null_false_positives": null_fp,
+                "control_success_rate": ctrl_success_rate,
+                "control_successes": ctrl_ok,
+                "worst_null_estimate_pp": worst_null_est,
+                "worst_control_estimate_pp": worst_ctrl_est,
+            },
+            "verdicts": {
+                "null_pass": null_pass,
+                "control_pass": ctrl_pass,
+                "calibrated": green,
+            },
+            "clearance": (
+                f"{'CALIBRATED' if green else 'NOT CALIBRATED'} at "
+                f"n_prompts={args.n_prompts}, cv={args.cv:.4f}, "
+                f"k={args.k} over {args.seeds} seeds"),
+        }
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(artifact, indent=2))
+        print(f"  artifact written: {out_path}")
 
     if green:
         print("\nCALIBRATED — estimator reads ~0 on a null effect and resolves "
