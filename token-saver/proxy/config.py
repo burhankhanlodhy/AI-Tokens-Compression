@@ -120,6 +120,31 @@ class Settings(BaseSettings):
     # last user message is at least this many characters.
     conciseness_min_user_chars: int = 400
 
+    # --- P6-2 grounded-answer dose tiers (config-declared, ordered) ---
+    # "bounded" tier: gentler instruction with an explicit fidelity guard —
+    # the grounded-traffic-safe alternative to the full P1-1 instruction.
+    # "full" IS conciseness_instruction above (unchanged); "none" injects
+    # nothing. Selection lives in proxy.grounded.select_dose_tier.
+    dose_tier_bounded_instruction: str = (
+        "Answer concisely BUT keep every source-attributed fact, number, "
+        "deadline, and condition. Shorten the delivery, never the content: "
+        "do not drop, round away, summarize away, or paraphrase any fact "
+        "taken from the provided sources."
+    )
+    # AC-P6c gate (P6-3): grounded traffic stays capped at tier "none" until
+    # the calibration artifact is committed and green. Flip only on the
+    # PM's sign-off — this is the pre-calibration OFF switch for grounded
+    # fidelity-critical traffic, never a per-request toggle.
+    grounded_calibration_green: bool = False
+
+    def dose_tier_instructions(self) -> dict[str, str | None]:
+        """Config-declared tier -> instruction text ("none" -> nothing)."""
+        return {
+            "none": None,
+            "bounded": self.dose_tier_bounded_instruction,
+            "full": self.conciseness_instruction,
+        }
+
     # --- Classifier thresholds ---
     code_symbol_density_threshold: float = 0.05  # ratio of code-ish chars to trigger passthrough
     min_chars_to_classify: int = 120             # tiny prompts: just compress

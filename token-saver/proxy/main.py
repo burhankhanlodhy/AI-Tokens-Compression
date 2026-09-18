@@ -30,6 +30,7 @@ from .counting import (
     inject_conciseness,
     should_inject_conciseness,
 )
+from .grounded import select_dose_tier
 from .dashboard import _render_stats_html
 from .dashboard_v2 import render_shell
 from .kpis import kpis_endpoint
@@ -430,18 +431,25 @@ async def chat_completions(request: Request):
     if route == "compress":
         # --- Phase 3: input compression ---
         new_messages = compress_messages(messages)
-        # --- Phase 5: output-side conciseness ---
-        # Category/length-aware gate (P1-1 evidence): inject only when the
-        # user's actual request is long enough for the instruction to pay
-        # for itself; short prompts are net-negative.
+        # --- Phase 5: output-side conciseness (P6-2 dose tiers) ---
+        # The P6-1 discriminator (shared module proxy.grounded) selects the
+        # MAX tier per request; the request path NEVER injects above that
+        # selection (AC-P6b). Pre-calibration (grounded_calibration_green
+        # False) grounded fidelity-critical traffic caps at tier "none".
+        # The P1-1 length/overhead gate still applies UNDER the tier — it
+        # may only reduce injection further, never raise it.
         # Gate on the ORIGINAL messages, not the compressed ones (issue #1):
         # the short-question heuristic was calibrated on real user prompts,
         # and compression can shrink a long prompt below the 400-char cap
         # while keeping its trailing '?' — flipping the gate and silently
         # voiding the benchmark A/B arms. Gating pre-compression also keeps
         # the toggle deterministic regardless of compression outcome.
-        if conciseness_on and should_inject_conciseness(messages):
-            new_messages = inject_conciseness(new_messages)
+        if conciseness_on:
+            tier = select_dose_tier(messages, s)
+            if tier != "none" and should_inject_conciseness(messages):
+                new_messages = inject_conciseness(
+                    new_messages, instruction=s.dose_tier_instructions()[tier]
+                )
         if new_messages != messages:
             compressed = any(
                 a.get("content") != b.get("content")

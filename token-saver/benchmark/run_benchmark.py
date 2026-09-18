@@ -113,6 +113,20 @@ def is_eligible(prompt: dict) -> bool:
     return should_inject_conciseness(prompt["messages"])
 
 
+def grounded_risk_of(prompt: dict) -> str:
+    """P6-1 production grounded-answer risk on the prompt's LAST user message.
+
+    C-4a rule (P6-1): the harness imports the production symbol — never
+    re-implements it — so a patched detector flips the recorded verdicts
+    on the next run. Recorded per entry as ``grounded_risk`` metadata;
+    pre-AC-P6c this does NOT touch any published figure.
+    """
+    sys.path.insert(0, str(ROOT.parent))
+    from proxy.grounded import grounded_answer_risk
+
+    return grounded_answer_risk(prompt["messages"])["risk"]
+
+
 def _reasoning_control(model: str) -> dict:
     """The reasoning control sent EXPLICITLY on both benchmark arms (PM v4
     ruling, consequence 2): the run must pin the same control the proxy
@@ -348,6 +362,7 @@ def entry_from_arms(p: dict, eligible: bool, base: dict, treat: dict) -> dict:
     treat_calls = treat.get("n_ok") or 0
     entry = {
         "id": p["id"], "category": p["category"], "eligible": eligible,
+        "grounded_risk": grounded_risk_of(p),
         "baseline_tokens": (base.get("tokens_total", 0) / base_calls
                             if base_calls else 0.0),
         "treatment_tokens": (treat.get("tokens_total", 0) / treat_calls

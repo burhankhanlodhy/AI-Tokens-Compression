@@ -93,14 +93,20 @@ def should_inject_conciseness(messages: list[dict]) -> bool:
     return not is_short_question
 
 
-def inject_conciseness(messages: list[dict]) -> list[dict]:
+def inject_conciseness(
+    messages: list[dict], instruction: str | None = None
+) -> list[dict]:
     """Prepend (or merge into) a system message discouraging padding.
 
     This is NOT second-pass output compression — it makes the model generate
     fewer tokens up front, at no extra cost or risk (plan §8 Phase 5).
+    ``instruction`` is the P6-2 dose-tier text selected by the caller
+    (proxy.grounded.select_dose_tier); defaults to the full P1-1
+    instruction, which keeps the pre-P6 behavior byte-identical.
     """
     s = get_settings()
-    instruction = s.conciseness_instruction
+    if instruction is None:
+        instruction = s.conciseness_instruction
     if messages and messages[0].get("role") == "system":
         first = messages[0]
         content = first.get("content")
