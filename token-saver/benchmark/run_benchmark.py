@@ -459,8 +459,20 @@ def _published_figure(e: dict) -> str:
             f"({e['publication_status']}: {e['publication_note']})")
 
 
-def summarize(valid_entries: list[dict]) -> dict:
-    """Headline (eligible subset) + labelled blended (corpus-wide) stats."""
+def summarize(valid_entries: list[dict],
+              n_eligible_planned: int | None = None,
+              planned_judge_ids: list[str] | None = None) -> dict:
+    """Headline (eligible subset) + labelled blended (corpus-wide) stats.
+
+    AC-P1b population anchor (PM ratification, option (a)): the parity
+    denominator is the PLANNED judged population from sampling_plan()
+    (n=15 in the ruled eligible-only shape; n=55 under the --full-corpus
+    owner override), NOT the survivors. main() passes it as
+    n_eligible_planned (with planned_judge_ids for the audit trail); a
+    call without the denominator keeps the older attempted-only anchor so
+    the stats helpers stay callable, but the paid run path always anchors
+    on the planned population.
+    """
     eligible = [r for r in valid_entries if r.get("eligible")]
     blended_pairs = [(r["baseline_tokens"],
                       r["treatment_tokens"] if r.get("treatment_sampled", True)
@@ -482,6 +494,23 @@ def summarize(valid_entries: list[dict]) -> dict:
     judged = [r for r in attempted if r.get("mode") == "model_judge"]
     excluded_judge_ids = [r.get("id") for r in attempted
                           if r.get("mode") != "model_judge"]
+    # AC-P1b planned-eligible anchor: items whose ARMS failed never reach
+    # judging, so they carry no "mode", are filtered out of `valid` before
+    # this function sees them, and are invisible to the attempted-only
+    # anchor — a run losing 12 of 15 to upstream 429s could publish a
+    # green gate and a headline off the 3 survivors. When main() supplies
+    # the planned population, the gate requires EVERY planned judged item
+    # to have completed both orders, and upstream-lost IDs are recorded
+    # beside (not inside) excluded_judge_ids: judge flakiness and
+    # upstream flakiness are distinct failure classes.
+    judged_ids = {r.get("id") for r in judged}
+    excluded_set = set(excluded_judge_ids)
+    if planned_judge_ids is not None and n_eligible_planned is None:
+        n_eligible_planned = len(planned_judge_ids)
+    upstream_lost_ids = ([pid for pid in planned_judge_ids
+                          if pid not in judged_ids
+                          and pid not in excluded_set]
+                         if planned_judge_ids is not None else [])
     # AC-P1b parity gate is the spec's "≤1pt mean regression", NOT "zero
     # items >1pt": the zero-item reading is stricter than the spec and
     # won't survive judge noise (PM recompute 2026-09-18: the shipped
@@ -496,7 +525,17 @@ def summarize(valid_entries: list[dict]) -> dict:
     mean_regression_pt = (round(sum(r.get("score_a", 10) - r.get("score_b", 10)
                                     for r in judged) / len(judged), 2)
                           if judged else None)
-    population_complete = bool(attempted) and len(judged) == len(attempted)
+    if n_eligible_planned is not None:
+        # Planned-population gate: every planned judged item must complete
+        # both orders AND nothing unplanned may sneak into the judged set
+        # (n_judged == planned with a swapped-in item would still be a
+        # population hole).
+        population_complete = (len(judged) == n_eligible_planned
+                               and not excluded_judge_ids
+                               and not upstream_lost_ids
+                               and len(judged_ids) == n_eligible_planned)
+    else:
+        population_complete = bool(attempted) and len(judged) == len(attempted)
     # AC-P1a "valid pair" = baseline > 0 (the estimator's own filter): the
     # n >= 2 arm of the publication guard counts the SAME rows the estimate
     # was computed from, not raw entries.
@@ -531,14 +570,23 @@ def summarize(valid_entries: list[dict]) -> dict:
         "quality_parity": {
             "n_judged": len(judged),
             "n_attempted": len(attempted),
+            # AC-P1b planned-eligible anchor (PM option (a) ratification):
+            # the denominator is the population the run PLANNED to judge
+            # via sampling_plan() — n=15 in the ruled eligible-only shape,
+            # n=55 under the --full-corpus owner override — never the
+            # survivor count. None only when the caller omits it (stats
+            # helpers); main() always supplies it.
+            "n_eligible_planned": n_eligible_planned,
+            "upstream_lost_ids": upstream_lost_ids,
             "population_complete": population_complete,
             "excluded_judge_ids": excluded_judge_ids,
             "n_regressions_over_1pt": len(regressions),
             "mean_regression_pt": mean_regression_pt,
             # AC-P1b ratified rule: mean regression <= 1pt across the judged
             # population (both-orders averaged judge evidence), not zero
-            # individual items over 1pt. Fails closed unless EVERY attempted
-            # item completed both orders — no partial-population greens.
+            # individual items over 1pt. Fails closed unless EVERY item in
+            # the PLANNED judged population completed both orders — no
+            # partial-population greens, and no anchoring on survivors.
             "parity_rule": "mean_regression_le_1pt_full_population",
             "parity_holds": (population_complete
                              and mean_regression_pt is not None
@@ -574,6 +622,19 @@ def build_parser() -> argparse.ArgumentParser:
                       help="OWNER OVERRIDE: sample every prompt at full k "
                            "both arms (~3,300 completions + judges)")
     return ap
+
+
+def planned_judged_ids(plans: list[tuple[dict, bool]],
+                       eligible_only: bool) -> list[str]:
+    """AC-P1b planned judged population (PM derivation, option (a)): the
+    IDs sampling_plan() PLANS to judge — n=15 in the ruled eligible-only
+    shape, n=55 under the --full-corpus owner override. Derived from the
+    plan, never hardcoded, so the parity gate holds verbatim at n=15 in
+    the ruled shape without breaking the owner-override path (a literal
+    `n_judged == 15` would fail a fully-clean 55-item override run, and a
+    `>= 15` reading would green a full-corpus run that lost 40 items)."""
+    return [p["id"] for p, e in plans
+            if sampling_plan(e, eligible_only)["judge"]]
 
 
 def main() -> int:
@@ -613,6 +674,15 @@ def main() -> int:
     results = []
     plans = [(p, is_eligible(p)) for p in prompts]
     n_eligible = sum(1 for _, e in plans if e)
+    # AC-P1b planned judged population (PM derivation, option (a)): the
+    # parity denominator is what sampling_plan() PLANNED to judge — n=15
+    # in the ruled eligible-only shape, n=55 under the --full-corpus
+    # owner override — derived, never hardcoded, so the gate holds
+    # verbatim in the ruled shape without breaking the owner-override
+    # path. planned_judge_ids goes into summarize() so upstream-lost IDs
+    # (arms failed before judging) are recorded beside excluded_judge_ids.
+    planned_judge_ids = planned_judged_ids(plans, eligible_only)
+    n_judge_planned = len(planned_judge_ids)
     # spend estimate BEFORE the first provider call — never a silent budget
     est_calls = sum(
         sampling_plan(e, eligible_only)["baseline_k"]
@@ -668,7 +738,8 @@ def main() -> int:
     # Production estimator — SHARED with the calibration gate (estimator.py).
     # The gate and the re-run must measure the same math; a divergence here is
     # the defect class the AC-P1a-gate exists to catch.
-    stats = summarize(valid)
+    stats = summarize(valid, n_eligible_planned=n_judge_planned,
+                      planned_judge_ids=planned_judge_ids)
 
     summary = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -703,7 +774,8 @@ def main() -> int:
           f"{_published_figure(bl)}")
     qp = stats["quality_parity"]
     print(f"Quality parity: {qp['n_judged']}/{qp['n_attempted']} judged "
-          f"(both orders averaged), "
+          f"of {qp['n_eligible_planned']} planned (both orders averaged), "
+          f"{len(qp['upstream_lost_ids'])} upstream-lost, "
           f"{qp['n_regressions_over_1pt']} >1pt regressions (diagnostic), "
           f"mean regression {qp['mean_regression_pt']}pt "
           f"-> {'PASS' if qp['parity_holds'] else 'FAIL'} "

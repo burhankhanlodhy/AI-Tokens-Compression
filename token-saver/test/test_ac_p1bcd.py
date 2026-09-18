@@ -227,6 +227,78 @@ def test_ac_p1b_parity_population_floor_fails_closed_on_excluded_judges():
     assert qp["parity_holds"] is False
 
 
+def test_ac_p1b_parity_population_anchors_on_planned_eligible_not_survivors():
+    """Upstream arm failures are invisible to the attempted-only anchor.
+
+    PM reproduction at 683554d: 12 of 15 eligible items lost their ARMS to
+    upstream 429s before judging, so they carry no "mode" and are filtered
+    out of `valid` before summarize() sees them; the gate saw
+    n_judged == n_attempted == 3 and published 18.67% off a fifth of the
+    population. The ratified anchor is the PLANNED judged population:
+    3 survivors out of 15 planned -> parity_holds is False, and the 12
+    upstream-lost IDs are recorded beside (not inside)
+    excluded_judge_ids — judge flakiness and upstream flakiness are
+    distinct failure classes.
+    """
+    planned_ids = [f"p{i}" for i in range(15)]
+    survivors = [{"id": pid, "eligible": True,
+                  "baseline_tokens": 100.0, "treatment_tokens": 50.0,
+                  "mode": "model_judge", "score_a": 9, "score_b": 9,
+                  "winner": "tie"} for pid in planned_ids[:3]]
+    stats = run_benchmark.summarize(
+        survivors, n_eligible_planned=15, planned_judge_ids=planned_ids)
+    qp = stats["quality_parity"]
+    assert qp["n_eligible_planned"] == 15
+    assert qp["n_judged"] == 3
+    assert qp["n_attempted"] == 3
+    assert qp["population_complete"] is False
+    assert qp["excluded_judge_ids"] == []          # judges were clean
+    assert sorted(qp["upstream_lost_ids"]) == sorted(planned_ids[3:])
+    assert len(qp["upstream_lost_ids"]) == 12
+    assert qp["parity_holds"] is False
+
+
+def test_ac_p1b_parity_denominator_is_derived_from_sampling_plan():
+    """The planned denominator is derived, never the literal 15.
+
+    A hardcoded `n_judged == 15` would fail the --full-corpus owner
+    override even when all 55 items judge cleanly, and a `>= 15` reading
+    would green a full-corpus run that lost 40 items — the same
+    false-green, one mode over. The denominator must resolve to 15 in the
+    ruled eligible-only shape and 55 under the override, off the pinned
+    corpus, and a fully-clean full-corpus run must pass the gate at 55.
+    """
+    fixtures = json.loads((BENCHMARK / "prompts.json").read_text())
+    plans = [(p, run_benchmark.is_eligible(p)) for p in fixtures["prompts"]]
+
+    eligible_only_ids = run_benchmark.planned_judged_ids(plans, True)
+    full_corpus_ids = run_benchmark.planned_judged_ids(plans, False)
+    assert len(eligible_only_ids) == 15   # the ratified ruled shape
+    assert len(full_corpus_ids) == 55     # owner override judges everything
+
+    # full-corpus, all 55 judged cleanly -> the gate holds at n=55, so the
+    # ratified n=15 clause holds verbatim for the ruled shape without
+    # hardcoding it.
+    entries = [{"id": pid, "eligible": True,
+                "baseline_tokens": 100.0, "treatment_tokens": 50.0,
+                "mode": "model_judge", "score_a": 9, "score_b": 9,
+                "winner": "tie"} for pid in full_corpus_ids]
+    stats = run_benchmark.summarize(entries, n_eligible_planned=55,
+                                    planned_judge_ids=full_corpus_ids)
+    qp = stats["quality_parity"]
+    assert qp["n_eligible_planned"] == 55
+    assert qp["n_judged"] == 55
+    assert qp["population_complete"] is True
+    assert qp["parity_holds"] is True
+
+    # and a full-corpus run that lost 40 upstream fails closed under the
+    # same derived denominator (the `>= 15` false green).
+    lost = run_benchmark.summarize(entries[:15], n_eligible_planned=55,
+                                   planned_judge_ids=full_corpus_ids)
+    assert lost["quality_parity"]["parity_holds"] is False
+    assert len(lost["quality_parity"]["upstream_lost_ids"]) == 40
+
+
 def test_ac_p1b_parity_gate_reads_the_published_rounded_mean():
     """The gate and the artifact must not contradict each other.
 
