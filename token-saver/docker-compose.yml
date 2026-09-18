@@ -47,6 +47,14 @@ services:
     volumes:
       - stats-data:/app/data          # SQLite stats survive restarts
       - hf-cache:/root/.cache/huggingface  # LLMLingua-2 model weights cache
+      # AC-P6f tripwire arming: load_calibration_band() reads
+      # PROXY_ROOT/benchmark/results (=/app/benchmark/results in the
+      # container), which the image does NOT contain — without this mount
+      # /api/tripwire reports pending_calibration forever. Read-only: the
+      # harness (host side) is the ONLY writer of calibration artifacts.
+      # The mount is live host disk, so a freshly committed artifact is
+      # visible to the tripwire WITHOUT a container restart.
+      - ./benchmark/results:/app/benchmark/results:ro
     restart: unless-stopped
 
 volumes:
