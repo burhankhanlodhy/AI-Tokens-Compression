@@ -22,7 +22,11 @@ i.e. maximum dose with no guard):
   1. explicit source-context blocks ("Retrieved knowledge:", "Excerpt",
      "Source A/B", "Runbook excerpt:", "Log excerpt:", "Code context:",
      "Playbook:", quoted policy fragments, uppercase labeled data blocks
-     like "POLICY:", "LEDGER DATA:", "REGULATION 4.2:", "RUNBOOK:")
+     like "POLICY:", "LEDGER DATA:", "REGULATION 4.2:", "RUNBOOK:",
+     structured retrieval envelopes — a JSON object payload carrying a
+     ``retrieved_documents`` block whose ``hits`` are ``chunk_id`` +
+     ``source``-shaped retrieval results, bare or in a ```json fence —
+     the canonical RAG-wrapper shape, AC-P6i)
      → ``fidelity_critical`` — the model is being asked to answer FROM
      quoted material, so the full "cut the padding" instruction can drop
      load-bearing facts;
@@ -55,6 +59,7 @@ i.e. maximum dose with no guard):
 """
 from __future__ import annotations
 
+import json
 import re
 
 from .config import Settings, get_settings
@@ -136,6 +141,49 @@ _LABELED_BLOCK = re.compile(
     r"\s*(?:\([^)]{0,40}\))?:\s"
 )
 
+# --- Signal 1d: structured retrieval envelopes (AC-P6i) ------------------
+# The canonical RAG-wrapper shape: a JSON object payload carrying a
+# ``retrieved_documents`` block whose ``hits`` are retrieval results keyed
+# by ``chunk_id`` + ``source``. Bare JSON (the common wrapper shape) or a
+# ```json-fenced block anywhere in the message text. Detection is
+# STRUCTURAL (a parsed shape check, not a regex over raw bytes), so it
+# cannot fire on ordinary prose or on JSON documents that merely mention
+# these keys as values.
+_FENCED_JSON_BLOCK = re.compile(r"```(?:json)?\s*([\s\S]*?)```")
+
+
+def _is_retrieval_envelope(text: str) -> bool:
+    """True when ``text`` carries a structured retrieval envelope.
+
+    Pure, deterministic, no I/O. Accepts a bare JSON object payload or
+    any ```json-fenced block within the text; requires the
+    ``retrieved_documents``/``hits``/``chunk_id``+``source`` shape.
+    """
+    stripped = text.strip()
+    candidates = [stripped] if stripped else []
+    candidates.extend(block.strip() for block in _FENCED_JSON_BLOCK.findall(text))
+    for cand in candidates:
+        if not cand.startswith("{"):
+            continue
+        try:
+            obj = json.loads(cand)
+        except (ValueError, RecursionError):
+            continue
+        if not isinstance(obj, dict):
+            continue
+        retrieved = obj.get("retrieved_documents")
+        if not isinstance(retrieved, dict):
+            continue
+        hits = retrieved.get("hits")
+        if not isinstance(hits, list):
+            continue
+        if any(
+            isinstance(hit, dict) and "chunk_id" in hit and "source" in hit
+            for hit in hits
+        ):
+            return True
+    return False
+
 
 def _last_user_text(messages: list[dict]) -> str | None:
     """Text of the LAST user message (str content or joined text parts)."""
@@ -199,7 +247,7 @@ def grounded_answer_risk(
         p.search(t) for t in texts for p in _SOURCE_BLOCK_PATTERNS
     ) or any(_has_quoted_policy_fragment(t) for t in texts) or any(
         _LABELED_BLOCK.search(t) for t in texts
-    )
+    ) or any(_is_retrieval_envelope(t) for t in texts)
     if has_source_block:
         return {"grounded": True, "risk": RISK_FIDELITY_CRITICAL}
 

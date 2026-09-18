@@ -8,6 +8,7 @@ prompt). Spec: product-spec-v2.md §P6, ratified 2026-09-18.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -398,3 +399,142 @@ def test_ungrounded_long_prompt_header_on_still_gets_full_tier(routed):
     assert "concisely" in json.dumps(upstream).lower()
     # full tier, not the bounded fidelity guard
     assert "source-attributed" not in json.dumps(upstream).lower()
+
+
+# --- AC-P6i: structured retrieval envelopes (P6-5 signal-set fix) -------
+
+L1_FIXTURES = ROOT / "benchmark" / "fixtures" / "l1_prompts.json"
+L1_CHECKSUM = ROOT / "benchmark" / "fixtures" / "l1_prompts.json.sha256"
+
+
+def _l1_fixture_prompts() -> dict:
+    """Load the L1 fixture set, failing on checksum mismatch (same
+    fail-on-mismatch contract as the measurement runners)."""
+    expected = L1_CHECKSUM.read_text().split()[0].strip()
+    actual = hashlib.sha256(L1_FIXTURES.read_bytes()).hexdigest()
+    assert actual == expected, "l1 fixture checksum mismatch — contract break"
+    return {p["id"]: p for p in json.loads(L1_FIXTURES.read_text())["prompts"]}
+
+
+# PM's named regression set: the pure-JSON retrieval-envelope shape that
+# no prose signal could see (no 'Retrieved knowledge:', no POLICY: block).
+AC_P6I_REGRESSION_IDS = (
+    "rag-001", "rag-006", "rag-007", "rag-008", "rag-012",
+)
+
+
+@pytest.mark.parametrize("pid", AC_P6I_REGRESSION_IDS)
+def test_ac_p6i_retrieval_envelope_fixtures_ground_fidelity_critical(pid):
+    """The 5 named L1 RAG fixtures carry a bare JSON retrieval envelope
+    with NO prose system message — the structural envelope signal must
+    classify them fidelity_critical, never {grounded: False, risk: none}."""
+    fixture = _l1_fixture_prompts()[pid]
+    r = grounded_answer_risk(fixture["messages"], cfg())
+    assert r == {"grounded": True, "risk": RISK_FIDELITY_CRITICAL}
+    # pre-calibration cap: the tier must NOT be full
+    assert select_dose_tier(fixture["messages"], cfg()) == "none"
+
+
+def test_ac_p6i_envelope_is_detected_in_system_message():
+    """The envelope signal scans system messages like every other
+    source-block signal (P6-4 scope applies to the new signal too)."""
+    envelope = json.dumps({
+        "retrieved_documents": {
+            "query": "what is the quota",
+            "hits": [{"chunk_id": "chunk-1", "source": "corpus/q.md",
+                      "content": "Quota is 500/day."}],
+        }
+    })
+    messages = [
+        {"role": "system", "content": envelope},
+        {"role": "user", "content": "What is the quota?"},
+    ]
+    assert grounded_answer_risk(messages, cfg()) == {
+        "grounded": True, "risk": RISK_FIDELITY_CRITICAL}
+
+
+def test_ac_p6i_fenced_envelope_is_detected():
+    """An envelope wrapped in a ```json fence inside a longer prose
+    message still fires (the wrapper shape is not always bare)."""
+    envelope = ('Context follows.\n```json\n' + json.dumps({
+        "retrieved_documents": {
+            "query": "refund window",
+            "hits": [{"chunk_id": "c-9", "source": "corpus/refund.md",
+                      "content": "Refunds require a receipt."}],
+        }}) + '\n```\nAnswer the question.')
+    messages = [{"role": "user", "content": envelope}]
+    assert grounded_answer_risk(messages, cfg()) == {
+        "grounded": True, "risk": RISK_FIDELITY_CRITICAL}
+
+
+def test_ac_p6i_anthropic_text_part_envelope_is_detected():
+    """An envelope inside an Anthropic-style typed text content part is
+    still seen (the same shape handling every other signal uses)."""
+    envelope = json.dumps({
+        "retrieved_documents": {
+            "query": "q",
+            "hits": [{"chunk_id": "c", "source": "s", "content": "x"}],
+        }})
+    messages = [{"role": "user", "content": [
+        {"type": "text", "text": envelope}]}]
+    assert grounded_answer_risk(messages, cfg()) == {
+        "grounded": True, "risk": RISK_FIDELITY_CRITICAL}
+
+
+@pytest.mark.parametrize("label,messages", [
+    ("json_doc_without_envelope", [
+        {"role": "user", "content": json.dumps(
+            {"service": "reranker", "version": "3.4.1",
+             "settings": {"batch": 32}})}]),
+    ("keys_mentioned_as_values", [
+        {"role": "user", "content": json.dumps(
+            {"notes": "the field retrieved_documents stays reserved here",
+             "docs": [{"chunk_id": "c", "source": "s"}]})}]),
+    ("envelope_without_hits", [
+        {"role": "user", "content": json.dumps(
+            {"retrieved_documents": {"query": "q"}})}]),
+    ("hits_without_chunk_id_and_source", [
+        {"role": "user", "content": json.dumps(
+            {"retrieved_documents": {"hits": [{"index": 0}]}})}]),
+    ("malformed_json_payload", [
+        {"role": "user", "content": '{"retrieved_documents": {"hits": ['}]),
+    ("json_array_payload", [
+        {"role": "user", "content": json.dumps(
+            [{"chunk_id": "c", "source": "s"}])}]),
+])
+def test_ac_p6i_non_envelope_json_stays_ungrounded(label, messages):
+    """Negatives: JSON that does not carry the retrieval-envelope shape
+    must NOT ground — the structural check cannot be widened by prose or
+    by keys appearing anywhere other than the envelope position."""
+    assert grounded_answer_risk(messages, cfg()) == {
+        "grounded": False, "risk": RISK_NONE}
+
+
+def test_ac_p6i_l1_fixtures_rag_all_ground_and_controls_stay_none():
+    """Corpus-level pin: after the envelope signal, EVERY rag fixture in
+    the L1 fixture set classifies grounded (bounded or better) and the
+    system_dup wrappers ground too (envelope + prose, severity-max);
+    json_doc / log_trace / control categories stay ungrounded."""
+    prompts = _l1_fixture_prompts()
+    for pid, fixture in prompts.items():
+        r = grounded_answer_risk(fixture["messages"], cfg())
+        if pid.startswith("rag-") or pid.startswith("system_dup-"):
+            assert r["grounded"], f"{pid} must ground post-envelope-signal"
+        else:
+            assert r == {"grounded": False, "risk": RISK_NONE}, \
+                f"{pid} must stay ungrounded (got {r})"
+
+
+def test_ac_p6i_envelope_detection_is_pure_and_deterministic():
+    """Purity contract holds for the new signal: same input -> same
+    decision, input never mutated, decision independent of config."""
+    envelope = json.dumps({
+        "retrieved_documents": {"hits": [
+            {"chunk_id": "c", "source": "s"}]}})
+    messages = [{"role": "user", "content": envelope}]
+    before = copy.deepcopy(messages)
+    first = grounded_answer_risk(messages, cfg())
+    second = grounded_answer_risk(messages, cfg(grounded_calibration_green=True))
+    assert first == second
+    assert messages == before
+    assert first == {"grounded": True, "risk": RISK_FIDELITY_CRITICAL}
