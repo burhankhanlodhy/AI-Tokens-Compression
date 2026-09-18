@@ -31,6 +31,7 @@ NO_LOG_ROUTES = {
     ("GET", "/dashboard"),
     ("GET", "/static/dashboard.js"),
     ("GET", "/api/kpis"),
+    ("GET", "/api/tripwire"),  # AC-P6f: read-only monitoring over the ledger
     ("GET", "/stats"),
     ("GET", "/metrics"),
     ("GET", "/openapi.json"),

@@ -92,6 +92,12 @@ CREATE TABLE requests (
     compressed              BOOLEAN NOT NULL DEFAULT false,
     status                  INTEGER NOT NULL DEFAULT 0,          -- HTTP status returned to caller
     error_kind              TEXT,                                -- ProviderError.kind, NULL if none (C8)
+    -- AC-P6f live tripwire loop: NULL dose_tier/grounded_risk means the
+    -- discriminator never ran on the request (conciseness off / passthrough
+    -- route) — itself a signal the missed-grounding rule consumes.
+    dose_tier               TEXT,                                -- resolved tier at request time: 'none' | 'bounded' | 'full'
+    grounded_risk           TEXT,                                -- discriminator risk: 'none' | 'bounded' | 'fidelity_critical'
+    envelope_shape          INTEGER,                             -- AC-P6j scanner hit on the raw request content (1/0); NULL = no content logged
     -- generated column: pre-computed day bucket, indexable without a
     -- function wrapper (fixes the SQLite idx_requests_ts non-indexable
     -- date() expression issue flagged in the v1 schema review)

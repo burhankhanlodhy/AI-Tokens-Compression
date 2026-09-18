@@ -141,6 +141,13 @@ class Settings(BaseSettings):
     # is true. OFF in the production config — the pre-calibration cap stays
     # absolute for real traffic and no external client can self-raise a tier.
     allow_dose_pin: bool = False
+    # AC-P6f missed-grounding tripwire: an envelope-shaped request that was
+    # classified tier "full" (or never classified) and still realizes an
+    # input cut at or above this percentage flags. Config-declared so the
+    # threshold can be tuned against the calibration artifact without a
+    # code change; 25% is far above L1's structural-clean delta and marks
+    # content the pipeline actually cut deeply.
+    tripwire_deep_cut_pct: float = 25.0
 
     def dose_tier_instructions(self) -> dict[str, str | None]:
         """Config-declared tier -> instruction text ("none" -> nothing)."""

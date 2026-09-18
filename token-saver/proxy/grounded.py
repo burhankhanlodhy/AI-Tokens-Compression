@@ -388,6 +388,22 @@ def grounded_answer_risk(
     return {"grounded": False, "risk": RISK_NONE}
 
 
+def envelope_shape_present(messages: list[dict]) -> bool:
+    """AC-P6f live observation channel: does ANY system/user text carry
+    retrieval-envelope structure per the AC-P6j shape scanner?
+
+    PURE function of ``messages``. Production records this flag on every
+    ledger row INDEPENDENTLY of the tier decision — the tripwire then
+    catches requests classified tier ``full`` (or never classified at all:
+    conciseness off, passthrough route) whose content nevertheless carries
+    envelope structure, from the moment P6 monitoring exists, without
+    re-running or weakening the discriminator (C-4a: this imports the
+    production scanner symbol; no duplicate detection logic).
+    """
+    texts = _user_and_system_texts(messages)
+    return any(_is_retrieval_envelope(t) for t in texts)
+
+
 def select_dose_tier(
     messages: list[dict], config: Settings | None = None
 ) -> str:

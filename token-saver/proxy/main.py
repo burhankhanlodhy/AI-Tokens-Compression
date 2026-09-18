@@ -30,10 +30,12 @@ from .counting import (
     inject_conciseness,
     should_inject_conciseness,
 )
-from .grounded import DOSE_TIERS, select_dose_tier
+from .grounded import DOSE_TIERS, envelope_shape_present, select_dose_tier
+from .grounded import grounded_answer_risk
 from .dashboard import _render_stats_html
 from .dashboard_v2 import render_shell
 from .kpis import kpis_endpoint
+from .tripwire import tripwire_endpoint
 from . import caching
 from .providers.model import ProviderError
 from .providers.anthropic import AnthropicAdapter
@@ -365,6 +367,15 @@ async def chat_completions(request: Request):
     # in_before -> in_after accounting (B2/B3).
     in_before = count_messages(messages, model)
 
+    # --- AC-P6f live observation channel: envelope-shape flag on the RAW
+    # request content (pre-L1, pre-compression — the content as received).
+    # Recorded on every ledger row independently of the tier decision so the
+    # missed-grounding tripwire covers requests the discriminator never ran
+    # on (conciseness off / passthrough route), not only classified ones.
+    envelope_shape = 1 if envelope_shape_present(messages) else 0
+    dose_tier_ctx: str | None = None
+    grounded_risk_ctx: str | None = None
+
     # --- Phase 4: task-aware routing (computed on RAW bytes, pre-L1) ---
     # B2 P0: classification MUST see the original messages. L1's C1
     # whitespace compaction strips newlines, which destroys the
@@ -462,6 +473,11 @@ async def chat_completions(request: Request):
                 new_messages = inject_conciseness(
                     new_messages, instruction=s.dose_tier_instructions()[tier]
                 )
+            # AC-P6f: record the RESOLVED tier (after pin) and the
+            # discriminator's risk so the tripwire can scope drift to
+            # grounded bounded traffic and catch unprotected envelope rows.
+            dose_tier_ctx = tier
+            grounded_risk_ctx = grounded_answer_risk(messages, s)["risk"]
         if new_messages != messages:
             compressed = any(
                 a.get("content") != b.get("content")
@@ -515,7 +531,9 @@ async def chat_completions(request: Request):
         _log(model, route or "passthrough", in_before, in_after, 0,
              (time.perf_counter() - started) * 1000, compressed, 400,
              cache_status=cache_status,
-             provider=provider if s.provider_routing else "legacy")
+             provider=provider if s.provider_routing else "legacy",
+             dose_tier=dose_tier_ctx, grounded_risk=grounded_risk_ctx,
+             envelope_shape=envelope_shape)
         return JSONResponse(
             status_code=400,
             content={"error": {"message": str(exc),
@@ -525,7 +543,9 @@ async def chat_completions(request: Request):
         _log(model, route or "passthrough", in_before, in_after, 0,
              (time.perf_counter() - started) * 1000, compressed, 504,
              cache_status=cache_status,
-             provider=provider if s.provider_routing else "legacy")
+             provider=provider if s.provider_routing else "legacy",
+             dose_tier=dose_tier_ctx, grounded_risk=grounded_risk_ctx,
+             envelope_shape=envelope_shape)
         return JSONResponse(
             status_code=504,
             content=_normalized_error(504, f"upstream timeout: {exc}",
@@ -535,7 +555,9 @@ async def chat_completions(request: Request):
         _log(model, route or "passthrough", in_before, in_after, 0,
              (time.perf_counter() - started) * 1000, compressed, 502,
              cache_status=cache_status,
-             provider=provider if s.provider_routing else "legacy")
+             provider=provider if s.provider_routing else "legacy",
+             dose_tier=dose_tier_ctx, grounded_risk=grounded_risk_ctx,
+             envelope_shape=envelope_shape)
         return JSONResponse(
             status_code=502,
             content=_normalized_error(502, f"upstream unreachable: {exc}",
@@ -586,6 +608,9 @@ async def chat_completions(request: Request):
         # OpenRouter upstream would otherwise be ledgered as provider=anthropic).
         provider=provider if s.provider_routing else "legacy",
         extra_headers=reasoning_headers,
+        # AC-P6f: tripwire context rides every ledger row the request writes.
+        dose_tier=dose_tier_ctx, grounded_risk=grounded_risk_ctx,
+        envelope_shape=envelope_shape,
     )
 
 
@@ -634,6 +659,9 @@ async def _relay(
     l1_tokens_stripped: int = 0,
     provider: str | None = None,
     extra_headers: dict[str, str] | None = None,
+    dose_tier: str | None = None,
+    grounded_risk: str | None = None,
+    envelope_shape: int | None = None,
 ):
     """Stream or buffer the upstream response back, then log stats.
 
@@ -693,7 +721,9 @@ async def _relay(
                      cache_status=cache_status,
                      l1_tokens_stripped=l1_tokens_stripped,
                      l1_savings=l1_savings,
-                     provider=provider)
+                     provider=provider,
+                     dose_tier=dose_tier, grounded_risk=grounded_risk,
+                     envelope_shape=envelope_shape)
 
         async def translated_streamer():
             """Anthropic SSE -> OpenAI chat.completion.chunk SSE (C4).
@@ -805,7 +835,9 @@ async def _relay(
                      cache_status=cache_status,
                      l1_tokens_stripped=l1_tokens_stripped,
                      l1_savings=l1_savings,
-                     provider=provider)
+                     provider=provider,
+                     dose_tier=dose_tier, grounded_risk=grounded_risk,
+                     envelope_shape=envelope_shape)
 
         return StreamingResponse(
             translated_streamer() if needs_stream_translation else raw_streamer(),
@@ -847,7 +879,9 @@ async def _relay(
             _log(model, route, in_before, in_after, 0, latency_ms,
                  compressed, resp.status_code, cache_status=cache_status,
                  l1_tokens_stripped=l1_tokens_stripped, l1_savings=l1_savings,
-                 provider=provider)
+                 provider=provider,
+                 dose_tier=dose_tier, grounded_risk=grounded_risk,
+                 envelope_shape=envelope_shape)
             return JSONResponse(
                 content=_normalized_error(
                     resp.status_code, _error_message_from_body(content)),
@@ -865,7 +899,9 @@ async def _relay(
          cache_status=cache_status,
          l1_tokens_stripped=l1_tokens_stripped,
          l1_savings=l1_savings,
-         provider=provider)
+         provider=provider,
+         dose_tier=dose_tier, grounded_risk=grounded_risk,
+         envelope_shape=envelope_shape)
     if reshaped_obj is not None:
         return JSONResponse(content=reshaped_obj, status_code=resp.status_code,
                             headers=out_headers)
@@ -909,7 +945,8 @@ LEDGER_WRITE_FAILURES = 0
 def _log(model, route, in_before, in_after, output_tokens,
          latency_ms, compressed, status, cache_status="miss",
          cache_savings=0.0, l1_tokens_stripped=0, l1_savings=0.0,
-         provider=None):
+         provider=None, dose_tier=None, grounded_risk=None,
+         envelope_shape=None):
     global LEDGER_WRITE_FAILURES
     try:
         cost_before = estimate_cost(model, in_before, output_tokens)
@@ -923,6 +960,8 @@ def _log(model, route, in_before, in_after, output_tokens,
             l1_tokens_stripped=l1_tokens_stripped,
             l1_savings=l1_savings,
             provider=provider,
+            dose_tier=dose_tier, grounded_risk=grounded_risk,
+            envelope_shape=envelope_shape,
         )
         saved = in_before - in_after
         if saved > 0:
@@ -1076,6 +1115,13 @@ async def api_kpis(
     return await kpis_endpoint(bucket=bucket, from_ts=from_ or from_ts,
                                to_ts=to_ or to_ts,
                                tenant_id=tenant_id, api_key_id=api_key_id)
+
+
+@app.get("/api/tripwire")
+async def api_tripwire(days: int = 7):
+    """AC-P6f live tripwire loop: dose-drift + missed-grounding rules over
+    the request ledger window. Status red = re-trigger AC-P6c."""
+    return await tripwire_endpoint(days=days)
 
 
 @app.get("/stats")
