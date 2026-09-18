@@ -40,6 +40,16 @@ import run_benchmark  # noqa: E402
 
 ARTIFACT = (BENCHMARK / "results"
             / "benchmark_google_gemini-3.5-flash-lite_20260918T040421Z.json")
+# AC-P1b supersession extension: the published P1-1 artifact was stamped
+# `superseded_by` when a newer full run landed (emitter lifecycle) and
+# moved to results/archive/. The RATIFIED published figures live there
+# until the PM re-ratifies a successor — the replay target follows the
+# file, preferring the live results pair and falling back to the archive.
+_ARTIFACT_CANDIDATES = (
+    ARTIFACT,
+    BENCHMARK / "results" / "archive" / ARTIFACT.name,
+)
+ARTIFACT = next(p for p in _ARTIFACT_CANDIDATES if p.is_file())
 
 
 def _judged(pid: str, category: str, base: float, treat: float,

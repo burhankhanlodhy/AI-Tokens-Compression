@@ -578,5 +578,6 @@
       "baseline_text": "```css\n.parent {\n  display: flex;\n  justify-content: center;\n  align-items: center;\n}\n```",
       "treatment_text": "```css\n.parent {\n  display: flex;\n  justify-content: center;\n  align-items: center;\n}\n```"
     }
-  ]
+  ],
+  "superseded_by": "benchmark_google_gemini-3.5-flash-lite_20260918T040421Z.json"
 }

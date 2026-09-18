@@ -30,7 +30,7 @@ from .counting import (
     inject_conciseness,
     should_inject_conciseness,
 )
-from .grounded import select_dose_tier
+from .grounded import DOSE_TIERS, select_dose_tier
 from .dashboard import _render_stats_html
 from .dashboard_v2 import render_shell
 from .kpis import kpis_endpoint
@@ -141,6 +141,7 @@ app = FastAPI(title="token-saver proxy", lifespan=lifespan)
 
 PROXY_CONTROL_HEADERS = {
     "x-token-saver-conciseness",  # P1-1 benchmark A/B control — internal only
+    "x-token-saver-dose-pin",  # P6-3 benchmark-only tier pin — never upstream
 }
 
 
@@ -446,6 +447,17 @@ async def chat_completions(request: Request):
         # the toggle deterministic regardless of compression outcome.
         if conciseness_on:
             tier = select_dose_tier(messages, s)
+            # P6-3 tier pin (PM ratification, spec 25173d1): benchmark-only
+            # calibration instrument. Honored ONLY behind allow_dose_pin —
+            # with the flag off (production default) the pin is ignored and
+            # the request still resolves to the discriminator's selection,
+            # so no client can self-raise a tier. An invalid value falls
+            # back to the discriminator too.
+            pin_hdr = request.headers.get("x-token-saver-dose-pin")
+            if pin_hdr is not None and s.allow_dose_pin:
+                pin_val = pin_hdr.strip().lower()
+                if pin_val in DOSE_TIERS:
+                    tier = pin_val
             if tier != "none" and should_inject_conciseness(messages):
                 new_messages = inject_conciseness(
                     new_messages, instruction=s.dose_tier_instructions()[tier]

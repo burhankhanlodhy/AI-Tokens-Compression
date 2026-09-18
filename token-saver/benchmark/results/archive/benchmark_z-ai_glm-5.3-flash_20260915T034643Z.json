@@ -378,5 +378,6 @@
       "treatment_ok": false,
       "error": "status 405: {\"detail\":\"Method Not Allowed\"}"
     }
-  ]
+  ],
+  "superseded_by": "benchmark_google_gemini-3.5-flash-lite_20260918T040421Z.json"
 }

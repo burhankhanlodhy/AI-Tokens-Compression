@@ -136,6 +136,11 @@ class Settings(BaseSettings):
     # PM's sign-off — this is the pre-calibration OFF switch for grounded
     # fidelity-critical traffic, never a per-request toggle.
     grounded_calibration_green: bool = False
+    # P6-3 tier-pin ratification (PM, 2026-09-18): the benchmark-only
+    # x-token-saver-dose-pin control header is honored ONLY when this flag
+    # is true. OFF in the production config — the pre-calibration cap stays
+    # absolute for real traffic and no external client can self-raise a tier.
+    allow_dose_pin: bool = False
 
     def dose_tier_instructions(self) -> dict[str, str | None]:
         """Config-declared tier -> instruction text ("none" -> nothing)."""

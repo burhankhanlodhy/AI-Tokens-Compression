@@ -917,6 +917,59 @@ def planned_judged_ids(plans: list[tuple[dict, bool]],
             if sampling_plan(e, eligible_only)["judge"]]
 
 
+# AC-P1b extension (P1 artifact supersession, PM 2026-09-18): every
+# committed artifact carries `superseded_by` — None on the authoritative
+# artifact, the successor's filename on a superseded one. Lifecycle on
+# every new run: the previous authoritative artifact is stamped
+# `superseded_by: <new file>` and artifacts OLDER than that (already
+# carrying a non-null pointer from an earlier generation) move to
+# `results/archive/` — so `results/` always holds at most the
+# authoritative pair and no consumer needs commit messages to know which
+# artifact is current. QA asserts the field on any artifact pair found in
+# the results directory (test_ac_p1b_supersession.py).
+ARCHIVE_SUBDIR = "archive"
+
+
+def _artifact_authoritative_names(results_dir: Path) -> list[str]:
+    """Names of benchmark artifacts with no supersession pointer yet."""
+    names = []
+    for p in sorted(results_dir.glob("benchmark_*.json")):
+        try:
+            data = json.loads(p.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if data.get("superseded_by") is None:
+            names.append(p.name)
+    return names
+
+
+def stamp_supersession(results_dir: Path, new_name: str) -> dict:
+    """Apply the supersession lifecycle for a freshly written artifact.
+
+    Returns {"supersedes": [...], "archived": [...]} for the run summary.
+    """
+    archive_dir = results_dir / ARCHIVE_SUBDIR
+    archived: list[str] = []
+    supersedes: list[str] = []
+    for p in sorted(results_dir.glob("benchmark_*.json")):
+        if p.name == new_name:
+            continue
+        data = json.loads(p.read_text())
+        target = data.get("superseded_by")
+        if target is not None:
+            # An earlier generation: it already names a successor that is
+            # itself now superseded — keep it as history, out of the
+            # live results pair.
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            p.rename(archive_dir / p.name)
+            archived.append(p.name)
+        else:
+            data["superseded_by"] = new_name
+            p.write_text(json.dumps(data, indent=2))
+            supersedes.append(p.name)
+    return {"supersedes": supersedes, "archived": archived}
+
+
 def main() -> int:
     args = build_parser().parse_args()
     eligible_only = args.mode == "eligible_only"
@@ -1045,7 +1098,17 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     path = out / f"benchmark_{args.model.replace('/', '_')}_{stamp}.json"
+    # AC-P1b supersession extension: the new artifact is the authoritative
+    # one (superseded_by null); whoever was authoritative before it gets
+    # stamped by stamp_supersession() immediately after the write, and
+    # older generations move to results/archive/.
+    summary["superseded_by"] = None
+    summary["supersedes"] = _artifact_authoritative_names(out)
     path.write_text(json.dumps(summary, indent=2))
+    supersession = stamp_supersession(out, path.name)
+    if supersession["archived"]:
+        print(f"Supersession: archived {len(supersession['archived'])} older "
+              f"generation(s) to results/{ARCHIVE_SUBDIR}/")
     hl = stats["headline"]
     bl = stats["blended_corpus_wide"]
     # AC-P1g: the CLI prints the PUBLISHED fields and nothing else. Reading
