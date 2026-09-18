@@ -150,15 +150,19 @@ def test_ac_p1b_one_order_failure_excludes_item_from_parity(monkeypatch):
     assert state["calls"] == 2
     assert result["mode"] == "judge_http_429"
     assert result["parity"] is None
-    # mode != model_judge => summarize() excludes it from the parity
-    # population (judged filter), so no one-order score reaches the gate.
+    # mode != model_judge => the item is an ATTEMPTED but excluded judge:
+    # the population floor fails the gate closed (n_judged < n_attempted).
     stats = run_benchmark.summarize([
         {"id": "p1", "eligible": True,
          "baseline_tokens": 100.0, "treatment_tokens": 50.0,
          "mode": result["mode"]},
     ])
-    assert stats["quality_parity"]["n_judged"] == 0
-    assert stats["quality_parity"]["parity_holds"] is False
+    qp = stats["quality_parity"]
+    assert qp["n_attempted"] == 1
+    assert qp["n_judged"] == 0
+    assert qp["population_complete"] is False
+    assert qp["excluded_judge_ids"] == ["p1"]
+    assert qp["parity_holds"] is False
 
 
 def _judged_entry(score_a, score_b):
@@ -187,7 +191,7 @@ def test_ac_p1b_parity_gate_is_mean_regression_le_1pt_not_zero_items():
     assert qp["n_judged"] == 15
     assert qp["n_regressions_over_1pt"] == 5          # diagnostic, not gate
     assert qp["mean_regression_pt"] == 1.0
-    assert qp["parity_rule"] == "mean_regression_le_1pt"
+    assert qp["parity_rule"] == "mean_regression_le_1pt_full_population"
     assert qp["parity_holds"] is True
 
 
@@ -199,6 +203,48 @@ def test_ac_p1b_parity_gate_fails_when_mean_regression_exceeds_1pt():
     # mean regression = (5*8 + 0*7)/15 = 2.67 > 1pt
     assert qp["mean_regression_pt"] == 2.67
     assert qp["parity_holds"] is False
+
+
+def test_ac_p1b_parity_population_floor_fails_closed_on_excluded_judges():
+    """A flaky judge API must not shrink the parity population to a green.
+
+    PM synthetic shape: 14 of 15 attempted judges lost their call to
+    judge_http_429 and only 1 completed both orders. Without a population
+    floor summarize() emitted n_judged=1, mean 0.0, parity_holds=true.
+    The gate now fails closed and records the excluded IDs.
+    """
+    entries = [_judged_entry(9, 9)]
+    for i in range(14):
+        entries.append({"id": f"lost-{i}", "eligible": True,
+                        "baseline_tokens": 100.0, "treatment_tokens": 50.0,
+                        "mode": "judge_http_429"})
+    stats = run_benchmark.summarize(entries)
+    qp = stats["quality_parity"]
+    assert qp["n_attempted"] == 15
+    assert qp["n_judged"] == 1
+    assert qp["population_complete"] is False
+    assert qp["excluded_judge_ids"] == [f"lost-{i}" for i in range(14)]
+    assert qp["parity_holds"] is False
+
+
+def test_ac_p1b_parity_gate_reads_the_published_rounded_mean():
+    """The gate and the artifact must not contradict each other.
+
+    Integer judge scores: 50 items at +5, 1 at +1, 199 at 0 -> raw mean
+    251/250 = 1.004pt. The published (2dp) figure is 1.0, and the gate
+    compares the published figure, so parity_holds=true sits beside a
+    readable "mean_regression_pt: 1.0" — never false next to the same
+    number it just published (PM audit nit). The 0.005pt tolerance is far
+    below judge resolution.
+    """
+    entries = ([_judged_entry(9, 4)] * 50   # +5 each
+               + [_judged_entry(9, 8)] * 1  # +1
+               + [_judged_entry(9, 9)] * 199)  # 0
+    stats = run_benchmark.summarize(entries)
+    qp = stats["quality_parity"]
+    assert qp["n_judged"] == 250
+    assert qp["mean_regression_pt"] == 1.0
+    assert qp["parity_holds"] is True
 
 
 # ---------------------------------------------------------------------------

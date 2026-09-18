@@ -470,7 +470,18 @@ def summarize(valid_entries: list[dict]) -> dict:
                       for r in eligible]
     headline = estimate(eligible_pairs)
     blended = estimate(blended_pairs)
-    judged = [r for r in valid_entries if r.get("mode") == "model_judge"]
+    # Parity population = every entry that ATTEMPTED judging (both arms ok
+    # and treatment sampled; entry_from_arms sets "mode" exactly then).
+    # A failed judge call keeps "mode" (judge_http_429 / judge_error /
+    # no_judge_key) but is not "model_judge", so without a population floor
+    # a flaky judge API could shrink the parity population to a single
+    # surviving prompt and still emit a green gate (PM synthetic: 14/15
+    # excluded -> n_judged 1, parity_holds true). AC-P1b gate therefore
+    # FAILS CLOSED: every attempted item must complete both orders.
+    attempted = [r for r in valid_entries if "mode" in r]
+    judged = [r for r in attempted if r.get("mode") == "model_judge"]
+    excluded_judge_ids = [r.get("id") for r in attempted
+                          if r.get("mode") != "model_judge"]
     # AC-P1b parity gate is the spec's "≤1pt mean regression", NOT "zero
     # items >1pt": the zero-item reading is stricter than the spec and
     # won't survive judge noise (PM recompute 2026-09-18: the shipped
@@ -478,9 +489,14 @@ def summarize(valid_entries: list[dict]) -> dict:
     # threshold itself). n_regressions_over_1pt is kept as a diagnostic.
     regressions = [r for r in judged
                    if r.get("score_b", 10) < r.get("score_a", 10) - 1]
-    mean_regression_pt = (sum(r.get("score_a", 10) - r.get("score_b", 10)
-                              for r in judged) / len(judged)
+    # The gate compares the PUBLISHED (2dp-rounded) mean, not the raw one —
+    # otherwise a 1.004pt mean publishes as "1.0" next to parity_holds:
+    # false and the artifact reads as a self-contradiction (PM audit nit).
+    # The 0.005pt tolerance this admits is far below judge resolution.
+    mean_regression_pt = (round(sum(r.get("score_a", 10) - r.get("score_b", 10)
+                                    for r in judged) / len(judged), 2)
                           if judged else None)
+    population_complete = bool(attempted) and len(judged) == len(attempted)
     # AC-P1a "valid pair" = baseline > 0 (the estimator's own filter): the
     # n >= 2 arm of the publication guard counts the SAME rows the estimate
     # was computed from, not raw entries.
@@ -514,14 +530,17 @@ def summarize(valid_entries: list[dict]) -> dict:
         },
         "quality_parity": {
             "n_judged": len(judged),
+            "n_attempted": len(attempted),
+            "population_complete": population_complete,
+            "excluded_judge_ids": excluded_judge_ids,
             "n_regressions_over_1pt": len(regressions),
-            "mean_regression_pt": (round(mean_regression_pt, 2)
-                                   if mean_regression_pt is not None else None),
+            "mean_regression_pt": mean_regression_pt,
             # AC-P1b ratified rule: mean regression <= 1pt across the judged
             # population (both-orders averaged judge evidence), not zero
-            # individual items over 1pt.
-            "parity_rule": "mean_regression_le_1pt",
-            "parity_holds": (bool(judged)
+            # individual items over 1pt. Fails closed unless EVERY attempted
+            # item completed both orders — no partial-population greens.
+            "parity_rule": "mean_regression_le_1pt_full_population",
+            "parity_holds": (population_complete
                              and mean_regression_pt is not None
                              and mean_regression_pt <= 1.0),
         },
@@ -683,7 +702,8 @@ def main() -> int:
     print(f"Blended (corpus-wide, n={bl['n']}, labelled, not the headline): "
           f"{_published_figure(bl)}")
     qp = stats["quality_parity"]
-    print(f"Quality parity: {qp['n_judged']} judged (both orders averaged), "
+    print(f"Quality parity: {qp['n_judged']}/{qp['n_attempted']} judged "
+          f"(both orders averaged), "
           f"{qp['n_regressions_over_1pt']} >1pt regressions (diagnostic), "
           f"mean regression {qp['mean_regression_pt']}pt "
           f"-> {'PASS' if qp['parity_holds'] else 'FAIL'} "
