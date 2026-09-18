@@ -16,11 +16,9 @@ QA asserts the field on any artifact pair found in the results directory:
    file must actually exist and must NOT itself be superseded (no
    supersession chains / dangling pointers).
 
-Status: XFAIL until @application-developer lands the emitter (the field
-exists only as spec prose today — zero occurrences in any .py file).
-strict=False so the suite stays green; flip every xfail to strict (or
-drop the marker and hard-require) in the same commit that implements
-the field.
+Status: emitter landed in b25fead/6a96eba; these assertions are now
+release-blocking and must not silently xfail a supersession regression.
+The temporary xfail markers are removed; each check is hard-required.
 """
 from __future__ import annotations
 
@@ -44,7 +42,6 @@ def _benchmark_artifacts() -> list[Path]:
     return sorted(RESULTS.glob("benchmark_*.json"))
 
 
-@pytest.mark.xfail(reason="superseded_by not yet emitted (P2 remit, AC-P1b extension)", strict=False)
 def test_every_artifact_carries_superseded_by():
     artifacts = _benchmark_artifacts()
     assert artifacts, "no benchmark artifacts found in benchmark/results/"
@@ -56,7 +53,6 @@ def test_every_artifact_carries_superseded_by():
     assert not missing, f"artifacts missing `superseded_by`: {missing}"
 
 
-@pytest.mark.xfail(reason="superseded_by not yet emitted (P2 remit, AC-P1b extension)", strict=False)
 def test_superseded_by_pointers_resolve_and_terminate():
     pointers_seen = []
     for path in _benchmark_artifacts():
@@ -74,16 +70,14 @@ def test_superseded_by_pointers_resolve_and_terminate():
             f"supersession chain: {target} is itself superseded by "
             f"{successor_data.get('superseded_by')}"
         )
-    # Vacuous-pass guard (PM review, 2026-09-18): with strict=False an
-    # empty loop xpasses silently and would keep "passing" after the
-    # emitter lands whether or not any pointer was ever exercised.
+    # Vacuous-pass guard: an empty loop would otherwise exercise no
+    # supersession pointer while still appearing green.
     assert pointers_seen, (
         "vacuous: no artifact in benchmark/results/ carries `superseded_by` "
         "— the pointer-resolution check exercised nothing"
     )
 
 
-@pytest.mark.xfail(reason="superseded_by not yet emitted (P2 remit, AC-P1b extension)", strict=False)
 def test_at_most_one_authoritative_artifact():
     artifacts = _benchmark_artifacts()
     if not artifacts:
@@ -100,7 +94,6 @@ def test_at_most_one_authoritative_artifact():
     )
 
 
-@pytest.mark.xfail(reason="superseded_by not yet emitted (P2 remit, AC-P1b extension)", strict=False)
 def test_runner_source_references_superseded_by():
     """The field must be written by the emitter, not just present in old
     files by hand — otherwise the next run silently drops it again."""

@@ -56,12 +56,84 @@ def test_rag_051_055_classify_fidelity_critical(pid):
     assert r == {"grounded": True, "risk": RISK_FIDELITY_CRITICAL}
 
 
-@pytest.mark.parametrize("pid", [f"rag-0{i}" for i in range(21, 31)])
-def test_rag_021_030_at_most_bounded(pid):
-    """Short non-eligible RAG questions: grounded at most `bounded`,
-    NEVER fidelity_critical (no source block in the user message)."""
+# PM simulation on 32355b0 showed the scope-only patch misses rag-023,
+# rag-026, and rag-028 because their system blocks use labeled data markers
+# and rag-028 says "use only this schedule".  AC-P6g therefore pins the
+# expected post-fix result for every fixture, not merely "grounded or better".
+RAG_021_030_EXPECTED = {
+    "rag-021": RISK_FIDELITY_CRITICAL,
+    "rag-022": RISK_FIDELITY_CRITICAL,
+    "rag-023": RISK_FIDELITY_CRITICAL,
+    "rag-024": RISK_FIDELITY_CRITICAL,
+    "rag-025": RISK_FIDELITY_CRITICAL,
+    "rag-026": RISK_FIDELITY_CRITICAL,
+    "rag-027": RISK_FIDELITY_CRITICAL,
+    "rag-028": RISK_FIDELITY_CRITICAL,
+    "rag-029": RISK_FIDELITY_CRITICAL,
+    "rag-030": RISK_FIDELITY_CRITICAL,
+}
+
+
+@pytest.mark.parametrize("pid,expected_risk", RAG_021_030_EXPECTED.items())
+@pytest.mark.xfail(
+    reason="AC-P6g pending P6-4 scope + signal-set fix (@application-developer)",
+    strict=False,
+)
+def test_ac_p6g_rag_021_030_pin_expected_risk(pid, expected_risk):
+    """Every short RAG fixture carries grounding in its system message.
+
+    The user turns are gate-negative (53–117 chars), but the detector still
+    must classify the request as grounded; pinning fidelity-critical here
+    catches both the system-only blind spot and incomplete signal coverage.
+    """
     r = grounded_answer_risk(PROMPTS[pid]["messages"], cfg())
-    assert r["risk"] in (RISK_NONE, RISK_BOUNDED)
+    assert r == {"grounded": True, "risk": expected_risk}
+
+
+@pytest.mark.parametrize(
+    "pid",
+    [p["id"] for p in PROMPTS.values() if p["category"] != "rag"],
+)
+def test_ac_p6g_non_rag_fixtures_remain_ungrounded(pid):
+    """The broadened signal set must not ground any of the 40 controls."""
+    assert grounded_answer_risk(PROMPTS[pid]["messages"], cfg()) == {
+        "grounded": False,
+        "risk": RISK_NONE,
+    }
+
+
+@pytest.mark.xfail(
+    reason="AC-P6g pending P6-4 scope + signal-set fix (@application-developer)",
+    strict=False,
+)
+def test_ac_p6g_prod_shaped_system_policy_block_is_fidelity_critical():
+    """A long request grounded by an OpenAI role=system policy block must
+    never fall through to the ungrounded/full-dose path."""
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a support assistant. Use only the provided policy text. "
+                "POLICY: Returns require a receipt and must be processed within "
+                "30 days."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Please apply the policy above to this case and explain every "
+                "applicable condition, deadline, exception, and required step "
+                "without omitting any detail. "
+            )
+            + "I need the complete reasoning and operational answer. " * 20,
+        },
+    ]
+    assert len(messages[-1]["content"]) > 400
+    assert grounded_answer_risk(messages, cfg()) == {
+        "grounded": True,
+        "risk": RISK_FIDELITY_CRITICAL,
+    }
+    assert select_dose_tier(messages, cfg()) == "none"
 
 
 @pytest.mark.parametrize(
