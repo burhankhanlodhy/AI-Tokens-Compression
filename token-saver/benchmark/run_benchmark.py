@@ -913,6 +913,22 @@ def build_parser() -> argparse.ArgumentParser:
                          "publication authority (stamps the previous "
                          "authority, archives older generations). Without "
                          "it the run defers to the current authority.")
+    # AC-P6f artifact contract (PM blocker ruling, 2026-09-18): the tripwire's
+    # load_calibration_band() consumes calibration_<model>_<stamp>.json with
+    # the OUTPUT-token band; the benchmark artifact alone never arms it. This
+    # flag makes the SAME run emit that artifact from the same measured pairs
+    # — the gate and the tripwire read one source of truth, and the unit is
+    # stamped ("metric": "output_tokens") so the input/output mismatch class
+    # cannot recur silently.
+    ap.add_argument("--emit-calibration", dest="emit_calibration",
+                    action="store_true",
+                    help="Also write calibration_<model>_<stamp>.json — the "
+                         "AC-P6c band artifact the /api/tripwire dose-drift "
+                         "rule consumes (bounded-arm OUTPUT-token band).")
+    ap.add_argument("--calibration-tier", dest="calibration_tier",
+                    default="bounded",
+                    help="Dose tier the treatment arm was pinned to for the "
+                         "calibration run (default: bounded).")
     # C-9 spend ruling: eligible-only is the DEFAULT shipping shape
     # (~970 calls). The full-55 measured shape (~3,300 + judges) requires
     # an explicit --full-corpus owner override — it can never happen
@@ -929,6 +945,87 @@ def build_parser() -> argparse.ArgumentParser:
                       help="OWNER OVERRIDE: sample every prompt at full k "
                            "both arms (~3,300 completions + judges)")
     return ap
+
+
+# --- AC-P6f calibration artifact (PM blocker ruling, 2026-09-18) ------------
+
+def _bootstrap_mean_ci(values: list[float]) -> list[float]:
+    """95% CI of the MEAN via paired-bootstrap conventions (same seed and
+    resample count as estimator.estimate, so both intervals in the artifact
+    come from one deterministic instrument)."""
+    from estimator import BOOTSTRAP_RESAMPLES, _BOOTSTRAP_SEED
+
+    n = len(values)
+    if n < 2:
+        m = sum(values) / n if values else 0.0
+        return [m, m]
+    rng = random.Random(_BOOTSTRAP_SEED)
+    means = sorted(
+        sum(rng.choices(values, k=n)) / n for _ in range(BOOTSTRAP_RESAMPLES))
+    return [means[int(0.025 * (BOOTSTRAP_RESAMPLES - 1))],
+            means[int(0.975 * (BOOTSTRAP_RESAMPLES - 1))]]
+
+
+def emit_calibration_artifact(
+    results: list[dict],
+    out_dir: Path,
+    model: str,
+    tier: str,
+    sampling_mode: str,
+    source_artifact: str,
+    population_ids: list[str] | None = None,
+) -> Path:
+    """Write calibration_<model>_<stamp>.json — the AC-P6f band artifact.
+
+    Built from the SAME measured pairs the benchmark artifact carries
+    (treatment arm = the pinned dose tier), restricted to the grounded
+    population when ``population_ids`` is given. The unit is stamped
+    explicitly: the band is on realized OUTPUT-token reduction — the
+    quantity AC-P6c calibrates — never input compression.
+    """
+    paired = [
+        r for r in results
+        if r.get("baseline_ok") and r.get("treatment_ok")
+        and (r.get("baseline_tokens") or 0) > 0
+        and (population_ids is None or r.get("id") in population_ids)
+    ]
+    if not paired:
+        raise ValueError(
+            "emit_calibration: no valid paired rows in the calibration "
+            "population — refusing to write an empty band artifact")
+    pairs = [(r["baseline_tokens"], r["treatment_tokens"]) for r in paired]
+    reduction = estimate(pairs)
+    tokens = [float(r["treatment_tokens"]) for r in paired]
+    artifact = {
+        "artifact_kind": "ac_p6c_calibration",
+        "tier": tier,
+        "metric": "output_tokens",
+        "model": model,
+        "sampling_mode": sampling_mode,
+        "source_artifact": source_artifact,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "population": {"n": len(paired),
+                       "ids": sorted(r["id"] for r in paired)},
+        # OUTPUT-token reduction (treatment vs baseline, per-prompt, k=30
+        # aggregated) — the band the dose-drift tripwire compares against.
+        "output_reduction_pct": {
+            "mean": round(reduction["mean_reduction_pct"], 2),
+            "ci95_interval": [round(v, 2) for v in reduction["ci95_interval"]],
+        },
+        "cut_pct_band": [round(v, 2) for v in reduction["ci95_interval"]],
+        # Absolute bounded-arm output-token distribution for the live
+        # distributional drift compare (per-request counterfactual output
+        # does not exist in production; drift is measured on the mean).
+        "bounded_output_tokens": {
+            "mean": round(sum(tokens) / len(tokens), 2),
+            "ci95_interval": [round(v, 2) for v in _bootstrap_mean_ci(tokens)],
+            "n": len(tokens),
+        },
+    }
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = out_dir / f"calibration_{model.replace('/', '_')}_{stamp}.json"
+    path.write_text(json.dumps(artifact, indent=2))
+    return path
 
 
 def planned_judged_ids(plans: list[tuple[dict, bool]],
@@ -1148,6 +1245,17 @@ def main() -> int:
                                     if len(prior_authorities) == 1 else None)
         summary["supersedes"] = []
         path.write_text(json.dumps(summary, indent=2))
+    if args.emit_calibration:
+        # AC-P6f artifact contract: same run, same measured pairs, OUTPUT
+        # unit stamped. Restricted to the grounded population (the corpus
+        # AC-P6c calibrates); a run with zero grounded rows refuses here.
+        cal_ids = [p["id"] for p, _ in plans
+                   if grounded_risk_of(p) != "none"]
+        cal_path = emit_calibration_artifact(
+            results, out, args.model, args.calibration_tier, args.mode,
+            path.name, population_ids=cal_ids or None)
+        print(f"Calibration artifact (AC-P6f band, output-token unit) "
+              f"written to {cal_path}")
     hl = stats["headline"]
     bl = stats["blended_corpus_wide"]
     # AC-P1g: the CLI prints the PUBLISHED fields and nothing else. Reading

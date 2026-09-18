@@ -25,6 +25,9 @@ import httpx
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# benchmark/run_benchmark.py imports its sibling estimator module by name
+# (it is a script-first module); give the test process the same path.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "benchmark"))
 
 from proxy.config import get_settings  # noqa: E402
 from proxy.grounded import (  # noqa: E402
@@ -116,37 +119,78 @@ def _row(**kw):
     return base
 
 
+def _band(floor=100.0, ceiling=140.0, mean=120.0):
+    return {"artifact": "calibration_m_20260918T000000Z.json",
+            "tier": "bounded", "metric": "output_tokens",
+            "cut_pct_band": [30.0, 55.0],
+            "bounded_output_tokens": {"mean": mean,
+                                      "ci95_interval": [floor, ceiling],
+                                      "n": 5},
+            "population_n": 5}
+
+
+def _bounded_row(output, n_rows=1, **kw):
+    return [_row(dose_tier="bounded", grounded_risk="fidelity_critical",
+                 output_tokens=output, id=i, **kw) for i in range(n_rows)]
+
+
 class TestDoseDrift:
     def test_pending_when_no_band(self):
-        rep = tripwire.evaluate_dose_drift([_row()], band=None)
+        rep = tripwire.evaluate_dose_drift(_bounded_row(100), band=None)
         assert rep == {"status": "pending_calibration", "flagged": [],
-                       "checked": 0}
+                       "preview": [], "checked": 0}
 
-    def test_alert_when_bounded_grounded_cut_exceeds_band(self):
-        rows = [_row(dose_tier="bounded", grounded_risk="fidelity_critical",
-                     input_tokens_before=1000, input_tokens_after=800)]
-        rep = tripwire.evaluate_dose_drift(rows, band=(5.0, 12.0))
+    def test_pending_metric_ruling_never_flags(self):
+        # Live outputs far BELOW the calibrated floor: the rule shows what it
+        # WOULD flag but cannot read red until the metric is ratified.
+        rep = tripwire.evaluate_dose_drift(
+            _bounded_row(80, n_rows=25), band=_band(), metric_ratified=False)
+        assert rep["status"] == "pending_metric_ruling"
+        assert rep["preview_flag"] is True
+        assert rep["preview_reason"] == \
+            "bounded_output_below_calibration_floor"
+        assert rep["flagged"] == []
+
+    def test_alert_below_floor_when_ratified(self):
+        rep = tripwire.evaluate_dose_drift(
+            _bounded_row(80, n_rows=25), band=_band(), metric_ratified=True)
         assert rep["status"] == "alert"
-        assert rep["flagged"][0]["reason"] == "bounded_cut_above_band"
-        assert rep["flagged"][0]["realized_cut_pct"] == 20.0
+        assert rep["flagged"][0]["reason"] == \
+            "bounded_output_below_calibration_floor"
+        assert rep["flagged"][0]["live_mean_output_tokens"] == 80.0
 
     def test_clear_within_band(self):
-        rows = [_row(dose_tier="bounded", grounded_risk="bounded",
-                     input_tokens_before=1000, input_tokens_after=920)]
-        assert tripwire.evaluate_dose_drift(rows, band=(5.0, 12.0))[
-            "status"] == "clear"
+        rep = tripwire.evaluate_dose_drift(
+            _bounded_row(120, n_rows=25), band=_band(), metric_ratified=True)
+        assert rep["status"] == "clear"
 
-    def test_ungrounded_bounded_rows_never_flag(self):
-        rows = [_row(dose_tier="bounded", grounded_risk=None,
-                     input_tokens_before=1000, input_tokens_after=500)]
-        assert tripwire.evaluate_dose_drift(rows, band=(5.0, 12.0))[
-            "status"] == "clear"
+    def test_above_ceiling_reports_but_never_flags(self):
+        # Under-delivery (outputs LARGER than calibrated) is a savings miss,
+        # not a fidelity hazard — visible in the mean, never red.
+        rep = tripwire.evaluate_dose_drift(
+            _bounded_row(200, n_rows=25), band=_band(), metric_ratified=True)
+        assert rep["status"] == "clear"
+        assert rep["live_mean_output_tokens"] == 200.0
 
-    def test_full_tier_rows_are_not_drift_scope(self):
-        rows = [_row(dose_tier="full", grounded_risk="none",
-                     input_tokens_before=1000, input_tokens_after=100)]
-        assert tripwire.evaluate_dose_drift(rows, band=(5.0, 12.0))[
-            "status"] == "clear"
+    def test_insufficient_live_rows(self):
+        rep = tripwire.evaluate_dose_drift(
+            _bounded_row(80, n_rows=5), band=_band(), metric_ratified=True,
+            min_live_rows=20)
+        assert rep["status"] == "insufficient_live_rows"
+        assert rep["required"] == 20
+
+    def test_ungrounded_and_full_tier_rows_excluded(self):
+        rows = (_bounded_row(120, n_rows=25)
+                + [_row(dose_tier="bounded", grounded_risk=None,
+                        output_tokens=10) for _ in range(25)]
+                + [_row(dose_tier="full", grounded_risk="none",
+                        output_tokens=10) for _ in range(25)])
+        rep = tripwire.evaluate_dose_drift(rows, band=_band(),
+                                           metric_ratified=True)
+        # Only the grounded bounded rows are live scope: mean 120 within the
+        # band → clear; the 10-token ungrounded rows must not drag the mean.
+        assert rep["live_rows"] == 25
+        assert rep["status"] == "clear"
 
 
 class TestMissedGrounding:
@@ -187,6 +231,94 @@ class TestMissedGrounding:
             "status"] == "clear"
 
 
+def _benchmark_results():
+    """5 grounded paired rows, treatment (bounded arm) ~ 60% of baseline."""
+    return [
+        {"id": f"rag-05{i}", "baseline_ok": True, "treatment_ok": True,
+         "baseline_tokens": 500.0, "treatment_tokens": 200.0 + 10 * i}
+        for i in range(5)
+    ]
+
+
+class TestBandLoaderAndEmitContract:
+    """The PM blocker: the loader must consume what the harness EMITS."""
+
+    def test_emit_then_load_round_trip(self, tmp_path):
+        from benchmark.run_benchmark import emit_calibration_artifact
+
+        path = emit_calibration_artifact(
+            _benchmark_results(), tmp_path, "google/gemini-3.5-flash-lite",
+            "bounded", "eligible_only", "benchmark_m_x.json",
+            population_ids=["rag-050", "rag-051", "rag-052", "rag-053",
+                            "rag-054"])
+        assert path.name.startswith("calibration_")
+        band = tripwire.load_calibration_band(tmp_path)
+        assert band is not None
+        assert band["artifact"] == path.name
+        assert band["metric"] == "output_tokens"
+        assert band["tier"] == "bounded"
+        lo, hi = band["cut_pct_band"]
+        assert lo <= hi and 0 <= lo  # a real OUTPUT-reduction band
+        arm = band["bounded_output_tokens"]
+        assert arm["ci95_interval"][0] <= arm["mean"] <= arm["ci95_interval"][1]
+        assert band["population_n"] == 5
+
+    def test_benchmark_artifact_alone_never_arms(self, tmp_path):
+        # The exact PM failure mode: benchmark_<model>_<stamp>.json exists
+        # with mean_output_reduction_pct keys — the loader stays None.
+        (tmp_path / "benchmark_google_gemini_20260918T173925Z.json").write_text(
+            json.dumps({"mean_output_reduction_pct": 52.73,
+                        "ci95_interval": [40.5, 64.9],
+                        "quality_parity": {"parity_holds": True}}))
+        assert tripwire.load_calibration_band(tmp_path) is None
+
+    def test_empty_box_calibration_file_does_not_match_glob(self, tmp_path):
+        (tmp_path / "empty_box_calibration_n10_gemini_cv0137_k30.json").write_text(
+            json.dumps({"artifact_kind": "ac_p6c_calibration"}))
+        assert tripwire.load_calibration_band(tmp_path) is None
+
+    def test_stray_calibration_name_without_contract_is_inert(self, tmp_path):
+        (tmp_path / "calibration_bogus.json").write_text(
+            json.dumps({"cut_pct_band": [1.0, 2.0]}))  # no kind/tier/metric
+        assert tripwire.load_calibration_band(tmp_path) is None
+
+    def test_other_tier_or_metric_never_arms(self, tmp_path):
+        base = {"artifact_kind": "ac_p6c_calibration", "tier": "bounded",
+                "metric": "output_tokens",
+                "cut_pct_band": [30.0, 55.0],
+                "bounded_output_tokens": {"mean": 200.0,
+                                          "ci95_interval": [180.0, 220.0],
+                                          "n": 5},
+                "population": {"n": 5}}
+        for mutate in ({"tier": "full"}, {"metric": "input_tokens"}):
+            (tmp_path / "calibration_m.json").write_text(
+                json.dumps({**base, **mutate}))
+            assert tripwire.load_calibration_band(tmp_path) is None
+
+    def test_malformed_or_inverted_band_is_none(self, tmp_path):
+        base = {"artifact_kind": "ac_p6c_calibration", "tier": "bounded",
+                "metric": "output_tokens", "population": {"n": 5},
+                "bounded_output_tokens": {"mean": 200.0,
+                                          "ci95_interval": [180.0, 220.0],
+                                          "n": 5}}
+        for mutate in ({"cut_pct_band": [9.0, 2.0]}, {"cut_pct_band": "x"},
+                       {"cut_pct_band": [1.0, 2.0, 3.0]}):
+            (tmp_path / "calibration_m.json").write_text(
+                json.dumps({**base, **mutate}))
+            assert tripwire.load_calibration_band(tmp_path) is None
+        (tmp_path / "calibration_m.json").write_text("{not json")
+        assert tripwire.load_calibration_band(tmp_path) is None
+
+    def test_emit_refuses_empty_population(self, tmp_path):
+        from benchmark.run_benchmark import emit_calibration_artifact
+
+        with pytest.raises(ValueError):
+            emit_calibration_artifact(
+                [{"id": "x", "baseline_ok": False, "treatment_ok": True,
+                  "baseline_tokens": 0, "treatment_tokens": 5}],
+                tmp_path, "m", "bounded", "eligible_only", "src.json")
+
+
 class TestReport:
     def test_report_pending_without_calibration_artifact(self, tmp_path,
                                                           monkeypatch):
@@ -194,7 +326,21 @@ class TestReport:
         rep = tripwire.tripwire_report([])
         assert rep["status"] == "pending"
         assert rep["dose_drift"]["status"] == "pending_calibration"
-        assert rep["calibration_band_pct"] is None
+        assert rep["calibration_artifact"] is None
+
+    def test_report_pending_metric_ruling_with_artifact(self, tmp_path,
+                                                        monkeypatch):
+        from benchmark.run_benchmark import emit_calibration_artifact
+
+        monkeypatch.setattr(tripwire, "RESULTS_DIR", tmp_path)
+        emit_calibration_artifact(
+            _benchmark_results(), tmp_path, "m", "bounded",
+            "eligible_only", "benchmark_m_x.json")
+        rows = _bounded_row(80, n_rows=25)  # below floor → would flag
+        rep = tripwire.tripwire_report(rows)  # metric NOT ratified (default)
+        assert rep["status"] == "pending"
+        assert rep["dose_drift"]["status"] == "pending_metric_ruling"
+        assert rep["dose_drift"]["preview_flag"] is True
 
     def test_report_red_on_missed_grounding(self, tmp_path, monkeypatch):
         monkeypatch.setattr(tripwire, "RESULTS_DIR", tmp_path)
@@ -202,21 +348,20 @@ class TestReport:
                      input_tokens_before=1000, input_tokens_after=400)]
         assert tripwire.tripwire_report(rows)["status"] == "red"
 
-    def test_band_loader_accepts_artifact_shapes(self, tmp_path):
-        for payload in (
-            {"cut_pct_band": [4.0, 11.0]},
-            {"band": {"cut_pct": [4.0, 11.0]}},
-            {"cut_pct": [4.0, 11.0]},
-        ):
-            (tmp_path / "calibration-rag-v2.json").write_text(json.dumps(payload))
-            assert tripwire.load_calibration_band(tmp_path) == (4.0, 11.0)
+    def test_report_green_when_ratified_and_clear(self, tmp_path,
+                                                  monkeypatch):
+        from benchmark.run_benchmark import emit_calibration_artifact
 
-    def test_band_loader_none_on_absent_or_malformed(self, tmp_path):
-        assert tripwire.load_calibration_band(tmp_path) is None
-        (tmp_path / "calibration-x.json").write_text("{not json")
-        assert tripwire.load_calibration_band(tmp_path) is None
-        (tmp_path / "calibration-y.json").write_text('{"cut_pct_band": [9, 2]}')
-        assert tripwire.load_calibration_band(tmp_path) is None
+        monkeypatch.setattr(tripwire, "RESULTS_DIR", tmp_path)
+        emit_calibration_artifact(
+            _benchmark_results(), tmp_path, "m", "bounded",
+            "eligible_only", "benchmark_m_x.json")
+        # treatment tokens 200..240, mean ~220 — live rows inside the band
+        rows = _bounded_row(220, n_rows=25)
+        rep = tripwire.tripwire_report(rows, metric_ratified=True,
+                                       min_live_rows=20)
+        assert rep["status"] == "green"
+        assert rep["dose_drift"]["status"] == "clear"
 
 
 # --- Ledger channel -----------------------------------------------------------
@@ -418,21 +563,28 @@ def test_tripwire_endpoint_red_on_seeded_missed_grounding(tmp_path,
     assert data["status"] == "red"
     assert data["missed_grounding"]["status"] == "alert"
     assert data["dose_drift"]["status"] == "pending_calibration"
-    assert data["calibration_band_pct"] is None
+    assert data["calibration_artifact"] is None
 
 
 def test_tripwire_endpoint_green_on_benign_ledger(tmp_path, monkeypatch):
     app, stats = _pinned_app(monkeypatch, tmp_path)
     monkeypatch.setattr(tripwire, "RESULTS_DIR", tmp_path)
-    # green requires a committed calibration band; without the artifact the
-    # dose-drift rule honestly reports pending_calibration instead.
-    (tmp_path / "calibration-rag-v2.json").write_text(
-        json.dumps({"cut_pct_band": [2.0, 45.0]}))
+    # green requires (a) a REAL calibration artifact (harness-emitted shape)
+    # and (b) the ratified metric flag — without either, dose-drift honestly
+    # reads pending, never green.
+    from benchmark.run_benchmark import emit_calibration_artifact
+    emit_calibration_artifact(
+        _benchmark_results(), tmp_path, "m", "bounded", "eligible_only",
+        "benchmark_m_x.json")
+    monkeypatch.setenv("TRIPWIRE_OUTPUT_METRIC_RATIFIED", "true")
+    monkeypatch.setenv("TRIPWIRE_MIN_LIVE_ROWS", "1")
+    get_settings.cache_clear()
     stats.log_request(
         model="m", route="compress", input_tokens_before=1000,
-        input_tokens_after=700, output_tokens=5, est_cost_before=0.0,
+        input_tokens_after=700, output_tokens=220, est_cost_before=0.0,
         est_cost_after=0.0, latency_ms=1.0, compressed=True, status=200,
-        dose_tier="bounded", grounded_risk="none", envelope_shape=0,
+        dose_tier="bounded", grounded_risk="fidelity_critical",
+        envelope_shape=0,
     )
     from fastapi.testclient import TestClient
     with TestClient(app) as c:
@@ -441,6 +593,7 @@ def test_tripwire_endpoint_green_on_benign_ledger(tmp_path, monkeypatch):
     assert data["dose_drift"]["status"] == "clear"
     assert data["missed_grounding"]["status"] == "clear"
     assert data["rows_scanned"] == 1
+    get_settings.cache_clear()
 
 
 def test_tripwire_endpoint_rejects_bad_window(tmp_path, monkeypatch):

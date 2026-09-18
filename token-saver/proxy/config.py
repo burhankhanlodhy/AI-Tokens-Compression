@@ -148,6 +148,17 @@ class Settings(BaseSettings):
     # code change; 25% is far above L1's structural-clean delta and marks
     # content the pipeline actually cut deeply.
     tripwire_deep_cut_pct: float = 25.0
+    # AC-P6f dose-drift metric (PM blocker ruling 2026-09-18): the rule is
+    # DISTRIBUTIONAL on OUTPUT tokens — live bounded grounded rows' mean
+    # output tokens vs the calibration arm's 95% CI. The metric itself needs
+    # @product-manager ratification before it can read red; until that
+    # sign-off the rule reports pending_metric_ruling with a preview only
+    # (same pattern as grounded_calibration_green — flip ONLY on PM sign-off).
+    tripwire_output_metric_ratified: bool = False
+    # Minimum live bounded grounded rows before the distributional mean is
+    # trusted; below it the rule reports insufficient_live_rows instead of
+    # flagging on noise.
+    tripwire_min_live_rows: int = 20
 
     def dose_tier_instructions(self) -> dict[str, str | None]:
         """Config-declared tier -> instruction text ("none" -> nothing)."""
