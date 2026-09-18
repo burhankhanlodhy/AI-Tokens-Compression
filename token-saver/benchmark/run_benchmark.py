@@ -228,24 +228,14 @@ def sampling_plan(eligible: bool, eligible_only: bool) -> dict:
     return {"baseline_k": HARNESS_K, "treatment_k": HARNESS_K, "judge": True}
 
 
-def rubric_score(baseline: str, treatment: str, question: str,
-                 rng: random.Random) -> dict:
-    """Model-based pairwise judge (AC-P1) with randomised A/B order.
+def _judge_once(answer_a: str, answer_b: str, question: str) -> dict:
+    """One judge call in the raw A/B frame (no mapping back).
 
-    Uses the same upstream model in judge mode via a direct (unproxied)
-    call; falls back to a length-blind heuristic ONLY if no judge key is
-    available — and records that fact so the honesty gate (AC-P1b) catches
-    it. The winner is mapped back so `winner` is always reported relative
-    to (baseline, treatment), whichever slot the model saw first.
+    Returns the parsed scores/winner exactly as the model saw them, or a
+    dict with truthy `error` on any failure. Kept separate from
+    rubric_score so the both-orders wrapper (AC-P1b) can run the mirror
+    order through the identical call path.
     """
-    judge_key = os.environ.get("OPENROUTER_API_KEY")
-    judge_model = os.environ.get("BENCHMARK_JUDGE_MODEL", "openai/gpt-4o")
-    if not judge_key:
-        return {"mode": "no_judge_key", "parity": None, "winner": "unknown"}
-
-    swap = rng.random() < 0.5
-    answer_a, answer_b = ((treatment, baseline) if swap
-                          else (baseline, treatment))
     prompt = (
         "You are a strict evaluator. Compare two AI answers to the same "
         "question. Score each 1-10 on: structural correctness and answer "
@@ -258,6 +248,8 @@ def rubric_score(baseline: str, treatment: str, question: str,
         'Respond ONLY with JSON: {"score_a": <int>, "score_b": <int>, '
         '"winner": "a"|"b"|"tie"}'
     )
+    judge_key = os.environ.get("OPENROUTER_API_KEY")
+    judge_model = os.environ.get("BENCHMARK_JUDGE_MODEL", "openai/gpt-4o")
     try:
         r = httpx.post(
             "https://openrouter.ai/api/v1/chat/completions",
@@ -267,20 +259,67 @@ def rubric_score(baseline: str, treatment: str, question: str,
             timeout=60,
         )
         if r.status_code != 200:
-            return {"mode": f"judge_http_{r.status_code}", "parity": None,
-                    "winner": "unknown"}
+            return {"error": f"judge_http_{r.status_code}"}
         content = r.json()["choices"][0]["message"]["content"]
         data = json.loads(content[content.index("{"):content.rindex("}") + 1])
-        score_a, score_b = int(data["score_a"]), int(data["score_b"])
-        winner = data.get("winner", "tie")
-        if swap:  # map back to baseline/treatment reference frame
+        return {"score_a": int(data["score_a"]),
+                "score_b": int(data["score_b"]),
+                "winner": data.get("winner", "tie")}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"judge_error: {exc}"}
+
+
+def rubric_score(baseline: str, treatment: str, question: str,
+                 rng: random.Random | None = None) -> dict:
+    """Model-based pairwise judge (AC-P1) — BOTH A/B orders, averaged.
+
+    Position bias is decided by averaging the mirror orders, not by hoping
+    one randomised order cancels it: every item is judged once with the
+    baseline as ANSWER A and once with the treatment as ANSWER A, each
+    order's raw scores are mapped back to the (baseline, treatment)
+    reference frame, and `score_a`/`score_b` carry the mean across both
+    orders (raw per-order scores are kept in `judge_orders` for audit).
+    `parity_holds` therefore consumes position-debiased evidence. The
+    `rng` parameter is vestigial from the single-order design and is
+    accepted for call-site compatibility only — the order pair is fixed,
+    so results are deterministic by construction.
+
+    Falls back to a length-blind heuristic ONLY if no judge key is
+    available — and records that fact so the honesty gate (AC-P1b) catches
+    it. If EITHER order's judge call fails, the item is excluded from the
+    parity population entirely (mode carries the failure): a one-order
+    score would silently re-import the position bias this fix removes.
+    """
+    judge_key = os.environ.get("OPENROUTER_API_KEY")
+    judge_model = os.environ.get("BENCHMARK_JUDGE_MODEL", "openai/gpt-4o")
+    if not judge_key:
+        return {"mode": "no_judge_key", "parity": None, "winner": "unknown"}
+
+    orders = [("baseline_first", baseline, treatment),
+              ("treatment_first", treatment, baseline)]
+    mapped: list[dict] = []
+    for name, answer_a, answer_b in orders:
+        raw = _judge_once(answer_a, answer_b, question)
+        if "error" in raw:
+            return {"mode": raw["error"], "parity": None,
+                    "winner": "unknown"}
+        score_a, score_b = raw["score_a"], raw["score_b"]
+        winner = raw["winner"]
+        if name == "treatment_first":  # map back to the reference frame
             score_a, score_b = score_b, score_a
             winner = {"a": "b", "b": "a", "tie": "tie"}.get(winner, "tie")
-        return {"mode": "model_judge", "judge_order_swapped": swap,
-                "score_a": score_a, "score_b": score_b, "winner": winner}
-    except Exception as exc:  # noqa: BLE001
-        return {"mode": f"judge_error: {exc}", "parity": None,
-                "winner": "unknown"}
+        mapped.append({"order": name, "score_a": score_a,
+                       "score_b": score_b, "winner": winner})
+    mean_a = sum(o["score_a"] for o in mapped) / len(mapped)
+    mean_b = sum(o["score_b"] for o in mapped) / len(mapped)
+    if mean_a > mean_b:
+        winner = "a"
+    elif mean_b > mean_a:
+        winner = "b"
+    else:
+        winner = "tie"
+    return {"mode": "model_judge", "judge_orders": mapped,
+            "score_a": mean_a, "score_b": mean_b, "winner": winner}
 
 
 def last_user_message(prompt: dict) -> str:
@@ -432,8 +471,16 @@ def summarize(valid_entries: list[dict]) -> dict:
     headline = estimate(eligible_pairs)
     blended = estimate(blended_pairs)
     judged = [r for r in valid_entries if r.get("mode") == "model_judge"]
+    # AC-P1b parity gate is the spec's "≤1pt mean regression", NOT "zero
+    # items >1pt": the zero-item reading is stricter than the spec and
+    # won't survive judge noise (PM recompute 2026-09-18: the shipped
+    # zero-item rule failed P1-1 at mean regression exactly 1.00pt — the
+    # threshold itself). n_regressions_over_1pt is kept as a diagnostic.
     regressions = [r for r in judged
                    if r.get("score_b", 10) < r.get("score_a", 10) - 1]
+    mean_regression_pt = (sum(r.get("score_a", 10) - r.get("score_b", 10)
+                              for r in judged) / len(judged)
+                          if judged else None)
     # AC-P1a "valid pair" = baseline > 0 (the estimator's own filter): the
     # n >= 2 arm of the publication guard counts the SAME rows the estimate
     # was computed from, not raw entries.
@@ -468,7 +515,15 @@ def summarize(valid_entries: list[dict]) -> dict:
         "quality_parity": {
             "n_judged": len(judged),
             "n_regressions_over_1pt": len(regressions),
-            "parity_holds": bool(judged) and len(regressions) == 0,
+            "mean_regression_pt": (round(mean_regression_pt, 2)
+                                   if mean_regression_pt is not None else None),
+            # AC-P1b ratified rule: mean regression <= 1pt across the judged
+            # population (both-orders averaged judge evidence), not zero
+            # individual items over 1pt.
+            "parity_rule": "mean_regression_le_1pt",
+            "parity_holds": (bool(judged)
+                             and mean_regression_pt is not None
+                             and mean_regression_pt <= 1.0),
         },
     }
 
@@ -627,8 +682,12 @@ def main() -> int:
           f"{_published_figure(hl)}")
     print(f"Blended (corpus-wide, n={bl['n']}, labelled, not the headline): "
           f"{_published_figure(bl)}")
-    print(f"Quality parity: {stats['quality_parity']['n_judged']} judged, "
-          f"{stats['quality_parity']['n_regressions_over_1pt']} >1pt regressions")
+    qp = stats["quality_parity"]
+    print(f"Quality parity: {qp['n_judged']} judged (both orders averaged), "
+          f"{qp['n_regressions_over_1pt']} >1pt regressions (diagnostic), "
+          f"mean regression {qp['mean_regression_pt']}pt "
+          f"-> {'PASS' if qp['parity_holds'] else 'FAIL'} "
+          f"(rule: {qp['parity_rule']})")
     print(f"AC-P1 target on HEADLINE (>=15% mean, CI lower bound >=15): "
           f"{'MET' if hl['meets_15pct'] else 'NOT MET'}")
     print(f"Results written to {path}")

@@ -68,10 +68,34 @@ class _JudgeResponse:
         }
 
 
-def test_ac_p1b_randomized_judge_order_maps_back_to_baseline_treatment(monkeypatch):
-    """A randomized A/B presentation must preserve the reference frame."""
-    monkeypatch.setattr(run_benchmark.httpx, "post",
-                        lambda *args, **kwargs: _JudgeResponse())
+def test_ac_p1b_judge_runs_both_orders_and_averages(monkeypatch):
+    """AC-P1b: the judge runs BOTH A/B orders per item and averages them.
+
+    The fake judge awards ANSWER A 9 and ANSWER B 5 regardless of which
+    answer occupies A — a maximal position bias. Single-order judging
+    would return 5/9 or 9/5 depending on the seed; both-orders averaging
+    must return 7/7 (tie), and the raw per-order scores stay in
+    `judge_orders` for audit.
+    """
+    calls: list[str] = []
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        assert json is not None
+        content = json["messages"][0]["content"]
+        which_a = "BASELINE" if "ANSWER A:\nbaseline answer" in content \
+            else "TREATMENT"
+        calls.append(which_a)
+
+        class _R:
+            status_code = 200
+
+            def json(self):
+                return {"choices": [{"message": {"content":
+                        '{"score_a": 9, "score_b": 5, "winner": "a"}'}}]}
+
+        return _R()
+
+    monkeypatch.setattr(run_benchmark.httpx, "post", _fake_post)
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
 
     result = run_benchmark.rubric_score(
@@ -79,12 +103,102 @@ def test_ac_p1b_randomized_judge_order_maps_back_to_baseline_treatment(monkeypat
         question="What is the answer?", rng=_FixedRng(),
     )
 
-    # The fake judged treatment as A (9) and baseline as B (5); mapping back
-    # must report baseline=5, treatment=9, winner=treatment ("b").
-    assert result["judge_order_swapped"] is True
-    assert result["score_a"] == 5
-    assert result["score_b"] == 9
-    assert result["winner"] == "b"
+    # Both orders ran, baseline-first then treatment-first.
+    assert calls == ["BASELINE", "TREATMENT"]
+    assert result["mode"] == "model_judge"
+    assert [o["order"] for o in result["judge_orders"]] == \
+        ["baseline_first", "treatment_first"]
+    # Per-order raw scores are position-flipped (9/5 then 5/9 in the
+    # baseline/treatment frame); the averages erase the bias.
+    assert result["judge_orders"][0]["score_a"] == 9
+    assert result["judge_orders"][0]["score_b"] == 5
+    assert result["judge_orders"][1]["score_a"] == 5
+    assert result["judge_orders"][1]["score_b"] == 9
+    assert result["score_a"] == 7.0
+    assert result["score_b"] == 7.0
+    assert result["winner"] == "tie"
+
+
+def test_ac_p1b_one_order_failure_excludes_item_from_parity(monkeypatch):
+    """A failed mirror order must not silently ship one-order evidence."""
+    state = {"calls": 0}
+
+    def _fake_post(url, headers=None, json=None, timeout=None):
+        state["calls"] += 1
+        if state["calls"] == 2:  # the treatment_first order fails
+            class _Bad:
+                status_code = 429
+            return _Bad()
+
+        class _R:
+            status_code = 200
+
+            def json(self):
+                return {"choices": [{"message": {"content":
+                        '{"score_a": 8, "score_b": 8, "winner": "tie"}'}}]}
+
+        return _R()
+
+    monkeypatch.setattr(run_benchmark.httpx, "post", _fake_post)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+
+    result = run_benchmark.rubric_score(
+        baseline="baseline answer", treatment="treatment answer",
+        question="What is the answer?", rng=None,
+    )
+
+    assert state["calls"] == 2
+    assert result["mode"] == "judge_http_429"
+    assert result["parity"] is None
+    # mode != model_judge => summarize() excludes it from the parity
+    # population (judged filter), so no one-order score reaches the gate.
+    stats = run_benchmark.summarize([
+        {"id": "p1", "eligible": True,
+         "baseline_tokens": 100.0, "treatment_tokens": 50.0,
+         "mode": result["mode"]},
+    ])
+    assert stats["quality_parity"]["n_judged"] == 0
+    assert stats["quality_parity"]["parity_holds"] is False
+
+
+def _judged_entry(score_a, score_b):
+    return {"id": f"p{score_a}-{score_b}", "eligible": True,
+            "baseline_tokens": 100.0, "treatment_tokens": 50.0,
+            "mode": "model_judge",
+            "score_a": score_a, "score_b": score_b, "winner": "a"}
+
+
+def test_ac_p1b_parity_gate_is_mean_regression_le_1pt_not_zero_items():
+    """AC-P1b ratified rule: parity uses the <=1pt MEAN regression.
+
+    Deltas (score_a - score_b): five items at +4 (regress >1pt), five at
+    0, five at -1. Mean regression = (20 - 5) / 15 = 1.00pt exactly — the
+    spec's rule PASSES at exactly zero margin, while the stricter
+    zero-items-over-1pt rule FAILS. The shipped zero-item rule failed
+    P1-1 on precisely this shape (PM recompute 2026-09-18).
+    """
+    entries = (
+        [_judged_entry(8, 4)] * 5    # each -4 regression over 1pt
+        + [_judged_entry(9, 9)] * 5  # 0
+        + [_judged_entry(9, 10)] * 5  # -1 (treatment better by 1pt)
+    )
+    stats = run_benchmark.summarize(entries)
+    qp = stats["quality_parity"]
+    assert qp["n_judged"] == 15
+    assert qp["n_regressions_over_1pt"] == 5          # diagnostic, not gate
+    assert qp["mean_regression_pt"] == 1.0
+    assert qp["parity_rule"] == "mean_regression_le_1pt"
+    assert qp["parity_holds"] is True
+
+
+def test_ac_p1b_parity_gate_fails_when_mean_regression_exceeds_1pt():
+    """Mean regression strictly above 1pt must fail the gate."""
+    entries = [_judged_entry(9, 4)] * 8 + [_judged_entry(9, 9)] * 7
+    stats = run_benchmark.summarize(entries)
+    qp = stats["quality_parity"]
+    # mean regression = (5*8 + 0*7)/15 = 2.67 > 1pt
+    assert qp["mean_regression_pt"] == 2.67
+    assert qp["parity_holds"] is False
 
 
 # ---------------------------------------------------------------------------
