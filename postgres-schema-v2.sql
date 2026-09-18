@@ -98,6 +98,7 @@ CREATE TABLE requests (
     dose_tier               TEXT,                                -- resolved tier at request time: 'none' | 'bounded' | 'full'
     grounded_risk           TEXT,                                -- discriminator risk: 'none' | 'bounded' | 'fidelity_critical'
     envelope_shape          INTEGER,                             -- AC-P6j scanner hit on the raw request content (1/0); NULL = no content logged
+    measurement_tag         TEXT,                                -- AC-P6f: stamp from a measurement deployment (TOKEN_SAVER_MEASUREMENT_TAG); /api/tripwire excludes tagged rows
     -- generated column: pre-computed day bucket, indexable without a
     -- function wrapper (fixes the SQLite idx_requests_ts non-indexable
     -- date() expression issue flagged in the v1 schema review)

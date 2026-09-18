@@ -38,6 +38,11 @@ services:
       # ONLY for a benchmark/calibration deployment (see .env.example);
       # never in the production config.
       ALLOW_DOSE_PIN: ${ALLOW_DOSE_PIN:-false}
+      # AC-P6f live-population hygiene: set ONLY on the benchmark/calibration
+      # deployment — every ledger row it writes gets stamped with this tag
+      # and /api/tripwire excludes tagged rows from the live population.
+      # Leave unset (empty) in the production config.
+      TOKEN_SAVER_MEASUREMENT_TAG: ${TOKEN_SAVER_MEASUREMENT_TAG:-}
       # Containers reach Postgres by service name; the password still comes
       # only from the ignored .env via Compose interpolation.
       TOKEN_SAVER_PG_DSN: postgresql://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@postgres:5432/token_saver

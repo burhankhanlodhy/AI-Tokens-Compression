@@ -602,3 +602,87 @@ def test_tripwire_endpoint_rejects_bad_window(tmp_path, monkeypatch):
     with TestClient(app) as c:
         r = c.get("/api/tripwire", params={"days": 0})
     assert r.status_code == 400
+
+
+# --- Measurement-tag live-population exclusion ---------------------------------
+
+
+class TestMeasurementTagExclusion:
+    """PM ruling: the benchmark harness's own rows must be OUTSIDE the
+    tripwire's live population — otherwise the drift rule compares the band
+    against the very rows it was derived from (self-referentially clear)."""
+
+    TAG = "ac_p6c_calibration"
+
+    def _log(self, stats, tag=None):
+        stats.log_request(
+            model="m", route="compress", input_tokens_before=1000,
+            input_tokens_after=700, output_tokens=220, est_cost_before=0.0,
+            est_cost_after=0.0, latency_ms=1.0, compressed=True, status=200,
+            dose_tier="bounded", grounded_risk="fidelity_critical",
+            envelope_shape=0, measurement_tag=tag,
+        )
+
+    def test_stamped_deployment_stamps_its_rows(self, tmp_path, monkeypatch):
+        stats = _sqlite_env(tmp_path, monkeypatch)
+        monkeypatch.setenv("TOKEN_SAVER_MEASUREMENT_TAG", self.TAG)
+        get_settings.cache_clear()
+        self._log(stats)  # explicit tag unset -> deployment stamp applies
+        with stats.get_conn() as conn:
+            row = conn.execute(
+                "SELECT measurement_tag FROM requests").fetchone()
+        assert row["measurement_tag"] == self.TAG
+
+    def test_untagged_deployment_stays_null(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("TOKEN_SAVER_MEASUREMENT_TAG", raising=False)
+        stats = _sqlite_env(tmp_path, monkeypatch)
+        self._log(stats)
+        with stats.get_conn() as conn:
+            row = conn.execute(
+                "SELECT measurement_tag FROM requests").fetchone()
+        assert row["measurement_tag"] is None
+
+    def test_fetch_excludes_tagged_rows(self, tmp_path, monkeypatch):
+        stats = _sqlite_env(tmp_path, monkeypatch)
+        self._log(stats)  # organic (untagged deployment)
+        self._log(stats, tag=self.TAG)  # instrument row (tagged deployment)
+        rows = tripwire.fetch_tripwire_rows(days=7)
+        assert len(rows) == 1
+        assert rows[0]["measurement_tag"] is None
+
+    def test_endpoint_live_population_counts_untagged_only(
+            self, tmp_path, monkeypatch):
+        app, stats = _pinned_app(monkeypatch, tmp_path)
+        monkeypatch.setattr(tripwire, "RESULTS_DIR", tmp_path)
+        from benchmark.run_benchmark import emit_calibration_artifact
+        emit_calibration_artifact(
+            _benchmark_results(), tmp_path, "m", "bounded", "eligible_only",
+            "benchmark_m_x.json")
+        self._log(stats)
+        for _ in range(3):
+            self._log(stats, tag=self.TAG)  # harness traffic, same shape
+        from fastapi.testclient import TestClient
+        with TestClient(app) as c:
+            data = c.get("/api/tripwire").json()
+        # Instrument rows are invisible to both rules: the live dose-drift
+        # population is the single organic row, not 4 (3 tagged + 1).
+        assert data["rows_scanned"] == 1
+        assert data["dose_drift"]["live_rows"] == 1
+        get_settings.cache_clear()
+
+    def test_legacy_migration_adds_measurement_tag(
+            self, tmp_path, monkeypatch):
+        monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "stats.db"))
+        monkeypatch.delenv("TOKEN_SAVER_PG_DSN", raising=False)
+        get_settings.cache_clear()
+        db = tmp_path / "stats.db"
+        conn = sqlite3.connect(db)
+        conn.executescript(_LEGACY_SCHEMA)
+        conn.commit()
+        conn.close()
+        from proxy import stats
+        stats.init_db()
+        conn = sqlite3.connect(db)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(requests)")}
+        conn.close()
+        assert "measurement_tag" in cols

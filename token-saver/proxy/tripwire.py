@@ -238,12 +238,23 @@ def tripwire_report(
 
 _COLUMNS = (
     "id, ts, model, route, dose_tier, grounded_risk, envelope_shape, "
-    "input_tokens_before, input_tokens_after, output_tokens"
+    "input_tokens_before, input_tokens_after, output_tokens, measurement_tag"
 )
+
+# Measurement-instrument rows (stamped by a deployment running the benchmark
+# harness via TOKEN_SAVER_MEASUREMENT_TAG) are never part of the live
+# population: the dose-drift rule would otherwise compare the calibration
+# band against the very rows the band was derived from.
+_UNTAGGED = " (measurement_tag IS NULL OR measurement_tag = '')"
 
 
 def fetch_tripwire_rows(days: int = DEFAULT_WINDOW_DAYS) -> list[dict[str, Any]]:
     """Ledger rows for the tripwire window.
+
+    Measurement rows excluded: any row stamped with a
+    TOKEN_SAVER_MEASUREMENT_TAG (a benchmark-harness deployment) is outside
+    the live population for both rules: the drift rule must not score the
+    band against its own source rows.
 
     Ledger selection mirrors stats.log_request: TOKEN_SAVER_PG_DSN set ->
     Postgres, otherwise the local SQLite ledger — deterministic, never
@@ -266,7 +277,8 @@ def _fetch_rows_sqlite(days: int) -> list[dict[str, Any]]:
     with get_conn() as conn:
         cur = conn.execute(
             f"SELECT {_COLUMNS} FROM requests"
-            " WHERE ts >= ? ORDER BY ts DESC LIMIT 5000",
+            f" WHERE ts >= ? AND {_UNTAGGED}"
+            " ORDER BY ts DESC LIMIT 5000",
             (since,),
         )
         return [dict(r) for r in cur.fetchall()]
@@ -282,7 +294,7 @@ def _fetch_rows_postgres(days: int) -> list[dict[str, Any]]:
             conn.cursor() as cur:
         cur.execute(
             f"SELECT {_COLUMNS} FROM requests"
-            f" WHERE ts >= now() - (%s || ' days')::interval"
+            f" WHERE ts >= now() - (%s || ' days')::interval AND {_UNTAGGED}"
             " ORDER BY ts DESC LIMIT 5000",
             (str(days),),
         )

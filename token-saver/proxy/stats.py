@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS requests (
     status INTEGER NOT NULL DEFAULT 0,
     dose_tier TEXT,                     -- AC-P6f: resolved tier ('none'|'bounded'|'full'); NULL = discriminator never ran
     grounded_risk TEXT,                 -- AC-P6f: discriminator risk ('none'|'bounded'|'fidelity_critical'); NULL = never ran
-    envelope_shape INTEGER              -- AC-P6f: AC-P6j scanner hit on the raw request (1/0); NULL = no content logged
+    envelope_shape INTEGER,             -- AC-P6f: AC-P6j scanner hit on the raw request (1/0); NULL = no content logged
+    measurement_tag TEXT                -- AC-P6f: stamp from a measurement deployment (TOKEN_SAVER_MEASUREMENT_TAG); tripwire excludes tagged rows
 );
 CREATE INDEX IF NOT EXISTS idx_requests_ts ON requests(ts);
 """
@@ -48,6 +49,10 @@ _MIGRATIONS = (
     "ALTER TABLE requests ADD COLUMN dose_tier TEXT",
     "ALTER TABLE requests ADD COLUMN grounded_risk TEXT",
     "ALTER TABLE requests ADD COLUMN envelope_shape INTEGER",
+    # AC-P6f live-population hygiene: rows written by a measurement (benchmark
+    # harness) deployment are stamped and excluded from the tripwire window —
+    # the drift rule must never compare the band against its own source rows.
+    "ALTER TABLE requests ADD COLUMN measurement_tag TEXT",
 )
 
 
@@ -107,6 +112,7 @@ def log_request(
     dose_tier: str | None = None,
     grounded_risk: str | None = None,
     envelope_shape: int | None = None,
+    measurement_tag: str | None = None,
 ) -> None:
     """Append to the request ledger.
 
@@ -120,8 +126,14 @@ def log_request(
     never summed with cache_savings on a single request (taxonomy §1).
     AC-P6f: dose_tier / grounded_risk / envelope_shape feed the live
     tripwire loop; NULLs mean the discriminator never ran on the request.
+    measurement_tag: explicit value wins; otherwise the deployment-level
+    TOKEN_SAVER_MEASUREMENT_TAG stamps every row (benchmark harness
+    deployments) so the tripwire can exclude instrument traffic.
     """
     import os
+
+    if measurement_tag is None:
+        measurement_tag = get_settings().measurement_tag
 
     if os.environ.get("TOKEN_SAVER_PG_DSN"):
         _log_postgres(
@@ -134,6 +146,7 @@ def log_request(
             provider=provider,
             dose_tier=dose_tier, grounded_risk=grounded_risk,
             envelope_shape=envelope_shape,
+            measurement_tag=measurement_tag,
         )
         return
     with _lock, get_conn() as conn:
@@ -141,8 +154,8 @@ def log_request(
             "INSERT INTO requests (ts, model, route, input_tokens_before, "
             "input_tokens_after, output_tokens, est_cost_before, est_cost_after, "
             "latency_ms, compressed, status, l1_tokens_stripped, l1_savings, "
-            "dose_tier, grounded_risk, envelope_shape) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "dose_tier, grounded_risk, envelope_shape, measurement_tag) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 time.time(),
                 model,
@@ -160,6 +173,7 @@ def log_request(
                 dose_tier,
                 grounded_risk,
                 envelope_shape,
+                measurement_tag,
             ),
         )
 
@@ -170,6 +184,7 @@ def _log_postgres(
     cache_status, cache_savings, l1_tokens_stripped=0, l1_savings=0.0,
     provider=None,
     dose_tier=None, grounded_risk=None, envelope_shape=None,
+    measurement_tag=None,
 ) -> None:
     import psycopg
 
@@ -196,13 +211,13 @@ def _log_postgres(
                 est_cost_before, est_cost_after, cache_status, cache_savings,
                 l1_tokens_stripped, l1_savings,
                 latency_ms, compressed, status,
-                dose_tier, grounded_risk, envelope_shape)
+                dose_tier, grounded_risk, envelope_shape, measurement_tag)
             SELECT '00000000-0000-0000-0000-000000000000',
                    COALESCE((SELECT id FROM providers WHERE name = %s),
                             (SELECT id FROM providers WHERE name = 'legacy')),
                    %s, %s, %s, %s, %s, %s::numeric, %s::numeric, %s,
                    %s::numeric, %s::numeric, %s, %s::numeric, %s, %s,
-                   %s, %s, %s
+                   %s, %s, %s, %s
             """,
             (
                 provider or "legacy", model, route,
@@ -213,6 +228,7 @@ def _log_postgres(
                 latency_ms,
                 compressed, status,
                 dose_tier, grounded_risk, envelope_shape,
+                measurement_tag,
             ),
         )
 

@@ -12,6 +12,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROXY_ROOT = Path(__file__).resolve().parent.parent
@@ -159,6 +160,19 @@ class Settings(BaseSettings):
     # trusted; below it the rule reports insufficient_live_rows instead of
     # flagging on noise.
     tripwire_min_live_rows: int = 20
+    # Measurement-instrument tag: a deployment running the benchmark harness
+    # (non-prod, ALLOW_DOSE_PIN=true) sets TOKEN_SAVER_MEASUREMENT_TAG so
+    # every ledger row it writes is stamped and the /api/tripwire fetch
+    # EXCLUDES tagged rows from the live population. Without this, the
+    # dose-drift rule would compare the calibration band against the very
+    # rows the band was derived from — self-referentially clear, meaningless.
+    measurement_tag: str | None = Field(
+        default=None,
+        # Explicit env name (deployment-scope switches follow the
+        # TOKEN_SAVER_* convention; the field-name default would be
+        # MEASUREMENT_TAG).
+        validation_alias="TOKEN_SAVER_MEASUREMENT_TAG",
+    )
 
     def dose_tier_instructions(self) -> dict[str, str | None]:
         """Config-declared tier -> instruction text ("none" -> nothing)."""
