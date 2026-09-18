@@ -33,6 +33,11 @@ services:
       # L1 lossless structural cleanup — ON by default since B-26; set
       # L1_ENABLED=false in .env to disable (see README flag note).
       L1_ENABLED: ${L1_ENABLED:-true}
+      # P6-3 benchmark-only dose-pin gate: lets the proxy honor the
+      # x-token-saver-dose-pin control header. Default FALSE — flip it on
+      # ONLY for a benchmark/calibration deployment (see .env.example);
+      # never in the production config.
+      ALLOW_DOSE_PIN: ${ALLOW_DOSE_PIN:-false}
       # Containers reach Postgres by service name; the password still comes
       # only from the ignored .env via Compose interpolation.
       TOKEN_SAVER_PG_DSN: postgresql://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@postgres:5432/token_saver

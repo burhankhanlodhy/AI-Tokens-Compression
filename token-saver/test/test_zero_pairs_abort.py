@@ -25,7 +25,8 @@ for p in (str(ROOT), str(ROOT / "benchmark")):
 import run_benchmark as rb  # noqa: E402
 
 
-def _failed_arm(client, base_url, model, prompt, conciseness, k=1):
+def _failed_arm(client, base_url, model, prompt, conciseness, k=1,
+                dose_pin=None):
     """Stub run_arm: every call fails the way a 401 from the wrong
     upstream does (run_one retries 3x then returns ok=False)."""
     return {"ok": False, "n_ok": 0, "k": k, "sampled": True,
@@ -69,7 +70,8 @@ def test_some_valid_pairs_still_writes_results(tmp_path, monkeypatch,
         httpx, "get",
         lambda *a, **k: type("R", (), {"status_code": 200})())
 
-    def one_ok_arm(client, base_url, model, prompt, conciseness, k=1):
+    def one_ok_arm(client, base_url, model, prompt, conciseness, k=1,
+                   dose_pin=None):
         return {"ok": True, "n_ok": k, "k": k, "sampled": True,
                 "tokens_total": 100 * k, "text": "x", "tokens_source": "tiktoken",
                 "error": None}

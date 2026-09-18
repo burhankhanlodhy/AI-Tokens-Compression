@@ -929,6 +929,22 @@ def build_parser() -> argparse.ArgumentParser:
                     default="bounded",
                     help="Dose tier the treatment arm was pinned to for the "
                          "calibration run (default: bounded).")
+    # P6-3 tier pin, harness side (PM blocker ruling, 2026-09-18): the pin
+    # previously existed only on run_one/run_arm signatures and was NEVER
+    # passed by main() — a calibration run would silently measure
+    # treatment == baseline (band of ~0pp consumed as calibrated truth).
+    # This flag is the ONLY way the pin leaves the harness; the proxy
+    # honors it solely behind ALLOW_DOSE_PIN=true (benchmark-only), so
+    # production traffic can never self-raise a tier. --emit-calibration
+    # additionally REFUSES to run unless the pin is set AND equals the
+    # tier the artifact would claim (enforced in main()).
+    ap.add_argument("--dose-pin", dest="dose_pin", default=None,
+                    help="Force the proxy's dose tier to this value on "
+                         "every request (x-token-saver-dose-pin header). "
+                         "REQUIRED for calibration runs; honored by the "
+                         "proxy only when that deployment sets "
+                         "ALLOW_DOSE_PIN=true. Never point a pinned run "
+                         "at a production deployment.")
     # C-9 spend ruling: eligible-only is the DEFAULT shipping shape
     # (~970 calls). The full-55 measured shape (~3,300 + judges) requires
     # an explicit --full-corpus owner override — it can never happen
@@ -1100,6 +1116,32 @@ def main() -> int:
     args = build_parser().parse_args()
     eligible_only = args.mode == "eligible_only"
 
+    # P6-3 tier pin, harness-side guard (PM blocker ruling, 2026-09-18):
+    # --emit-calibration writes a band artifact /api/tripwire consumes as
+    # calibrated truth, so it may only run when the treatment arm was
+    # ACTUALLY pinned to the tier the artifact claims. Without this, a run
+    # with no --dose-pin resolves every grounded fidelity-critical fixture
+    # to tier "none" (grounded_calibration_green=False), treatment ==
+    # baseline, and the artifact publishes a ~0pp band as the calibration.
+    # Refusal happens BEFORE any spend: no health check, no provider call,
+    # no artifact.
+    if args.emit_calibration:
+        if args.dose_pin is None:
+            print("ERROR: --emit-calibration requires --dose-pin: the "
+                  "calibration band is measured on the PINNED dose tier, "
+                  "and an unpinned run resolves grounded fidelity-critical "
+                  "fixtures to tier 'none' (treatment == baseline).",
+                  file=sys.stderr)
+            return 1
+        if args.dose_pin != args.calibration_tier:
+            print(f"ERROR: --emit-calibration refuses a tier mismatch: "
+                  f"the run pins the treatment arm to '{args.dose_pin}' "
+                  f"but the artifact would claim tier "
+                  f"'{args.calibration_tier}'. The tripwire would calibrate "
+                  f"drift against a band the arm never measured.",
+                  file=sys.stderr)
+            return 1
+
     if not os.environ.get("OPENROUTER_API_KEY"):
         print("ERROR: OPENROUTER_API_KEY not set. No results will be fabricated.",
               file=sys.stderr)
@@ -1162,10 +1204,16 @@ def main() -> int:
           f"calls. Ctl-C now if this is not the authorized budget.")
     for p, eligible in plans:
         plan = sampling_plan(eligible, eligible_only)
+        # P6-3 tier pin: passed to BOTH arms for symmetric evidence — the
+        # baseline arm (conciseness 0) ignores it by design; the treatment
+        # arm's tier is forced to the pin behind the proxy's
+        # ALLOW_DOSE_PIN gate. Never set here unless --dose-pin was given.
         base = run_arm(client, args.base_url, args.model, p,
-                       conciseness=False, k=plan["baseline_k"])
+                       conciseness=False, k=plan["baseline_k"],
+                       dose_pin=args.dose_pin)
         treat = run_arm(client, args.base_url, args.model, p,
-                        conciseness=True, k=plan["treatment_k"])
+                        conciseness=True, k=plan["treatment_k"],
+                        dose_pin=args.dose_pin)
         entry = entry_from_arms(p, eligible, base, treat)
         # PM v4 (consequence 2): per-sample reasoning evidence is published
         # with the entry, so the headline's composition is auditable.
@@ -1213,6 +1261,11 @@ def main() -> int:
         "temperature": TEMPERATURE,
         "harness_k": HARNESS_K,
         "sampling_mode": args.mode,
+        # P6-3 audit stamp: records whether (and to what tier) this run
+        # pinned the treatment arm. Null on unpinned runs — a calibration
+        # artifact whose source shows dose_pin=null must never exist (see
+        # the main() emit-calibration guard).
+        "dose_pin": args.dose_pin,
         "n_fixture": len(prompts),
         "n_valid": len(valid),
         **stats,

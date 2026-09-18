@@ -230,7 +230,7 @@ def test_c7c_cli_print_routes_through_publication_fields(
                         lambda *a, **k: type("R", (), {"status_code": 200})())
     monkeypatch.setattr(run_benchmark.httpx, "Client", lambda: object())
 
-    def _arm(client, base, model, p, conciseness, k):
+    def _arm(client, base, model, p, conciseness, k, dose_pin=None):
         per = 99.0 if conciseness else 100.0  # true 1% effect
         return {"ok": True, "n_ok": k, "k": k, "sampled": k > 0,
                 "tokens_total": per * k, "text": "x",
