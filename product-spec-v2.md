@@ -78,6 +78,8 @@ Author: @product-manager | Draft for review | Supersedes v1 for sprint 2 scope; 
 - AC-A13. Secret handling (Postgres-native): API keys stored only as hashes (in `api_keys`); no raw keys in DB, logs, or error bodies.
 
 ### P1 output-conciseness benchmark (P1-1 — revise-and-re-run, per audit 2026-09)
+
+> **Run status (board P-items, ratified 2026-09-17/18):** the P1-1 re-run is **complete and committed** — HEAD `71aadc6` carries the both-orders artifact `benchmark_google_gemini-3.5-flash-lite_20260918T040421Z.json` (eligible-subset headline 52.29pp, parity 0.9pt ≤ 1.0 PASS), the superseded pre-conformance 00:56Z run is archived (P1), and option (a) carve (P3) + AC-P1b reproduction tolerance (P5) are ratified in-file. The **published claim is the carved headline: non-code non-RAG n=10/55 = 57.71pp at 0.35pt mean regression** (RAG published beside it as suppressed-pending-fix). Pending: P2 per-category emission, P4 empty-box at N_PROMPTS=10 with gemini CV, P6 RAG discriminator design, P7 QA independent reproduction.
 > **Status (post-audit):** the initial two runs are **statistically uninterpretable** and their "target NOT MET" conclusion is withdrawn. Root cause: the harness reported a *mean-of-per-prompt-ratios* with one sample per arm — an estimator that collapses to ≈0 (and can go negative) under realistic output-length CV regardless of the true effect, so it could not distinguish "no effect" from "~17% effect." AC-P1..P1c below are the corrected, preregistered criteria for the re-run. The feature's enable-by-default decision is **re-opened** pending this re-run; it must not stand on the withdrawn evidence.
 
 **P1-1 paid run — the EXACT ratified invocation (run this, not a recalled variant).**
