@@ -114,12 +114,16 @@ def is_eligible(prompt: dict) -> bool:
 
 
 def grounded_risk_of(prompt: dict) -> str:
-    """P6-1 production grounded-answer risk on the prompt's LAST user message.
+    """P6-1 production grounded-answer risk on the full message list.
 
     C-4a rule (P6-1): the harness imports the production symbol — never
     re-implements it — so a patched detector flips the recorded verdicts
-    on the next run. Recorded per entry as ``grounded_risk`` metadata;
-    pre-AC-P6c this does NOT touch any published figure.
+    on the next run. Since P6-4 (05be0f3) ``grounded_answer_risk`` scans
+    system + EVERY user message (OpenAI ``role: system`` and Anthropic
+    typed content blocks alike); a source block anywhere grounds the
+    request at fidelity_critical. Recorded per entry as
+    ``grounded_risk`` metadata; pre-AC-P6c this does NOT touch any
+    published figure.
     """
     sys.path.insert(0, str(ROOT.parent))
     from proxy.grounded import grounded_answer_risk
