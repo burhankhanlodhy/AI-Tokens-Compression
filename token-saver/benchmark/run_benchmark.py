@@ -886,6 +886,17 @@ def build_parser() -> argparse.ArgumentParser:
     # test_c9_p1_model_default_is_the_ratified_instrument_slug.
     ap.add_argument("--model", default="google/gemini-3.5-flash-lite")
     ap.add_argument("--out", default=str(ROOT / "results"))
+    # AC-P1b supersession: default = the new artifact DEFERS to the current
+    # publication authority (a reproduction run never demotes it — PM
+    # ruling 0c96677). Only a run ratified as the replacement publication
+    # passes this flag, which stamps the previous authority and archives
+    # older generations.
+    ap.add_argument("--supersede-authority", dest="supersede_authority",
+                    action="store_true",
+                    help="RATIFIED REPLACEMENT ONLY: make this run the "
+                         "publication authority (stamps the previous "
+                         "authority, archives older generations). Without "
+                         "it the run defers to the current authority.")
     # C-9 spend ruling: eligible-only is the DEFAULT shipping shape
     # (~970 calls). The full-55 measured shape (~3,300 + judges) requires
     # an explicit --full-corpus owner override — it can never happen
@@ -918,15 +929,17 @@ def planned_judged_ids(plans: list[tuple[dict, bool]],
 
 
 # AC-P1b extension (P1 artifact supersession, PM 2026-09-18): every
-# committed artifact carries `superseded_by` — None on the authoritative
-# artifact, the successor's filename on a superseded one. Lifecycle on
-# every new run: the previous authoritative artifact is stamped
-# `superseded_by: <new file>` and artifacts OLDER than that (already
-# carrying a non-null pointer from an earlier generation) move to
-# `results/archive/` — so `results/` always holds at most the
-# authoritative pair and no consumer needs commit messages to know which
-# artifact is current. QA asserts the field on any artifact pair found in
-# the results directory (test_ac_p1b_supersession.py).
+# committed artifact carries `superseded_by` — the publication authority
+# carries null, every other artifact points at it. Supersession is a
+# RATIFICATION act, not a newness side effect (PM ruling on the P7
+# reproduction, commit 0c96677: a corroborating run does NOT replace the
+# published artifact). Default on every run: the new artifact DEFERS to
+# the current authority (its superseded_by names the authority). Only
+# `--supersede-authority` (a run ratified as the replacement publication,
+# like the P1-1 005625Z -> 040421Z swap) stamps the previous authority,
+# archives older generations to results/archive/, and makes the new
+# artifact authoritative. Either way results/ holds at most the
+# authoritative pair and no consumer needs commit messages.
 ARCHIVE_SUBDIR = "archive"
 
 
@@ -1098,17 +1111,27 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     path = out / f"benchmark_{args.model.replace('/', '_')}_{stamp}.json"
-    # AC-P1b supersession extension: the new artifact is the authoritative
-    # one (superseded_by null); whoever was authoritative before it gets
-    # stamped by stamp_supersession() immediately after the write, and
-    # older generations move to results/archive/.
-    summary["superseded_by"] = None
-    summary["supersedes"] = _artifact_authoritative_names(out)
-    path.write_text(json.dumps(summary, indent=2))
-    supersession = stamp_supersession(out, path.name)
-    if supersession["archived"]:
-        print(f"Supersession: archived {len(supersession['archived'])} older "
-              f"generation(s) to results/{ARCHIVE_SUBDIR}/")
+    # AC-P1b supersession extension: DEFAULT = defer to the current
+    # publication authority (reproduction runs never demote it — PM
+    # ruling 0c96677). Only --supersede-authority (a run ratified as the
+    # replacement publication) stamps the previous authority and archives
+    # older generations via stamp_supersession().
+    prior_authorities = _artifact_authoritative_names(out)
+    if args.supersede_authority:
+        summary["superseded_by"] = None
+        summary["supersedes"] = prior_authorities
+        path.write_text(json.dumps(summary, indent=2))
+        supersession = stamp_supersession(out, path.name)
+        if supersession["archived"]:
+            print(f"Supersession: archived {len(supersession['archived'])} "
+                  f"older generation(s) to results/{ARCHIVE_SUBDIR}/")
+    else:
+        # Defer: point at the current authority; with zero authorities on
+        # disk (fresh results dir) this run IS the authority (null).
+        summary["superseded_by"] = (prior_authorities[0]
+                                    if len(prior_authorities) == 1 else None)
+        summary["supersedes"] = []
+        path.write_text(json.dumps(summary, indent=2))
     hl = stats["headline"]
     bl = stats["blended_corpus_wide"]
     # AC-P1g: the CLI prints the PUBLISHED fields and nothing else. Reading
