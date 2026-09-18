@@ -58,11 +58,13 @@ def test_every_artifact_carries_superseded_by():
 
 @pytest.mark.xfail(reason="superseded_by not yet emitted (P2 remit, AC-P1b extension)", strict=False)
 def test_superseded_by_pointers_resolve_and_terminate():
+    pointers_seen = []
     for path in _benchmark_artifacts():
         data = json.loads(path.read_text())
         target = data.get("superseded_by")
         if target is None:
             continue
+        pointers_seen.append((path.name, target))
         successor = RESULTS / target
         assert successor.is_file(), (
             f"{path.name} names nonexistent successor {target}"
@@ -72,6 +74,13 @@ def test_superseded_by_pointers_resolve_and_terminate():
             f"supersession chain: {target} is itself superseded by "
             f"{successor_data.get('superseded_by')}"
         )
+    # Vacuous-pass guard (PM review, 2026-09-18): with strict=False an
+    # empty loop xpasses silently and would keep "passing" after the
+    # emitter lands whether or not any pointer was ever exercised.
+    assert pointers_seen, (
+        "vacuous: no artifact in benchmark/results/ carries `superseded_by` "
+        "— the pointer-resolution check exercised nothing"
+    )
 
 
 @pytest.mark.xfail(reason="superseded_by not yet emitted (P2 remit, AC-P1b extension)", strict=False)
