@@ -14,16 +14,23 @@ Design (product-spec-v2.md §P6, ratified by PM 2026-09-18):
   supplied, no mutation of its input. Same canonical prompt → same
   decision, always (AC-P1d cache-stability preserved, P6-5).
 
-- Signals are CONTENT-SHAPE only, evaluated on the LAST user message:
+- Signals are CONTENT-SHAPE only, evaluated over the SYSTEM messages and
+EVERY user message (P6-4 scope fix: grounding frequently lives in the
+system prompt — "Use only the provided policy text. POLICY: ..." — and
+scanning only the last user turn left prod-shaped requests ungrounded,
+i.e. maximum dose with no guard):
   1. explicit source-context blocks ("Retrieved knowledge:", "Excerpt",
      "Source A/B", "Runbook excerpt:", "Log excerpt:", "Code context:",
-     "Playbook:", quoted policy fragments) → ``fidelity_critical`` —
-     the model is being asked to answer FROM quoted material, so the
-     full "cut the padding" instruction can drop load-bearing facts;
+     "Playbook:", quoted policy fragments, uppercase labeled data blocks
+     like "POLICY:", "LEDGER DATA:", "REGULATION 4.2:", "RUNBOOK:")
+     → ``fidelity_critical`` — the model is being asked to answer FROM
+     quoted material, so the full "cut the padding" instruction can drop
+     load-bearing facts;
   2. citation verbs ("per the", "according to", "what are our
      obligations under", "which source", ...) and answer-reference
-     language ("based on the above", "correct the excerpt", ...) →
-     ``bounded`` — the answer is expected to lean on provided material;
+     language ("based on the above", "use only this schedule",
+     "correct the excerpt", ...) → ``bounded`` — the answer is expected
+     to lean on provided material;
   3. nothing of the above → ``none``.
 
 - A BARE citation verb or the word "policy" with NO source block and NO
@@ -111,29 +118,55 @@ _ANSWER_REFERENCE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
         r"\bthe provided\b",
         r"\bprovided (?:documentation|context|sources?|policy|playbook|"
         r"knowledge|material|snippet)s?\b",
-        r"\buse only the\b",
+        r"\buse only th(?:is|e|ese)\b",
         r"\bcite the\b",
     )
 )
 
 
+# --- Signal 1c: uppercase labeled data blocks (P6-4 signal-set fix) ---
+# "POLICY:", "LEDGER DATA:", "REGULATION 4.2:", "CLAUSE 7 (TERMINATION):",
+# "RATES (30yr fixed):", "RUNBOOK:" — a sentence- or line-initial
+# ALL-CAPS label (optionally with a parenthetical qualifier) followed by
+# a colon is how pasted reference material is introduced. The label core
+# must be at least two characters of [A-Z0-9] so ordinary prose
+# ("Points:", "Q:") never matches, and a bare capitalized word does not.
+_LABELED_BLOCK = re.compile(
+    r"(?:^|[\n.])\s*[A-Z][A-Z0-9.\-]*[A-Z0-9](?:\s+[A-Z0-9.\-]+)*"
+    r"\s*(?:\([^)]{0,40}\))?:\s"
+)
+
+
 def _last_user_text(messages: list[dict]) -> str | None:
     """Text of the LAST user message (str content or joined text parts)."""
-    for msg in reversed(messages or []):
-        if msg.get("role") != "user":
+    texts = _user_and_system_texts(messages, roles=("user",))
+    return texts[-1] if texts else None
+
+
+def _user_and_system_texts(
+    messages: list[dict], roles: tuple[str, ...] = ("system", "user")
+) -> list[str]:
+    """Texts of the messages whose role is in ``roles``, in order.
+
+    Handles both content shapes: a plain string (OpenAI ``role: system`` /
+    ``role: user``) and a list of typed parts (Anthropic-style content
+    blocks — text parts joined, non-text parts ignored).
+    """
+    texts: list[str] = []
+    for msg in messages or []:
+        if msg.get("role") not in roles:
             continue
         content = msg.get("content")
         if isinstance(content, str):
-            return content
-        if isinstance(content, list):
+            texts.append(content)
+        elif isinstance(content, list):
             parts = [
                 p.get("text", "")
                 for p in content
                 if isinstance(p, dict) and p.get("type") == "text"
             ]
-            return "\n".join(parts)
-        return None
-    return None
+            texts.append("\n".join(parts))
+    return texts
 
 
 def _has_quoted_policy_fragment(text: str) -> bool:
@@ -154,18 +187,25 @@ def grounded_answer_risk(
     risk itself does not depend on any setting today).
     """
     del config  # risk is content-shape only; config kept for signature parity
-    text = _last_user_text(messages)
-    if text is None:
+    # P6-4 scope fix: grounding lives in system messages as often as in
+    # the user turn ("Use only the provided policy text. POLICY: ...").
+    # Scan system + every user message; a source block ANYWHERE grounds
+    # the request at fidelity_critical.
+    texts = _user_and_system_texts(messages)
+    if not texts:
         return {"grounded": False, "risk": RISK_NONE}
 
-    has_source_block = (
-        any(p.search(text) for p in _SOURCE_BLOCK_PATTERNS)
-        or _has_quoted_policy_fragment(text)
+    has_source_block = any(
+        p.search(t) for t in texts for p in _SOURCE_BLOCK_PATTERNS
+    ) or any(_has_quoted_policy_fragment(t) for t in texts) or any(
+        _LABELED_BLOCK.search(t) for t in texts
     )
     if has_source_block:
         return {"grounded": True, "risk": RISK_FIDELITY_CRITICAL}
 
-    answer_reference = any(p.search(text) for p in _ANSWER_REFERENCE_PATTERNS)
+    answer_reference = any(
+        p.search(t) for t in texts for p in _ANSWER_REFERENCE_PATTERNS
+    )
     if answer_reference:
         # Citation verbs co-occurring with answer-reference language are
         # the same bounded case; a bare citation verb alone is NOT a

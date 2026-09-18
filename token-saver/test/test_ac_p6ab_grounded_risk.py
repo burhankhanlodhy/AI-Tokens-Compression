@@ -75,10 +75,6 @@ RAG_021_030_EXPECTED = {
 
 
 @pytest.mark.parametrize("pid,expected_risk", RAG_021_030_EXPECTED.items())
-@pytest.mark.xfail(
-    reason="AC-P6g pending P6-4 scope + signal-set fix (@application-developer)",
-    strict=False,
-)
 def test_ac_p6g_rag_021_030_pin_expected_risk(pid, expected_risk):
     """Every short RAG fixture carries grounding in its system message.
 
@@ -102,10 +98,6 @@ def test_ac_p6g_non_rag_fixtures_remain_ungrounded(pid):
     }
 
 
-@pytest.mark.xfail(
-    reason="AC-P6g pending P6-4 scope + signal-set fix (@application-developer)",
-    strict=False,
-)
 def test_ac_p6g_prod_shaped_system_policy_block_is_fidelity_critical():
     """A long request grounded by an OpenAI role=system policy block must
     never fall through to the ungrounded/full-dose path."""
@@ -168,6 +160,73 @@ def test_bare_citation_verb_without_source_block_does_not_ground():
                                                  "risk": RISK_NONE}
 
 
+# --- P6-4: scope + signal-set regression (system-message grounding) ----
+
+
+def test_p6a4_labeled_block_signal_grounds_fidelity_critical():
+    """P6-4 signal-set: an uppercase labeled data block ("LEDGER DATA:",
+    "TRAIN SCHEDULE:") in the system message is pasted reference material
+    → fidelity_critical, closing the rag-023/026/028 coverage gap."""
+    for label in ("LEDGER DATA", "STOCK DATA", "TRAIN SCHEDULE",
+                  "REGULATION 4.2", "RUNBOOK", "RATES (30yr fixed)"):
+        msgs = [
+            {"role": "system",
+             "content": f"You are a data assistant. {label}: 42, 17, 99."},
+            {"role": "user", "content": "Summarize the trend, please."},
+        ]
+        assert grounded_answer_risk(msgs, cfg()) == {
+            "grounded": True, "risk": RISK_FIDELITY_CRITICAL}, label
+
+
+def test_p6a4_prose_labels_and_single_letters_do_not_ground():
+    """P6-4 negative control: a bare capitalized word ("Points:"), a
+    single-letter label ("Q:"), and ordinary sentence-initial prose must
+    NOT trip the labeled-block signal — the uppercase pattern is only for
+    ALL-CAPS labels of 2+ characters."""
+    cases = [
+        [{"role": "user", "content":
+          "Can you compare the pricing tiers? Points: cost, support, and "
+          "setup time matter most to our team this quarter."}],
+        [{"role": "user", "content":
+          "Q: What is the deadline for the quarterly report? "
+          "Asking so we can plan the review meeting accordingly."}],
+        [{"role": "user", "content":
+          "Please note the meeting moved. I will send the updated agenda "
+          "and dial-in details before the end of the day tomorrow."}],
+    ]
+    for msgs in cases:
+        assert grounded_answer_risk(msgs, cfg()) == {
+            "grounded": False, "risk": RISK_NONE}
+
+
+def test_p6a4_grounding_in_earlier_user_turn_is_detected():
+    """P6-4 scope: grounding in ANY user message (not just the last)
+    grounds the request — multi-turn conversations keep their guard."""
+    msgs = [
+        {"role": "user", "content":
+         "Use only this schedule. TRAIN SCHEDULE: Express 07:15, 09:45; "
+         "Local 06:30, 08:00 — journey 3h05m."},
+        {"role": "assistant", "content": "Understood, I have the schedule."},
+        {"role": "user", "content": "OK — what about arriving by 3pm?"},
+    ]
+    assert grounded_answer_risk(msgs, cfg()) == {
+        "grounded": True, "risk": RISK_FIDELITY_CRITICAL}
+
+
+def test_p6a4_anthropic_system_content_blocks_shape_is_detected():
+    """P6-4 scope: system grounding delivered as Anthropic-style typed
+    content parts (not a plain string) must still classify."""
+    msgs = [
+        {"role": "system", "content": [
+            {"type": "text",
+             "text": "You are a travel assistant. Use only this schedule. "
+                     "TRAIN SCHEDULE: Express 07:15 — journey 2h10m."}]},
+        {"role": "user", "content": "What runs before 3pm?"},
+    ]
+    assert grounded_answer_risk(msgs, cfg()) == {
+        "grounded": True, "risk": RISK_FIDELITY_CRITICAL}
+
+
 def test_answer_reference_language_bounds_without_source_block():
     """Answer-reference language ('based on the above') grounds at
     `bounded` — references provided material without quoting it."""
@@ -190,8 +249,8 @@ def test_same_canonical_prompt_same_decision_always():
         assert grounded_answer_risk(msgs, cfg()) == first
     # interleaved with a different prompt — no state carryover
     other = PROMPTS["rag-021"]["messages"]
-    assert grounded_answer_risk(other, cfg())["risk"] in (RISK_NONE,
-                                                          RISK_BOUNDED)
+    assert grounded_answer_risk(other, cfg())["risk"] in (
+        RISK_NONE, RISK_BOUNDED, RISK_FIDELITY_CRITICAL)
     assert grounded_answer_risk(msgs, cfg()) == first
 
 
