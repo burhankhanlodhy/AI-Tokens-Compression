@@ -381,7 +381,8 @@ def entry_from_arms(p: dict, eligible: bool, base: dict, treat: dict) -> dict:
 PUBLICATION_FLOOR_PP = 3.0
 
 
-def _publication(e: dict, n_valid: int) -> dict:
+def _publication(e: dict, n_valid: int,
+                 population_incomplete: bool = False) -> dict:
     """AC-P1g publication contract (C-10, ratified; floor amended B4
     2026-09-17 to the MEASURED blind-spot width) — applies to EVERY
     published figure, headline AND blended alike (PM amendment: a suppressed
@@ -389,6 +390,9 @@ def _publication(e: dict, n_valid: int) -> dict:
     noise-dressed-as-signal publication one field over).
 
     A figure carries a percentage ONLY when it is a measured effect:
+      - the parity population the run planned is COMPLETE (AC-P1g clause,
+        PM 1b: an 80%-lost run publishes no percentage — the artifact is
+        what gets quoted, not the boolean beside it),
       - >= 2 valid pairs with a non-degenerate (hi > lo) 95% interval,
       - the interval excludes 0 on the reduction side (the AC-P1a-gate
         null-FP AND contract — a CI including 0 is no measured effect
@@ -399,15 +403,29 @@ def _publication(e: dict, n_valid: int) -> dict:
     pinned by the committed CI-blocking test, so it is contract, not style)
     and reported_reduction_pct is null.
 
-    Branch order encodes the QA-pinned precedence: a sub-floor estimate
-    reports the 3pp blind-spot reason even when the interval is ALSO
-    degenerate (the committed test feeds a single pair at 1.5pp and asserts
-    "3pp" in the note); a healthy estimate with a degenerate interval still
-    ships no percentage — that is the n=1-at-3.1pp zero-width-CI case.
+    Branch order encodes the QA-pinned precedence: population
+    incompleteness is precedence-0 — above the 3pp check — because a
+    collapsed population invalidates the measurement itself, not just its
+    floor clearance; a sub-floor estimate still reports the 3pp
+    blind-spot reason even when the interval is ALSO degenerate (the
+    committed test feeds a single pair at 1.5pp and asserts "3pp" in the
+    note); a healthy estimate with a degenerate interval still ships no
+    percentage — that is the n=1-at-3.1pp zero-width-CI case.
     """
     est = e["mean_reduction_pct"]
     lo, hi = e["ci95_interval"]
     degenerate = n_valid < 2 or not hi > lo
+    if population_incomplete:
+        return {"publication_status": "no_measurable_effect",
+                "reported_reduction_pct": None,
+                "publication_note": ("parity population incomplete: the run "
+                                     "planned more judged items than "
+                                     "completed both orders (see "
+                                     "quality_parity.upstream_lost_ids / "
+                                     "excluded_judge_ids) — a percentage "
+                                     "off a partial population is never "
+                                     "publishable, regardless of the "
+                                     "estimate")}
     if est <= PUBLICATION_FLOOR_PP:
         note = (f"estimated {round(est, 2)}pp is at or below the 3pp "
                 "publication floor — inside the measured blind-spot width "
@@ -541,6 +559,14 @@ def summarize(valid_entries: list[dict],
     # was computed from, not raw entries.
     n_valid_headline = sum(1 for b, _ in eligible_pairs if b > 0)
     n_valid_blended = sum(1 for b, _ in blended_pairs if b > 0)
+    # AC-P1g suppression on incomplete population (PM 1b): ONLY active when
+    # the caller supplied the planned denominator (the run path) — a
+    # population that lost items before judging publishes NO percentage on
+    # either field, so a `parity_holds: false` artifact can never sit next
+    # to a sellable headline. Stats-helper callers (no denominator) keep
+    # the pre-1b semantics.
+    population_incomplete = (n_eligible_planned is not None
+                             and not population_complete)
     return {
         "headline_population": "eligible_subset",
         "n_eligible": len(eligible),
@@ -550,7 +576,8 @@ def summarize(valid_entries: list[dict],
             "ci95_interval": [round(v, 2) for v in headline["ci95_interval"]],
             "meets_15pct": bool(headline["mean_reduction_pct"] >= 15
                                 and headline["mean_reduction_pct"] - headline["ci95"] >= 15),
-            **_publication(headline, n_valid_headline),
+            **_publication(headline, n_valid_headline,
+                           population_incomplete=population_incomplete),
         },
         "blended_corpus_wide": {
             "label": ("corpus-wide blended over ALL valid prompts — NOT the "
@@ -565,7 +592,8 @@ def summarize(valid_entries: list[dict],
             "mean_output_reduction_pct": round(blended["mean_reduction_pct"], 2),
             "ci95_halfwidth": round(blended["ci95"], 2),
             "ci95_interval": [round(v, 2) for v in blended["ci95_interval"]],
-            **_publication(blended, n_valid_blended),
+            **_publication(blended, n_valid_blended,
+                           population_incomplete=population_incomplete),
         },
         "quality_parity": {
             "n_judged": len(judged),

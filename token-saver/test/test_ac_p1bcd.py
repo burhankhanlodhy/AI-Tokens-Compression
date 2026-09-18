@@ -299,6 +299,76 @@ def test_ac_p1b_parity_denominator_is_derived_from_sampling_plan():
     assert len(lost["quality_parity"]["upstream_lost_ids"]) == 40
 
 
+# ---------------------------------------------------------------------------
+# AC-P1g: population incompleteness is a suppression condition — a run that
+# lost part of its planned population publishes NO percentage on ANY field
+# ---------------------------------------------------------------------------
+
+
+def _healthy_survivors(planned_ids):
+    """3-of-15 survivors whose surviving numbers look like a slam dunk.
+
+    50/60/40pp reductions with a CI well clear of 0 and above the 3pp
+    floor: the exact shape that made the 3-survivor hole dangerous — the
+    gate goes red while the headline still publishes 18.67%-style numbers.
+    """
+    reductions = (1000.0, 500.0), (1000.0, 400.0), (1000.0, 600.0)
+    return [{"id": pid, "eligible": True,
+             "baseline_tokens": b, "treatment_tokens": t,
+             "mode": "model_judge", "score_a": 9, "score_b": 9,
+             "winner": "tie"} for pid, (b, t) in zip(planned_ids[:3],
+                                                     reductions)]
+
+
+def test_ac_p1g_incomplete_population_suppresses_the_headline_percentage():
+    """3-of-15 survivors -> the headline publishes no percentage.
+
+    At a5b513c the gate correctly went red while the headline still emitted
+    `18.67% [15.56, 20.00], measurable_reduction` (PM reproduction): the
+    artifact is what gets quoted six months later, not the boolean beside
+    it. With the planned denominator supplied, a healthy-looking estimate
+    off an incomplete population is suppressed at precedence-0 — above the
+    3pp floor and the CI checks — regardless of how strong it looks.
+    """
+    planned_ids = [f"p{i}" for i in range(15)]
+    stats = run_benchmark.summarize(
+        _healthy_survivors(planned_ids), n_eligible_planned=15,
+        planned_judge_ids=planned_ids)
+    hl = stats["headline"]
+    assert stats["quality_parity"]["parity_holds"] is False
+    assert hl["mean_output_reduction_pct"] == 50.0   # the raw mean is real
+    assert hl["publication_status"] == "no_measurable_effect"
+    assert hl["reported_reduction_pct"] is None
+    assert "population incomplete" in hl["publication_note"]
+    assert "upstream_lost_ids" in hl["publication_note"]
+
+
+def test_ac_p1g_incomplete_population_suppresses_the_blended_percentage_too():
+    """Same suppression one field over, and completeness still publishes.
+
+    A suppressed headline sitting next to a bare blended percentage is the
+    same noise-dressed-as-signal publication one field over (PM amendment,
+    AC-P1g). Also pins the complement: a COMPLETE population with the same
+    healthy numbers still publishes — the clause suppresses incompleteness,
+    not strength.
+    """
+    planned_ids = [f"p{i}" for i in range(15)]
+    survivors = _healthy_survivors(planned_ids)
+    stats = run_benchmark.summarize(
+        survivors, n_eligible_planned=15, planned_judge_ids=planned_ids)
+    bl = stats["blended_corpus_wide"]
+    assert bl["publication_status"] == "no_measurable_effect"
+    assert bl["reported_reduction_pct"] is None
+    assert "population incomplete" in bl["publication_note"]
+
+    complete = run_benchmark.summarize(
+        survivors, n_eligible_planned=3,
+        planned_judge_ids=planned_ids[:3])
+    assert complete["quality_parity"]["parity_holds"] is True
+    assert complete["headline"]["publication_status"] == "measurable_reduction"
+    assert complete["headline"]["reported_reduction_pct"] == 50.0
+
+
 def test_ac_p1b_parity_gate_reads_the_published_rounded_mean():
     """The gate and the artifact must not contradict each other.
 
