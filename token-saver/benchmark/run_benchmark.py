@@ -156,7 +156,8 @@ def _reasoning_evidence(resp, payload: dict, model: str) -> dict:
 
 
 def run_one(client: httpx.Client, base_url: str, model: str,
-            prompt: dict, conciseness: bool) -> dict:
+            prompt: dict, conciseness: bool,
+            dose_pin: str | None = None) -> dict:
     body = {
         "model": model,
         "messages": prompt["messages"],
@@ -170,6 +171,15 @@ def run_one(client: httpx.Client, base_url: str, model: str,
         "Authorization": f"Bearer {os.environ.get('OPENROUTER_API_KEY', '')}",
         "X-Token-Saver-Conciseness": "1" if conciseness else "0",
     }
+    if dose_pin is not None:
+        # P6-3 tier pin (AC-P6c(2), PM ratification): the calibration
+        # instrument forces the proxy's dose tier so `bounded` can be
+        # measured on grounded fixtures the pre-calibration runtime cap
+        # forbids. Consumed ONLY when the deployment sets allow_dose_pin
+        # (production default False); the header is a PROXY_CONTROL_HEADER
+        # and never forwards upstream. Sent on BOTH arms for symmetric
+        # evidence — the baseline arm (conciseness 0) ignores it by design.
+        headers["X-Token-Saver-Dose-Pin"] = dose_pin
     last_err = None
     for attempt in range(3):
         try:
@@ -199,7 +209,8 @@ def run_one(client: httpx.Client, base_url: str, model: str,
 
 
 def run_arm(client: httpx.Client, base_url: str, model: str,
-            prompt: dict, conciseness: bool, k: int = HARNESS_K) -> dict:
+            prompt: dict, conciseness: bool, k: int = HARNESS_K,
+            dose_pin: str | None = None) -> dict:
     """Take k samples of one arm; aggregate into the per-prompt token sum
     the estimator consumes. All k samples must succeed for the arm to
     count (a partial arm is a failed pair, never silently averaged).
@@ -209,7 +220,8 @@ def run_arm(client: httpx.Client, base_url: str, model: str,
         return {"ok": True, "n_ok": 0, "k": 0, "tokens_total": 0,
                 "text": "", "tokens_source": None, "sampled": False,
                 "error": None}
-    samples = [run_one(client, base_url, model, prompt, conciseness)
+    samples = [run_one(client, base_url, model, prompt, conciseness,
+                       dose_pin=dose_pin)
                for _ in range(k)]
     n_ok = sum(1 for s in samples if s["ok"])
     first_ok = next((s for s in samples if s["ok"]), None)
