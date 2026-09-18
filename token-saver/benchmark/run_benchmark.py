@@ -1003,6 +1003,16 @@ def emit_calibration_artifact(
         r for r in results
         if r.get("baseline_ok") and r.get("treatment_ok")
         and (r.get("baseline_tokens") or 0) > 0
+        # AC-P6f blocker 4 (PM, 2026-09-18): a gate-ineligible row has
+        # treatment_k=0 — its treatment arm was NEVER sampled, yet
+        # entry_from_arms records treatment_tokens=0.0 with
+        # treatment_ok=True. Without this check such rows enter the band
+        # as 100% cuts (measured: a real ~30% band poisoned to 73% mean,
+        # and a bounded_output_tokens floor of ~47 against a real ~700 —
+        # which would silently disarm the dose-drift tripwire forever).
+        # An unsampled treatment arm is not evidence; it is absence of
+        # evidence.
+        and r.get("treatment_sampled", True)
         and (population_ids is None or r.get("id") in population_ids)
     ]
     if not paired:
@@ -1174,6 +1184,23 @@ def main() -> int:
     client = httpx.Client()
     results = []
     plans = [(p, is_eligible(p)) for p in prompts]
+    # AC-P6f blocker 4 (PM, 2026-09-18): the calibration population is
+    # grounded AND gate-ELIGIBLE — ineligible grounded fixtures get
+    # treatment_k=0 under sampling_plan, so their treatment arm is never
+    # sampled and can contribute only fabricated 100%-cut rows to the
+    # band. This check runs BEFORE any provider call (zero spend on
+    # refusal); the treatment_sampled filter inside
+    # emit_calibration_artifact is the second layer behind it.
+    if args.emit_calibration:
+        cal_ids = [p["id"] for p, e in plans
+                   if e and grounded_risk_of(p) != "none"]
+        if not cal_ids:
+            print("ERROR: --emit-calibration refuses to run: the pinned "
+                  "population (grounded AND gate-eligible prompts) is "
+                  "empty — no row in this run can carry a real "
+                  "treatment-arm measurement for the band.",
+                  file=sys.stderr)
+            return 1
     n_eligible = sum(1 for _, e in plans if e)
     # AC-P1b planned judged population (PM derivation, option (a)): the
     # parity denominator is what sampling_plan() PLANNED to judge — n=15
@@ -1302,8 +1329,11 @@ def main() -> int:
         # AC-P6f artifact contract: same run, same measured pairs, OUTPUT
         # unit stamped. Restricted to the grounded population (the corpus
         # AC-P6c calibrates); a run with zero grounded rows refuses here.
-        cal_ids = [p["id"] for p, _ in plans
-                   if grounded_risk_of(p) != "none"]
+        # Blocker 4: SAME population as the pre-spend check above —
+        # grounded AND gate-eligible (unsampled treatment arms excluded
+        # again inside emit_calibration_artifact via treatment_sampled).
+        cal_ids = [p["id"] for p, e in plans
+                   if e and grounded_risk_of(p) != "none"]
         cal_path = emit_calibration_artifact(
             results, out, args.model, args.calibration_tier, args.mode,
             path.name, population_ids=cal_ids or None)

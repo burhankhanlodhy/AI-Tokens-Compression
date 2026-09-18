@@ -153,3 +153,65 @@ def test_emit_calibration_runs_with_matching_pin(offline_main):
     src = json.loads((out / data["source_artifact"]).read_text())
     assert src["dose_pin"] == "bounded", (
         "calibration artifact must trace to a pinned source run")
+
+
+# --- Blocker 4 (PM, 2026-09-18): unsampled-treatment rows poison the band --
+
+def test_emit_calibration_excludes_unsampled_treatment_rows(tmp_path):
+    """The PM's measured poison shape: a grounded gate-INELIGIBLE row has
+    treatment_k=0 — treatment never sampled, treatment_tokens=0.0,
+    treatment_ok=True. It must never enter the band (it would serialize
+    as a 100% cut and drag bounded_output_tokens toward zero, silently
+    disarming the dose-drift floor)."""
+    results = [
+        {"id": "rag-051", "baseline_ok": True, "treatment_ok": True,
+         "treatment_sampled": True, "baseline_tokens": 1000.0,
+         "treatment_tokens": 700.0},  # real 30% cut
+        {"id": "rag-021", "baseline_ok": True, "treatment_ok": True,
+         "treatment_sampled": False, "baseline_tokens": 1000.0,
+         "treatment_tokens": 0.0},  # ineligible: arm never sampled
+    ]
+    path = rb.emit_calibration_artifact(
+        results, tmp_path, "test/model", "bounded", "eligible_only",
+        "benchmark_test_model_000101T000000Z.json", population_ids=None)
+    data = json.loads(path.read_text())
+    assert data["population"]["n"] == 1, (
+        "the unsampled-treatment row must be excluded from the band")
+    assert data["population"]["ids"] == ["rag-051"]
+    assert data["output_reduction_pct"]["mean"] == 30.0, (
+        "band must reflect only the real paired measurement")
+    assert data["bounded_output_tokens"]["mean"] == 700.0
+
+
+def test_main_calibration_population_is_grounded_eligible_only(offline_main):
+    """End-to-end over the real pinned corpus: the emitted band's
+    population must be the grounded AND gate-eligible subset (rag-051..055,
+    n=5) — the ten gate-ineligible grounded fixtures (rag-021..030, whose
+    treatment arm sampling_plan never samples) must be excluded."""
+    set_argv, calls, out = offline_main
+    set_argv("--emit-calibration", "--dose-pin", "bounded")
+    assert rb.main() == 0
+    cal = json.loads(next(out.glob("calibration_*.json")).read_text())
+    ids = cal["population"]["ids"]
+    assert cal["population"]["n"] == 5, (
+        f"expected n=5 (rag-051..055), got n={cal['population']['n']}: {ids}")
+    assert ids == [f"rag-{i:03d}" for i in range(51, 56)]
+    assert not any(i in ids for i in
+                   (f"rag-{j:03d}" for j in range(21, 31))), (
+        "gate-ineligible grounded fixtures must never reach the band")
+
+
+def test_emit_calibration_refuses_empty_pinned_population(offline_main,
+                                                          capsys,
+                                                          monkeypatch):
+    """If no prompt is grounded+eligible, there is no row that can carry a
+    real treatment-arm measurement — refuse BEFORE any spend."""
+    set_argv, calls, out = offline_main
+    monkeypatch.setattr(rb, "grounded_risk_of", lambda p: "none")
+    set_argv("--emit-calibration", "--dose-pin", "bounded")
+    rc = rb.main()
+    assert rc != 0
+    assert calls == [], "refusal must happen BEFORE any provider call"
+    assert not out.exists() or list(out.glob("*.json")) == []
+    err = capsys.readouterr().err
+    assert "population" in err and "empty" in err
