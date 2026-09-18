@@ -24,6 +24,7 @@ from proxy.grounded import (  # noqa: E402
     RISK_BOUNDED,
     RISK_FIDELITY_CRITICAL,
     RISK_NONE,
+    _is_retrieval_envelope,
     grounded_answer_risk,
     select_dose_tier,
 )
@@ -538,3 +539,128 @@ def test_ac_p6i_envelope_detection_is_pure_and_deterministic():
     assert first == second
     assert messages == before
     assert first == {"grounded": True, "risk": RISK_FIDELITY_CRITICAL}
+
+
+# --- AC-P6j: wrapper-shape breadth (pre-publication gate) ----------------
+#
+# Each widened shape from the PM scope ruling gets a positive regression
+# AND a negative control, so the false-positive rate stays pinned. All
+# committed negatives (40 legacy controls + json_doc/log_trace/control
+# L1 fixtures) must remain ungrounded under the widened scanner.
+
+def _envelope_fixture(container: str = "retrieved_documents",
+                      hit: dict | None = None) -> str:
+    hit = hit or {"chunk_id": "c-1", "source": "corpus/refund.md",
+                  "content": "Refunds require a receipt."}
+    return json.dumps({container: {"query": "refund window",
+                                   "hits": [hit]}})
+
+
+@pytest.mark.parametrize("label,text", [
+    # --- positives: the widened shapes ---
+    ("embedded_prose_env_question",
+     "Context for your answer:\n" + _envelope_fixture()
+     + "\nWhat is the refund window?"),
+    ("env_then_question_same_msg",
+     _envelope_fixture() + "\n\nWhat is the refund window?"),
+    ("documents_key", _envelope_fixture("documents")),
+    ("search_results_key", _envelope_fixture("search_results")),
+    ("passages_key", _envelope_fixture("passages")),
+    ("langchain_context", json.dumps({"context": [
+        {"page_content": "Refunds require a receipt.",
+         "metadata": {"source": "corpus/refund.md"}}]})),
+    ("id_document_hits", json.dumps({"retrieved_documents": {"hits": [
+        {"id": "d1", "document": "Refunds require a receipt."}]}})),
+    ("nested_one_level", json.dumps({"data": {
+        "retrieved_documents": {"hits": [
+            {"chunk_id": "c", "source": "corpus/c.md"}]}}})),
+    ("xml_documents_source_attr",
+     '<documents><document source="corpus/a.md">'
+     "Refunds require a receipt.</document></documents>"),
+    ("xml_source_element",
+     "<documents><document><source>corpus/a.md</source>"
+     "<text>Refunds require a receipt.</text></document></documents>"),
+])
+def test_ac_p6j_widened_shapes_ground_fidelity_critical(label, text):
+    """Every ratified widened wrapper shape grounds at fidelity_critical,
+    tier none pre-calibration — max dose on these was the failure class
+    AC-P6j exists to kill."""
+    messages = [{"role": "user", "content": text}]
+    assert grounded_answer_risk(messages, cfg()) == {
+        "grounded": True, "risk": RISK_FIDELITY_CRITICAL}, label
+    assert select_dose_tier(messages, cfg()) == "none"
+
+
+@pytest.mark.parametrize("label,text", [
+    # --- negative controls: prose/no-structure variants of each shape ---
+    ("prose_mentions_keys_only",
+     "The documents and search_results keys stay reserved; context is "
+     "the word of the day and passages must not leak."),
+    ("env_without_hits", json.dumps(
+        {"retrieved_documents": {"query": "q"}})),
+    ("hits_without_identifying_keys", json.dumps(
+        {"retrieved_documents": {"hits": [{"index": 0}]}})),
+    ("bare_string_list_documents", json.dumps(
+        {"documents": ["The reranker service version is 3.4.1 "
+                       "and batching is enabled."]})),
+    ("context_without_page_content", json.dumps(
+        {"context": [{"text": "Refunds require a receipt."}]})),
+    ("context_plain_string", json.dumps(
+        {"context": "Refunds require a receipt."})),
+    ("id_only_hits", json.dumps({"retrieved_documents": {"hits": [
+        {"id": "d1"}]}})),
+    ("nested_but_unidentified_hits", json.dumps({"data": {
+        "retrieved_documents": {"hits": [{"index": 0}]}}})),
+    ("xml_block_without_source", "<documents><document>"
+     "Refunds require a receipt.</document></documents>"),
+    ("prose_xml_tags_only",
+     "Use <documents> and <document> tags for retrieval output."),
+])
+def test_ac_p6j_negative_controls_stay_ungrounded(label, text):
+    """A widened shape WITHOUT the identifying structure must not ground:
+    prose mentioning key names, hits lacking source-identifying keys,
+    non-hit containers, and source-less XML are all none."""
+    messages = [{"role": "user", "content": text}]
+    assert grounded_answer_risk(messages, cfg()) == {
+        "grounded": False, "risk": RISK_NONE}, label
+
+
+def test_ac_p6j_committed_negatives_stay_ungrounded():
+    """Corpus pin under the WIDENED scanner: every committed control
+    fixture (40 legacy non-RAG + l1 json_doc/log_trace/control) stays
+    ungrounded, and every rag/system_dup fixture stays grounded."""
+    prompts = _l1_fixture_prompts()
+    for pid, fixture in prompts.items():
+        r = grounded_answer_risk(fixture["messages"], cfg())
+        if pid.startswith(("rag-", "system_dup-")):
+            assert r["grounded"], f"{pid} must ground (got {r})"
+        else:
+            assert r == {"grounded": False, "risk": RISK_NONE}, \
+                f"{pid} FALSE POSITIVE under widened scanner: {r}"
+    for pid, fixture in PROMPTS.items():
+        r = grounded_answer_risk(fixture["messages"], cfg())
+        if pid.startswith("rag-"):
+            assert r["grounded"], f"{pid} must ground (got {r})"
+        else:
+            assert r == {"grounded": False, "risk": RISK_NONE}, \
+                f"{pid} FALSE POSITIVE under widened scanner: {r}"
+
+
+def test_ac_p6j_embedded_scan_is_bounded_and_deterministic():
+    """The widened scan stays pure and bounded: determinism across runs,
+    config-independence, no mutation, and a pathological many-brace
+    message terminates with the capped attempt count (256 parses) at
+    the same verdict as the un-bounded equivalent."""
+    envelope = ("Answer:\n" + _envelope_fixture() + "\n\nQuestion: what?")
+    messages = [{"role": "user", "content": envelope}]
+    before = copy.deepcopy(messages)
+    r1 = grounded_answer_risk(messages, cfg())
+    r2 = grounded_answer_risk(messages, cfg(grounded_calibration_green=True))
+    assert r1 == r2 == {"grounded": True, "risk": RISK_FIDELITY_CRITICAL}
+    assert messages == before
+    # pathological input: 300 unparseable '{' then one valid envelope —
+    # the scan cap truncates the walk (envelope NOT reached) but the
+    # verdict is still deterministic and the scan terminates.
+    pathological = "{invalid" * 300 + _envelope_fixture()
+    assert _is_retrieval_envelope(pathological) is False
+    assert _is_retrieval_envelope(_envelope_fixture()) is True

@@ -26,7 +26,12 @@ i.e. maximum dose with no guard):
      structured retrieval envelopes — a JSON object payload carrying a
      ``retrieved_documents`` block whose ``hits`` are ``chunk_id`` +
      ``source``-shaped retrieval results, bare or in a ```json fence —
-     the canonical RAG-wrapper shape, AC-P6i)
+     the canonical RAG-wrapper shape, AC-P6i; widened to common wrapper
+     shapes by AC-P6j — the object parsed wherever it appears in the
+     text (embedded in prose, question-suffixed), alternate container
+     keys (documents/search_results/passages), LangChain
+     context/page_content, id+document hits, one-level-nested
+     envelopes, and XML <documents><document> blocks carrying a source)
      → ``fidelity_critical`` — the model is being asked to answer FROM
      quoted material, so the full "cut the padding" instruction can drop
      load-bearing facts;
@@ -141,45 +146,166 @@ _LABELED_BLOCK = re.compile(
     r"\s*(?:\([^)]{0,40}\))?:\s"
 )
 
-# --- Signal 1d: structured retrieval envelopes (AC-P6i) ------------------
-# The canonical RAG-wrapper shape: a JSON object payload carrying a
+# --- Signal 1d: structured retrieval envelopes (AC-P6i canonical shape,
+# --- widened to common wrapper shapes by AC-P6j, pre-publication gate) ----
+# Canonical RAG-wrapper shape: a JSON object payload carrying a
 # ``retrieved_documents`` block whose ``hits`` are retrieval results keyed
-# by ``chunk_id`` + ``source``. Bare JSON (the common wrapper shape) or a
-# ```json-fenced block anywhere in the message text. Detection is
-# STRUCTURAL (a parsed shape check, not a regex over raw bytes), so it
-# cannot fire on ordinary prose or on JSON documents that merely mention
-# these keys as values.
-_FENCED_JSON_BLOCK = re.compile(r"```(?:json)?\s*([\s\S]*?)```")
+# by ``chunk_id`` + ``source``. Widened (AC-P6j, PM scope ruling): the
+# envelope object parsed WHEREVER it appears in the text (embedded in
+# prose, suffixed by a question, fenced), alternate envelope keys
+# (``documents`` / ``search_results`` / ``passages``), LangChain-style
+# ``context`` lists of ``page_content`` items, hits keyed ``id`` +
+# ``document``, the envelope nested one level under a wrapper key, and
+# XML ``<documents><document>`` blocks carrying a ``source`` (Anthropic's
+# documented RAG style). Detection stays STRUCTURAL (parsed shapes, not
+# regexes over prose): it cannot fire on ordinary prose or on JSON
+# documents that merely mention these key names. A hit is "source-
+# identifying" only when it carries a recognized key pair — a bare list
+# of strings or unidentified dicts is NOT an envelope (false-positive
+# control; the identifying-key set is the contract, never widened
+# silently).
+
+# Envelope container keys (AC-P6i canonical first) + the identifying
+# hit-key contract. LangChain's ``context`` is handled separately (its
+# items are ``page_content`` hits, not source-keyed hits).
+_RETRIEVAL_CONTAINER_KEYS: tuple[str, ...] = (
+    "retrieved_documents", "documents", "search_results", "passages",
+)
+_IDENTIFYING_HIT_KEY_PAIRS: tuple[tuple[str, str], ...] = (
+    ("chunk_id", "source"),  # canonical (AC-P6i)
+    ("id", "document"),      # wrapper variant (AC-P6j)
+)
+_IDENTIFYING_HIT_KEYS: tuple[str, ...] = ("page_content",)
+
+# Cheap pre-filter: the scan only runs when the text could plausibly
+# carry an envelope (container key name, page_content, or an XML
+# documents block). Prose that merely mentions a key name pays one
+# substring check, not the JSON scan.
+_ENVELOPE_HINT = re.compile(
+    r"retrieved_documents|documents|search_results|passages|"
+    r"page_content|<document",
+    re.IGNORECASE,
+)
+
+_XML_DOCUMENTS_BLOCK = re.compile(
+    r"<documents\b[^>]*>([\s\S]*?)</documents\s*>", re.IGNORECASE
+)
+_XML_SOURCE = re.compile(
+    r"<document\b[^>]*\ssource\s*=|<source\b[^>]*>[\s\S]*?</source\s*>",
+    re.IGNORECASE,
+)
+
+# Bounds the embedded-object scan: at most 256 balanced-object parse
+# attempts per message (deterministic, pure; messages carry a handful of
+# JSON objects at most — the cap exists so pathological inputs degrade
+# linearly, never hang).
+_MAX_JSON_SCAN_ATTEMPTS = 256
+
+
+def _hit_identifies_source(hit: object) -> bool:
+    """True when ONE hit dict carries a recognized source-identifying
+    key contract (key pair or LangChain ``page_content``)."""
+    if not isinstance(hit, dict):
+        return False
+    if any(k in hit and hit[k] is not None for k in _IDENTIFYING_HIT_KEYS):
+        return True
+    return any(
+        pair[0] in hit and pair[1] in hit for pair in _IDENTIFYING_HIT_KEY_PAIRS
+    )
+
+
+def _hits_identify_sources(hits: object) -> bool:
+    return isinstance(hits, list) and any(
+        _hit_identifies_source(hit) for hit in hits
+    )
+
+
+def _dict_is_retrieval_payload(obj: object) -> bool:
+    """True when a decoded JSON object carries a retrieval envelope shape.
+
+    Checks the object itself AND any direct child dict (one-level
+    nesting under a wrapper key). A container key must map to a list of
+    source-identifying hits (or a dict with such a ``hits`` list);
+    LangChain ``context`` must be a list of ``page_content`` dicts.
+    """
+    if not isinstance(obj, dict):
+        return False
+    candidates = [obj] + [
+        v for v in obj.values() if isinstance(v, dict)
+    ]
+    for cand in candidates:
+        for key in _RETRIEVAL_CONTAINER_KEYS:
+            val = cand.get(key)
+            if _hits_identify_sources(val):
+                return True
+            if isinstance(val, dict) and _hits_identify_sources(val.get("hits")):
+                return True
+        context = cand.get("context")
+        if isinstance(context, list) and context and any(
+            isinstance(hit, dict) and "page_content" in hit for hit in context
+        ):
+            return True
+    return False
+
+
+def _iter_embedded_json_objects(text: str):
+    """Yield every balanced JSON object parseable anywhere in ``text``.
+
+    Bounded scan: at most ``_MAX_JSON_SCAN_ATTEMPTS`` parse attempts,
+    left to right (deterministic). Pure; raises nothing.
+    """
+    decoder = json.JSONDecoder()
+    idx = text.find("{")
+    attempts = 0
+    while idx != -1 and attempts < _MAX_JSON_SCAN_ATTEMPTS:
+        attempts += 1
+        try:
+            obj, _end = decoder.raw_decode(text, idx)
+        except (ValueError, RecursionError):
+            obj = None
+        if isinstance(obj, dict):
+            yield obj
+        idx = text.find("{", idx + 1)
 
 
 def _is_retrieval_envelope(text: str) -> bool:
     """True when ``text`` carries a structured retrieval envelope.
 
-    Pure, deterministic, no I/O. Accepts a bare JSON object payload or
-    any ```json-fenced block within the text; requires the
-    ``retrieved_documents``/``hits``/``chunk_id``+``source`` shape.
+    Pure, deterministic, no I/O (AC-P6i canonical + AC-P6j widened
+    shapes). Covers: the whole message being the JSON object, a
+    ```json-fenced block, the object embedded in prose or followed by a
+    question in the same message (balanced-object scan at any offset),
+    alternate container keys, LangChain ``context``/``page_content``,
+    ``id``+``document`` hits, one-level-nested envelopes, and XML
+    ``<documents>`` blocks carrying a ``source``.
     """
+    if not text:
+        return False
+    if not _ENVELOPE_HINT.search(text):
+        return False
+    # Fast path: the whole (stripped) message is the JSON object — the
+    # canonical bare shape and the common case for fixture-scale texts.
     stripped = text.strip()
-    candidates = [stripped] if stripped else []
-    candidates.extend(block.strip() for block in _FENCED_JSON_BLOCK.findall(text))
-    for cand in candidates:
-        if not cand.startswith("{"):
-            continue
+    if stripped.startswith("{"):
         try:
-            obj = json.loads(cand)
+            obj = json.loads(stripped)
         except (ValueError, RecursionError):
-            continue
-        if not isinstance(obj, dict):
-            continue
-        retrieved = obj.get("retrieved_documents")
-        if not isinstance(retrieved, dict):
-            continue
-        hits = retrieved.get("hits")
-        if not isinstance(hits, list):
-            continue
-        if any(
-            isinstance(hit, dict) and "chunk_id" in hit and "source" in hit
-            for hit in hits
+            obj = None
+        if _dict_is_retrieval_payload(obj):
+            return True
+    # Widened path: the object parsed wherever it appears in the text.
+    if any(
+        _dict_is_retrieval_payload(obj)
+        for obj in _iter_embedded_json_objects(text)
+    ):
+        return True
+    # XML retrieval blocks (Anthropic's documented RAG style): a
+    # <documents> block must contain at least one <document> element AND
+    # a source (attribute or <source> element) — a block without source
+    # is not an envelope.
+    for block in _XML_DOCUMENTS_BLOCK.findall(text):
+        if _XML_SOURCE.search(block) and re.search(
+            r"<document\b", block, re.IGNORECASE
         ):
             return True
     return False
