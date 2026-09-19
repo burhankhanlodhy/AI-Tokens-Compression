@@ -411,6 +411,27 @@ def _captured_upstream(routed, messages, extra_headers=None):
     return json.loads(cap.requests[-1].content)["messages"]
 
 
+def test_malformed_message_shapes_do_not_500_in_live_proxy_path(routed):
+    """P1: normalize malformed text parts before every pipeline consumer."""
+    upstream = _captured_upstream(routed, [
+        "garbage-string",
+        {"role": "user", "content": [
+            {"type": "text", "text": None},
+            {"text": "SOURCE: /src/payments.py"},
+            {"type": "text"},
+        ]},
+    ])
+    assert any(
+        message.get("role") == "user"
+        and message.get("content") == [
+            {"type": "text", "text": ""},
+            {"type": "text", "text": "SOURCE: /src/payments.py"},
+            {"type": "text", "text": ""},
+        ]
+        for message in upstream
+    )
+
+
 def test_header_on_cannot_push_above_discriminator_pre_calibration(routed):
     """AC-P6b: the benchmark ON header forces the feature on, but a
     grounded fidelity-critical prompt pre-calibration must still receive

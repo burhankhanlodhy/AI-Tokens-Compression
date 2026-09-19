@@ -344,6 +344,43 @@ async def _forward_routed(request: Request, model: str, payload: bytes,
     return resp, adapter.name
 
 
+def _normalize_messages(value: object) -> list[dict]:
+    """Make malformed chat-message text safe for every pipeline stage.
+
+    The proxy's detector, counters, classifier, L1 cleaner, and compressor
+    all consume the same message list. Normalize client JSON once at the
+    boundary so a null/missing text part or a non-object list member cannot
+    become a later 500. Text-bearing parts without a ``type`` discriminator
+    are normalized to ``type: text`` instead of silently disappearing.
+    """
+    if not isinstance(value, list):
+        return []
+    normalized: list[dict] = []
+    for message in value:
+        if not isinstance(message, dict):
+            normalized.append({"role": "unknown", "content": ""})
+            continue
+        clean_message = dict(message)
+        content = message.get("content")
+        if isinstance(content, list):
+            parts: list[object] = []
+            for part in content:
+                if not isinstance(part, dict):
+                    parts.append(part)
+                    continue
+                clean_part = dict(part)
+                if "text" in part or part.get("type") == "text":
+                    clean_part["text"] = (
+                        part.get("text") if isinstance(part.get("text"), str) else ""
+                    )
+                    if clean_part.get("type") is None:
+                        clean_part["type"] = "text"
+                parts.append(clean_part)
+            clean_message["content"] = parts
+        normalized.append(clean_message)
+    return normalized
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     started = time.perf_counter()
@@ -359,7 +396,11 @@ async def chat_completions(request: Request):
                             in_before=0, in_after=0, compressed=False)
 
     model = body.get("model", "unknown")
-    messages = body.get("messages") or []
+    messages = _normalize_messages(body.get("messages", []))
+    # Downstream pipeline stages receive the normalized representation too;
+    # otherwise a safe counter/classifier could still forward the original
+    # malformed shape into a later consumer.
+    body = {**body, "messages": messages}
     streaming = bool(body.get("stream"))
 
     # Ledger baseline: input_tokens_before = RAW original, counted before
