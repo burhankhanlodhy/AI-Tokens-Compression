@@ -15,6 +15,10 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ../postgres-schema-v2.sql:/docker-entrypoint-initdb.d/10-postgres-schema.sql:ro
+      # Phase C-1 is opt-in at the database-image boundary.  The base schema
+      # remains stock-Postgres compatible for CI and non-semantic consumers;
+      # this runs only because this service uses the pgvector image.
+      - ./migrations/20260918_pc1_pgvector.sql:/docker-entrypoint-initdb.d/20-pc1-pgvector.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d token_saver"]
       interval: 5s

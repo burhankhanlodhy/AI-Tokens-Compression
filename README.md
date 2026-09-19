@@ -165,20 +165,38 @@ volume/backups cover the whole `data/` directory.
 
 ### Existing Postgres volume upgrade (Phase C-1)
 
-A fresh volume gets the pgvector extension and semantic-cache table from
-`../postgres-schema-v2.sql`. For an existing `postgres-data` volume, take a
-backup, switch to the pgvector image, start Postgres, and apply the one-shot
-upgrade explicitly:
+A fresh Compose volume gets the Phase A ledger from
+`../postgres-schema-v2.sql`, then the pgvector extension and semantic-cache
+table from `migrations/20260918_pc1_pgvector.sql`. For an existing
+`postgres-data` volume, take a backup, complete the libc-safe cutover below,
+then apply the one-shot upgrade explicitly. The migration is
+intentionally fire-once and fails loudly if the table already exists.
 
-```bash
-docker compose up -d postgres
-docker compose exec -T postgres psql -U postgres -d token_saver \
-  -v ON_ERROR_STOP=1 -f - < migrations/20260918_pc1_pgvector.sql
-```
+### Existing-volume libc-safe cutover
 
-The migration is intentionally fire-once and fails loudly if the table already
-exists. Semantic caching remains disabled until AC-PC4 passes; the deployment
-flag cannot be enabled by a client request.
+Do **not** point the current `postgres:16-alpine` data directory directly at
+the `pgvector/...-bookworm` image. A `REINDEX` is not the cutover: it does not
+make a cross-libc data-directory transition safe. Use this sequence instead:
+
+1. Stop proxy writes and take a custom-format dump to an absolute host path:
+   `docker compose stop proxy` followed by
+   `docker compose exec -T postgres pg_dump -U postgres -d token_saver
+   --format=custom > /absolute/path/token_saver_pre_pc1.dump`.
+2. Create a **new** Docker volume and a temporary pgvector/16 container using
+   that volume; do not reuse `token-saver_postgres-data`. Restore the dump with
+   `pg_restore --no-owner --exit-on-error`, then apply
+   `migrations/20260918_pc1_pgvector.sql` using `psql -v ON_ERROR_STOP=1`.
+3. Verify old-versus-new `COUNT(*)` and independent `SUM()` values for
+   `requests.input_tokens_before`, `input_tokens_after`, `est_cost_before`,
+   and `est_cost_after`; also verify `pg_extension` contains `vector`, the
+   ledger indexes exist, and the semantic HNSW index/table exist.
+4. Run `/health` and `/api/kpis` against the restored database, then switch
+   the Compose volume mapping to the new volume and restart the proxy. Keep
+   the old volume and dump until post-cutover checks pass; never delete the
+   rollback copy as part of the restart.
+
+Semantic caching remains disabled until AC-PC4 passes; the deployment flag
+cannot be enabled by a client request.
 
 ## Tests
 

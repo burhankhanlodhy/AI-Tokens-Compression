@@ -3,8 +3,8 @@
 -- Run once against the application database after switching the Postgres image
 -- to pgvector/pgvector:0.8.6-pg16-bookworm.  This is deliberately a loud,
 -- fire-once migration: do not hide a partially-applied deployment with
--- IF NOT EXISTS on the table or indexes.  Fresh databases receive the same
--- objects from ../postgres-schema-v2.sql during initialization.
+-- IF NOT EXISTS on the table or indexes.  Fresh Compose databases receive
+-- this file after ../postgres-schema-v2.sql via the pgvector service mount.
 
 BEGIN;
 

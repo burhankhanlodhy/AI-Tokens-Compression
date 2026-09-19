@@ -9,10 +9,10 @@
 -- Extensions
 -- ============================================================
 CREATE EXTENSION IF NOT EXISTS pgcrypto;   -- gen_random_uuid()
--- Phase C-1: the Compose image is pgvector-enabled.  Keep this explicit so
--- fresh installs and disposable acceptance databases have the same extension
--- contract as upgraded installs.
-CREATE EXTENSION IF NOT EXISTS vector;
+-- Phase A bootstrap stays usable on stock PostgreSQL.  Phase C-1's pgvector
+-- extension and semantic table are applied by the explicit migration mounted
+-- by the pgvector Compose deployment; do not make unrelated consumers install
+-- vector just to create the ledger.
 
 -- ============================================================
 -- tenants — top-level account boundary. Even self-host/OSS single-user
@@ -151,67 +151,6 @@ CREATE TABLE cache_entries (
 );
 CREATE UNIQUE INDEX idx_cache_entries_lookup ON cache_entries(tenant_id, provider_id, model, prefix_hash);
 CREATE INDEX idx_cache_entries_expiry ON cache_entries(expires_at);
-
--- ============================================================
--- semantic_cache_entries — Phase C-1 semantic cache (AC-PC2).
---
--- This is intentionally separate from cache_entries: exact-prefix lookups
--- remain a small, hot B-tree path, while semantic entries carry vectors and
--- an HNSW index.  The initial deployment pins the embedding contract to
--- 1536 dimensions (text-embedding-3-small); embedding_dimensions is retained
--- in the row and in the lookup scope so a future dimension change cannot mix
--- incompatible vectors silently.  A different dimension requires a reviewed
--- table/index migration, not an unchecked insert.
--- ============================================================
-CREATE TABLE semantic_cache_entries (
-    id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    tenant_id               UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    provider_id             INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
-    model                   TEXT NOT NULL,
-    embedding_model         TEXT NOT NULL,
-    embedding_dimensions    INTEGER NOT NULL CHECK (embedding_dimensions = 1536),
-    embedding_version       TEXT NOT NULL,
-    quality_version         TEXT NOT NULL,
-    request_parameters_hash TEXT NOT NULL,
-    canonical_prompt_hash   TEXT NOT NULL,
-    embedding               vector(1536) NOT NULL,
-    response_ref            TEXT NOT NULL,
-    hit_count               INTEGER NOT NULL DEFAULT 0 CHECK (hit_count >= 0),
-    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_hit_at             TIMESTAMPTZ,
-    expires_at              TIMESTAMPTZ NOT NULL,
-    CONSTRAINT chk_semantic_cache_versions CHECK (
-        length(embedding_model) > 0
-        AND length(embedding_version) > 0
-        AND length(quality_version) > 0
-        AND length(request_parameters_hash) > 0
-        AND length(canonical_prompt_hash) > 0
-        AND length(response_ref) > 0
-    )
-);
-
--- One compatible semantic answer per canonical prompt.  Version/hash fields
--- are part of the key so re-embedding, quality-rule, or request-shape changes
--- invalidate by scope rather than serving stale answers.
-CREATE UNIQUE INDEX idx_semantic_cache_identity
-    ON semantic_cache_entries (
-        tenant_id, provider_id, model, embedding_model, embedding_dimensions,
-        embedding_version, quality_version, request_parameters_hash,
-        canonical_prompt_hash
-    );
-
--- HNSW uses cosine distance (<=>), matching proxy.semantic_cache.lookup().
-CREATE INDEX idx_semantic_cache_embedding_hnsw
-    ON semantic_cache_entries USING hnsw (embedding vector_cosine_ops);
-
--- Mandatory lookup predicates are selective compatibility/isolation filters;
--- keep a B-tree path available alongside the approximate vector path.
-CREATE INDEX idx_semantic_cache_scope
-    ON semantic_cache_entries (
-        tenant_id, provider_id, model, embedding_model, embedding_dimensions,
-        embedding_version, quality_version, request_parameters_hash, expires_at
-    );
-CREATE INDEX idx_semantic_cache_expiry ON semantic_cache_entries(expires_at);
 
 -- ============================================================
 -- Notes for @application-developer / @qa-lead:
