@@ -72,9 +72,12 @@ class Settings(BaseSettings):
     # C-1: each lookup pins this above pgvector's default 40. The DBA's
     # traffic-shaped probe found 100 selects the filtered HNSW index.
     semantic_cache_hnsw_ef_search: int = Field(default=100, ge=1, le=1000)
-    # Conservative v1 retention shared by a semantic entry and its response;
-    # tune only after traffic-shaped calibration data exists.
+    # AC-PC2/PC3: a semantic entry and its verbatim response payload expire as
+    # one pair. This deployment-level control is deliberately not request
+    # configurable; traffic-shaped calibration owns future tuning.
     semantic_cache_ttl_seconds: int = Field(default=300, ge=1, le=86_400)
+    # Payloads larger than this are clean semantic-cache misses. Never truncate
+    # a provider response: cache replay must preserve its bytes exactly.
     semantic_cache_max_response_bytes: int = Field(default=1_048_576, ge=1)
     embedding_model: str = "text-embedding-3-small"
 
