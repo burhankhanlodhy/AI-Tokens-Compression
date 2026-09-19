@@ -1029,6 +1029,10 @@ def emit_calibration_artifact(
         "model": model,
         "sampling_mode": sampling_mode,
         "source_artifact": source_artifact,
+        # AC-P6k uses the same explicit authority protocol as benchmark
+        # artifacts. A fresh calibration is authoritative only until a
+        # ratified successor points it elsewhere.
+        "superseded_by": None,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "population": {"n": len(paired),
                        "ids": sorted(r["id"] for r in paired)},

@@ -70,15 +70,28 @@ def load_calibration_band(results_dir: Path | None = None) -> dict | None:
     artifacts = sorted(d.glob("calibration*.json"))
     if not artifacts:
         return None
-    try:
-        data = json.loads(artifacts[-1].read_text())
-    except (json.JSONDecodeError, OSError):
+
+    # AC-P6k: newest filename is not authority. Calibration supersession is a
+    # ratification act, and exactly one live artifact must declare itself as
+    # such. Invalid, superseded, malformed, parity-less, and parity-red files
+    # are inert rather than being fallbacks that could re-arm an unsafe band.
+    authorities: list[tuple[Path, dict[str, Any]]] = []
+    for artifact in artifacts:
+        try:
+            data = json.loads(artifact.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        if "superseded_by" not in data or data["superseded_by"] is not None:
+            continue
+        parity = data.get("quality_parity")
+        if not (isinstance(parity, dict) and parity.get("parity_holds") is True):
+            continue
+        authorities.append((artifact, data))
+    if len(authorities) != 1:
         return None
-    if not isinstance(data, dict):
-        return None
-    # Contract: only the harness's emitted kind arms the rule. A stray file
-    # that merely starts with "calibration" (or an artifact for another
-    # tier/metric) stays inert.
+    artifact, data = authorities[0]
     if (data.get("artifact_kind") != "ac_p6c_calibration"
             or data.get("tier") != "bounded"
             or data.get("metric") != "output_tokens"):
@@ -97,7 +110,7 @@ def load_calibration_band(results_dir: Path | None = None) -> dict | None:
             and arm["ci95_interval"][0] <= arm["ci95_interval"][1]):
         return None
     return {
-        "artifact": artifacts[-1].name,
+        "artifact": artifact.name,
         "tier": data["tier"],
         "metric": "output_tokens",
         "cut_pct_band": [float(band[0]), float(band[1])],
@@ -129,6 +142,7 @@ def evaluate_dose_drift(
     band: dict | None,
     metric_ratified: bool = False,
     min_live_rows: int = 20,
+    bounded_grounded_possible: bool = True,
 ) -> dict[str, Any]:
     """Rule 1: live bounded grounded OUTPUT distribution vs calibration arm.
 
@@ -137,8 +151,17 @@ def evaluate_dose_drift(
     tokens BELOW the calibrated arm's 95% floor = the dose is cutting
     grounded answers harder than the calibrated safe band — re-trigger
     AC-P6c. Live mean ABOVE the ceiling is a savings miss, not a fidelity
-    hazard, and is reported but never flagged red.
+    hazard, and is reported but never flagged red. When the deployment cannot
+    produce bounded grounded traffic (conciseness off or the pre-calibration
+    cap), this leg is dormant rather than perpetually pending.
     """
+    if not bounded_grounded_possible:
+        return {
+            "status": "not_applicable_grounded_off",
+            "flagged": [],
+            "preview": [],
+            "checked": 0,
+        }
     if band is None:
         return {"status": "pending_calibration", "flagged": [], "preview": [],
                 "checked": 0}
@@ -216,15 +239,18 @@ def tripwire_report(
     deep_cut_pct: float = 25.0,
     metric_ratified: bool = False,
     min_live_rows: int = 20,
+    bounded_grounded_possible: bool = True,
 ) -> dict[str, Any]:
     """Compose the full AC-P6f report. Pure: rules over pre-fetched rows."""
     band = band if band is not None else load_calibration_band()
-    dose_drift = evaluate_dose_drift(rows, band, metric_ratified,
-                                     min_live_rows)
+    dose_drift = evaluate_dose_drift(
+        rows, band, metric_ratified, min_live_rows, bounded_grounded_possible)
     missed = evaluate_missed_grounding(rows, deep_cut_pct)
     alert = "alert" in (dose_drift["status"], missed["status"])
     status = "red" if alert else (
-        "pending" if dose_drift["status"] != "clear" else "green")
+        "pending" if dose_drift["status"] not in {
+            "clear", "not_applicable_grounded_off"
+        } else "green")
     return {
         "status": status,
         "dose_drift": dose_drift,
@@ -309,7 +335,7 @@ async def tripwire_endpoint(days: int = DEFAULT_WINDOW_DAYS):
         return JSONResponse({"error": "days must be between 1 and 365"},
                             status_code=400)
     deep = _deep_cut_pct()
-    ratified, min_rows = _drift_settings()
+    ratified, min_rows, bounded_grounded_possible = _drift_settings()
     try:
         rows = fetch_tripwire_rows(days)
     except Exception as exc:  # noqa: BLE001 — ledger-unavailable is 503, not a crash
@@ -317,7 +343,8 @@ async def tripwire_endpoint(days: int = DEFAULT_WINDOW_DAYS):
             {"error": "ledger unavailable", "detail": str(exc)}, status_code=503)
     return JSONResponse(tripwire_report(
         rows, deep_cut_pct=deep, metric_ratified=ratified,
-        min_live_rows=min_rows))
+        min_live_rows=min_rows,
+        bounded_grounded_possible=bounded_grounded_possible))
 
 
 def _deep_cut_pct() -> float:
@@ -326,8 +353,14 @@ def _deep_cut_pct() -> float:
     return get_settings().tripwire_deep_cut_pct
 
 
-def _drift_settings() -> tuple[bool, int]:
+def _drift_settings() -> tuple[bool, int, bool]:
     from .config import get_settings
 
     s = get_settings()
-    return s.tripwire_output_metric_ratified, s.tripwire_min_live_rows
+    # Bounded grounded traffic is impossible until both the feature and the
+    # PM-ratified calibration gate are live; don't call that dormant state a
+    # monitoring failure.
+    bounded_grounded_possible = (
+        s.output_conciseness_enabled and s.grounded_calibration_green)
+    return (s.tripwire_output_metric_ratified, s.tripwire_min_live_rows,
+            bounded_grounded_possible)

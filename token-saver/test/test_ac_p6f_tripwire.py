@@ -240,6 +240,14 @@ def _benchmark_results():
     ]
 
 
+def _parity_green_results():
+    """A complete calibration population with affirmative judge evidence."""
+    return [
+        {**row, "mode": "model_judge", "score_a": 9.0, "score_b": 9.0}
+        for row in _benchmark_results()
+    ]
+
+
 class TestBandLoaderAndEmitContract:
     """The PM blocker: the loader must consume what the harness EMITS."""
 
@@ -247,11 +255,12 @@ class TestBandLoaderAndEmitContract:
         from benchmark.run_benchmark import emit_calibration_artifact
 
         path = emit_calibration_artifact(
-            _benchmark_results(), tmp_path, "google/gemini-3.5-flash-lite",
+            _parity_green_results(), tmp_path, "google/gemini-3.5-flash-lite",
             "bounded", "eligible_only", "benchmark_m_x.json",
             population_ids=["rag-050", "rag-051", "rag-052", "rag-053",
                             "rag-054"])
         assert path.name.startswith("calibration_")
+        assert json.loads(path.read_text())["superseded_by"] is None
         band = tripwire.load_calibration_band(tmp_path)
         assert band is not None
         assert band["artifact"] == path.name
@@ -307,6 +316,38 @@ class TestBandLoaderAndEmitContract:
                 json.dumps({**base, **mutate}))
             assert tripwire.load_calibration_band(tmp_path) is None
         (tmp_path / "calibration_m.json").write_text("{not json")
+        assert tripwire.load_calibration_band(tmp_path) is None
+
+    # AC-P6k: authority is a supersession decision, never alphabetical order.
+    def test_ac_p6k_loader_uses_only_unsuperseded_green_artifact(self, tmp_path):
+        from benchmark.run_benchmark import emit_calibration_artifact
+
+        authority = emit_calibration_artifact(
+            _parity_green_results(), tmp_path, "m", "bounded",
+            "eligible_only", "benchmark_m.json")
+        legacy = tmp_path / "calibration_zzz_legacy-model_20260101T000000Z.json"
+        legacy.write_text(json.dumps({
+            **json.loads(authority.read_text()),
+            "superseded_by": authority.name,
+        }))
+        band = tripwire.load_calibration_band(tmp_path)
+        assert band is not None
+        assert band["artifact"] == authority.name
+
+    @pytest.mark.parametrize("parity", [None, False])
+    def test_ac_p6k_loader_refuses_missing_or_red_quality_parity(
+            self, tmp_path, parity):
+        from benchmark.run_benchmark import emit_calibration_artifact
+
+        path = emit_calibration_artifact(
+            _parity_green_results(), tmp_path, "m", "bounded",
+            "eligible_only", "benchmark_m.json")
+        data = json.loads(path.read_text())
+        if parity is None:
+            data.pop("quality_parity")
+        else:
+            data["quality_parity"]["parity_holds"] = False
+        path.write_text(json.dumps(data))
         assert tripwire.load_calibration_band(tmp_path) is None
 
     def test_emit_refuses_empty_population(self, tmp_path):
@@ -433,6 +474,19 @@ class TestCalibrationParityLimb:
 
 
 class TestReport:
+    # AC-P6k: no bounded grounded request can exist when either guard is off.
+    def test_ac_p6k_grounded_off_is_green_dormant_not_pending(self):
+        rep = tripwire.tripwire_report(
+            [], band=None, bounded_grounded_possible=False)
+        assert rep["status"] == "green"
+        assert rep["dose_drift"]["status"] == "not_applicable_grounded_off"
+
+    def test_ac_p6k_tripwire_rearms_when_bounded_grounding_is_possible(self):
+        rep = tripwire.tripwire_report([], band=None,
+                                       bounded_grounded_possible=True)
+        assert rep["status"] == "pending"
+        assert rep["dose_drift"]["status"] == "pending_calibration"
+
     def test_report_pending_without_calibration_artifact(self, tmp_path,
                                                           monkeypatch):
         monkeypatch.setattr(tripwire, "RESULTS_DIR", tmp_path)
@@ -447,7 +501,7 @@ class TestReport:
 
         monkeypatch.setattr(tripwire, "RESULTS_DIR", tmp_path)
         emit_calibration_artifact(
-            _benchmark_results(), tmp_path, "m", "bounded",
+            _parity_green_results(), tmp_path, "m", "bounded",
             "eligible_only", "benchmark_m_x.json")
         rows = _bounded_row(80, n_rows=25)  # below floor → would flag
         rep = tripwire.tripwire_report(rows)  # metric NOT ratified (default)
@@ -467,7 +521,7 @@ class TestReport:
 
         monkeypatch.setattr(tripwire, "RESULTS_DIR", tmp_path)
         emit_calibration_artifact(
-            _benchmark_results(), tmp_path, "m", "bounded",
+            _parity_green_results(), tmp_path, "m", "bounded",
             "eligible_only", "benchmark_m_x.json")
         # treatment tokens 200..240, mean ~220 — live rows inside the band
         rows = _bounded_row(220, n_rows=25)
@@ -675,8 +729,24 @@ def test_tripwire_endpoint_red_on_seeded_missed_grounding(tmp_path,
     data = r.json()
     assert data["status"] == "red"
     assert data["missed_grounding"]["status"] == "alert"
-    assert data["dose_drift"]["status"] == "pending_calibration"
+    # AC-P6k: this deployment is pre-calibration, so bounded grounded traffic
+    # is impossible and the unrelated dose-drift leg is green-dormant.
+    assert data["dose_drift"]["status"] == "not_applicable_grounded_off"
     assert data["calibration_artifact"] is None
+
+
+def test_ac_p6k_endpoint_green_dormant_when_bounded_traffic_is_impossible(
+        tmp_path, monkeypatch):
+    app, _ = _pinned_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(tripwire, "RESULTS_DIR", tmp_path)
+    from fastapi.testclient import TestClient
+    with TestClient(app) as c:
+        response = c.get("/api/tripwire")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "green"
+    assert data["dose_drift"]["status"] == "not_applicable_grounded_off"
+    assert data["missed_grounding"]["status"] == "clear"
 
 
 def test_tripwire_endpoint_green_on_benign_ledger(tmp_path, monkeypatch):
@@ -687,10 +757,11 @@ def test_tripwire_endpoint_green_on_benign_ledger(tmp_path, monkeypatch):
     # reads pending, never green.
     from benchmark.run_benchmark import emit_calibration_artifact
     emit_calibration_artifact(
-        _benchmark_results(), tmp_path, "m", "bounded", "eligible_only",
+        _parity_green_results(), tmp_path, "m", "bounded", "eligible_only",
         "benchmark_m_x.json")
     monkeypatch.setenv("TRIPWIRE_OUTPUT_METRIC_RATIFIED", "true")
     monkeypatch.setenv("TRIPWIRE_MIN_LIVE_ROWS", "1")
+    monkeypatch.setenv("GROUNDED_CALIBRATION_GREEN", "true")
     get_settings.cache_clear()
     stats.log_request(
         model="m", route="compress", input_tokens_before=1000,
@@ -769,8 +840,10 @@ class TestMeasurementTagExclusion:
         monkeypatch.setattr(tripwire, "RESULTS_DIR", tmp_path)
         from benchmark.run_benchmark import emit_calibration_artifact
         emit_calibration_artifact(
-            _benchmark_results(), tmp_path, "m", "bounded", "eligible_only",
+            _parity_green_results(), tmp_path, "m", "bounded", "eligible_only",
             "benchmark_m_x.json")
+        monkeypatch.setenv("GROUNDED_CALIBRATION_GREEN", "true")
+        get_settings.cache_clear()
         self._log(stats)
         for _ in range(3):
             self._log(stats, tag=self.TAG)  # harness traffic, same shape
