@@ -64,6 +64,29 @@ th { color: var(--muted); font-size: .75rem; text-transform: uppercase; }
          font-size: .75rem; }
 .badge.red { background: rgba(229,72,77,.15); color: var(--red); }
 .badge.green { background: rgba(53,194,143,.15); color: var(--green); }
+.badge.neutral { background: rgba(139,147,163,.15); color: var(--muted); }
+/* Keys & Tenants tab (C6, keys-tenants-tab-spec.md) — shared component set. */
+.chip { display: inline-block; padding: .05rem .45rem; margin: 0 .15rem .15rem 0;
+        border: 1px solid var(--border); border-radius: 999px;
+        font-size: .72rem; color: var(--muted); }
+.btn { background: var(--accent); color: #fff; border: none;
+       padding: .3rem .7rem; border-radius: 6px; cursor: pointer; font-size: .8rem; }
+.btn.danger { background: var(--red); }
+.btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+.btn:disabled { opacity: .5; cursor: default; }
+.hdr-action { float: right; }
+.key-dot { color: var(--muted); letter-spacing: .15em; }
+.form-row { margin: .5rem 0; }
+.form-label { display: block; color: var(--muted); font-size: .75rem;
+              text-transform: uppercase; margin-bottom: .2rem; }
+.form-input { width: 100%; box-sizing: border-box; background: var(--panel);
+              color: var(--text); border: 1px solid var(--border);
+              border-radius: 6px; padding: .4rem .5rem; }
+.form-hint { color: var(--muted); font-size: .75rem; }
+.inline-err { color: var(--red); font-size: .78rem; }
+.reveal-code { display: block; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+               background: #0d1117; padding: .5rem; border-radius: 6px;
+               word-break: break-all; margin: .4rem 0; }
 /* Savings breakdown panel (a1eae90 decomposition contract): L1 and cache
    render as contained sub-tiles of the cost_saved total — never summed. */
 .breakdown-note { color: var(--muted); font-size: .8rem; margin: 0 0 .6rem; }

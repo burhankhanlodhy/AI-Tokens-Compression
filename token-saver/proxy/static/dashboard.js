@@ -185,12 +185,399 @@
       "</div>";
   }
 
-  function renderKeys() {
-    content.innerHTML = '<div class="grid"><div class="card span12"><div class="empty">' +
-      "<h2>Keys &amp; Tenants</h2>" +
-      "<p>Key management arrives with multi-tenant support (Phase C).</p>" +
-      "<p style='font-size:.8rem'>No secret values are ever displayed — keys show last-4 only.</p>" +
-      "</div></div></div>";
+  // ---------------- Keys & Tenants tab (C6 — keys-tenants-tab-spec.md) ------
+  /* Proxy-facing key management only (C10 redaction: key_last4 + the one-time
+   * plaintext reveal; key_hash is never sent by the API and never rendered).
+   * Every displayed number is read 1:1 from /api/kpis (tenant_id/api_key_id
+   * scoped) or /api/tenants|/api/keys — zero client-side aggregation.
+   * Write endpoints attach `Authorization: Bearer <admin token>` ONLY after
+   * §4.5 token entry; the token lives in a module variable ONLY — never in
+   * storage, URLs, or logs, and never rendered outside the masked input. */
+
+  var adminToken = null;      // §4.5: module variable only
+  var tokenPrompt = null;     // {retry, msg} — pending write replay after 401
+  var keysCtx = null;         // {tenant, keys, tkpis} from the last load
+  var pendingConfirm = null;  // {type: "revoke"|"rotate", keyId}
+  var confirmTimer = null;
+  var keyFormOpen = false;
+  var revealData = null;      // {key, last4, mode: "create"|"rotate"}
+  var drawerState = null;     // {key, loading|data|error}
+
+  function escapeHtml(s) {
+    return String(s === null || s === undefined ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function escDate(s) { return escapeHtml(String(s || "").slice(0, 10)); }
+
+  function keysFetch(url) {
+    return fetch(url).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (b) {
+        if (!r.ok) {
+          var e = new Error(b && b.detail ? b.detail : "bad status " + r.status);
+          e.status = r.status;
+          throw e;
+        }
+        return b;
+      });
+    });
+  }
+
+  /* Scoped KPI url: selector first so a filtered url is distinguishable from
+   * the unscoped /api/kpis?bucket=… fetch the other tabs make. */
+  function keysKpisUrl(extra) {
+    var url = "/api/kpis?" + extra + "&bucket=" + state.bucket;
+    if (state.from) url += "&from=" + encodeURIComponent(state.from);
+    if (state.to) url += "&to=" + encodeURIComponent(state.to);
+    return url;
+  }
+
+  function onKeysTab() {
+    return (location.hash.replace("#", "") || "overview") === "keys";
+  }
+
+  function loadKeys() {
+    pendingConfirm = null;
+    keyFormOpen = false;
+    revealData = null;
+    drawerState = null;
+    if (confirmTimer) { clearTimeout(confirmTimer); confirmTimer = null; }
+    content.innerHTML = '<div class="skel-row"></div><div class="skel-row"></div><div class="skel-row short" style="width:60%"></div>';
+    keysFetch("/api/tenants").then(function (tenants) {
+      if (!tenants || !tenants.length) {
+        throw new Error("No tenant rows found — the proxy may not be initialized yet.");
+      }
+      var t = tenants[0]; // self-host: exactly one tenant, no picker (§2.1)
+      return Promise.all([
+        keysFetch("/api/keys?tenant_id=" + encodeURIComponent(t.id)),
+        keysFetch(keysKpisUrl("tenant_id=" + encodeURIComponent(t.id)))
+      ]).then(function (res) {
+        keysCtx = { tenant: t, keys: res[0], tkpis: res[1] };
+        renderKeysUI();
+      });
+    }).catch(function (e) { keysError(e && e.message); });
+  }
+
+  function keysError(msg) {
+    destroyCharts();
+    content.innerHTML = '<div class="error-box"><strong>Couldn\'t load key management.</strong>' +
+      "<p>" + escapeHtml(msg || "The tenants/keys API may be unavailable.") + "</p>" +
+      '<button id="retry" type="button">Retry</button></div>';
+    document.getElementById("retry").addEventListener("click", function () { loadKeys(); });
+  }
+
+  function statusBadge(s) {
+    if (s === "active") return '<span class="badge green">active</span>';
+    if (s === "revoked") return '<span class="badge red">revoked</span>';
+    return '<span class="badge neutral">rotated</span>';
+  }
+
+  function actionsInner(k) {
+    var id = String(k.id);
+    var errSlot = '<span class="inline-err" id="keyerr-' + id + '"></span>';
+    if (k.status !== "active") return "—" + errSlot;
+    var confirm = pendingConfirm && pendingConfirm.keyId === id ? pendingConfirm.type : null;
+    if (confirm === "rotate") {
+      return '<button id="rot-' + id + '" class="btn danger">Confirm rotate?</button> ' +
+        '<button id="rotcancel-' + id + '" class="btn ghost">Cancel</button>' +
+        '<div class="form-hint">Rotating issues a new key and immediately stops the old one. Update callers with the new key.</div>' +
+        errSlot;
+    }
+    if (confirm === "revoke") {
+      return '<button id="rev-' + id + '" class="btn danger">Confirm revoke?</button> ' +
+        '<button id="revcancel-' + id + '" class="btn ghost">Cancel</button>' +
+        '<div class="form-hint">Revoked keys stop authenticating immediately. This cannot be undone.</div>' +
+        errSlot;
+    }
+    return '<button id="rot-' + id + '" class="btn ghost">Rotate</button> ' +
+      '<button id="rev-' + id + '" class="btn danger">Revoke</button>' + errSlot;
+  }
+
+  function keyRow(k) {
+    var id = String(k.id);
+    var scopes = (k.scopes && k.scopes.length)
+      ? k.scopes.map(function (s) { return '<span class="chip">' + escapeHtml(s) + "</span>"; }).join("")
+      : "—";
+    return '<tr id="keyrow-' + id + '">' +
+      '<td><span class="key-dot">••••</span> ' + escapeHtml(k.key_last4) + "</td>" +
+      "<td>" + scopes + "</td>" +
+      "<td>" + (k.spend_cap_usd === null || k.spend_cap_usd === undefined
+        ? "Inherits tenant" : money(k.spend_cap_usd)) + "</td>" +
+      "<td>" + statusBadge(k.status) + "</td>" +
+      '<td class="muted-note">' + escDate(k.created_at) + "</td>" +
+      '<td class="muted-note">' + (k.revoked_at ? escDate(k.revoked_at) : "—") + "</td>" +
+      "<td>" + actionsInner(k) + "</td></tr>";
+  }
+
+  function createFormHtml() {
+    return '<div class="card span12"><h3>Create proxy key</h3>' +
+      '<div class="form-row"><label class="form-label" for="key-scopes">Scopes (comma-separated, optional)</label>' +
+      '<input id="key-scopes" class="form-input" autocomplete="off" placeholder="e.g. chat, embeddings"></div>' +
+      '<div class="form-row"><label class="form-label" for="key-cap">Spend cap USD (optional)</label>' +
+      '<input id="key-cap" class="form-input" autocomplete="off" placeholder="e.g. 20.00"></div>' +
+      '<button id="key-create-btn" class="btn">Create key</button> ' +
+      '<button id="key-form-cancel" class="btn ghost">Cancel</button> ' +
+      '<span class="inline-err" id="keyerr-create"></span></div>';
+  }
+
+  function revealPanelHtml() {
+    return '<div class="card span12"><h3>' +
+      (revealData.mode === "rotate" ? "Key rotated" : "Key created") + "</h3>" +
+      '<p><span class="badge green">•••• ' + escapeHtml(revealData.last4) + "</span></p>" +
+      '<p><code class="reveal-code" id="reveal-code">' + escapeHtml(revealData.key) + "</code></p>" +
+      '<p><button id="copy-key" class="btn">Copy</button> <span id="copy-note" class="muted-note"></span></p>' +
+      '<p class="inline-err">This key is shown once. Copy it now — it cannot be retrieved again.</p>' +
+      '<button id="reveal-done" class="btn ghost">Done</button></div>';
+  }
+
+  function drawerHtml() {
+    if (!drawerState) return "";
+    var k = drawerState.key;
+    var head = '<div class="card span12"><h3>Usage — <span class="key-dot">••••</span> ' +
+      escapeHtml(k.key_last4) + "</h3>";
+    if (drawerState.loading) return head + '<div class="skel-row"></div></div>';
+    if (drawerState.error) {
+      return head + '<div class="error-box">Couldn\'t load usage for this key.' +
+        '<button id="drawer-retry" type="button">Retry</button></div></div>';
+    }
+    var ov = (drawerState.data && drawerState.data.overview) || {};
+    return head + '<div class="grid">' +
+      kpiCard("Requests", fmt(ov.requests), null, null, null) +
+      kpiCard("Input tokens saved", fmt(ov.input_tokens_saved), null, null, null) +
+      kpiCard("Cost saved", money(ov.cost_saved), null, null, null) +
+      "</div>" +
+      '<button id="drawer-close" class="btn ghost">Close</button></div>';
+  }
+
+  function tokenPromptHtml() {
+    var msg = tokenPrompt.msg || "Printed once to the proxy's startup log at boot.";
+    return '<div class="card span12"><h3>Admin token</h3>' +
+      '<p class="form-hint">' + escapeHtml(msg) + "</p>" +
+      '<div class="form-row"><input id="token-input" type="password" class="form-input" autocomplete="off"></div>' +
+      '<button id="token-save" class="btn">Save</button></div>';
+  }
+
+  function renderKeysUI() {
+    destroyCharts();
+    if (!keysCtx) return;
+    var t = keysCtx.tenant;
+    var ov = (keysCtx.tkpis && keysCtx.tkpis.overview) || {};
+    var keys = keysCtx.keys || [];
+    var html = '<div id="token-slot">' + (tokenPrompt ? tokenPromptHtml() : "") + "</div>" +
+      '<div class="grid">' +
+      '<div class="card span6"><h3>Tenant</h3>' +
+      '<div class="kpi-num">' + escapeHtml(t.name) + "</div>" +
+      "<p>Plan: <span class=\"badge neutral\">" + escapeHtml(t.plan) + "</span><br>" +
+      "Spend cap: " + (t.spend_cap_usd === null || t.spend_cap_usd === undefined
+        ? "Uncapped" : money(t.spend_cap_usd)) + "<br>" +
+      '<span class="muted-note">Created ' + escDate(t.created_at) + "</span></p></div>" +
+      kpiCard("Requests (tenant)", fmt(ov.requests), null, null, null) +
+      kpiCard("Cost saved (tenant)", money(ov.cost_saved), null, null, null) +
+      '<div class="card span12"><h3>Proxy keys' +
+      (keys.length ? '<span class="hdr-action"><button id="keys-create" class="btn">Create key</button></span>' : "") +
+      "</h3>";
+    if (!keys.length) {
+      html += '<div class="empty"><h2>No proxy keys yet</h2>' +
+        "<p>Create a key so your applications can authenticate to the proxy.</p>" +
+        '<button id="keys-empty-create" class="btn">Create key</button></div>';
+    } else {
+      html += "<table><thead><tr><th>Key</th><th>Scopes</th><th>Spend cap</th><th>Status</th>" +
+        "<th>Created</th><th>Revoked</th><th>Actions</th></tr></thead><tbody>" +
+        keys.map(keyRow).join("") + "</tbody></table>";
+    }
+    html += "</div>" +
+      '<div id="keys-inline">' +
+      (revealData ? revealPanelHtml() : (keyFormOpen ? createFormHtml() : "")) +
+      "</div>" +
+      '<div id="drawer-slot">' + drawerHtml() + "</div>" +
+      "</div>";
+    content.innerHTML = html;
+    bindKeysUI();
+  }
+
+  function bindKeysUI() {
+    var keys = (keysCtx && keysCtx.keys) || [];
+    bindClick("keys-create", function () { keyFormOpen = true; renderKeysUI(); });
+    bindClick("keys-empty-create", function () { keyFormOpen = true; renderKeysUI(); });
+    if (revealData) {
+      bindClick("reveal-done", function () {
+        revealData = null;   // one-time reveal is dismissed for good (§4.2.4)
+        keyFormOpen = false;
+        loadKeys();
+      });
+      bindClick("copy-key", function () {
+        var note = document.getElementById("copy-note");
+        var fail = function () { if (note) note.textContent = "Copy failed — select the text manually."; };
+        var done = function () {
+          if (note) {
+            note.textContent = "Copied";
+            setTimeout(function () { note.textContent = ""; }, 2000);
+          }
+        };
+        try {
+          if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(revealData.key).then(done, fail);
+          } else { fail(); }
+        } catch (e) { fail(); }
+      });
+    } else if (keyFormOpen) {
+      bindClick("key-create-btn", createKey);
+      bindClick("key-form-cancel", function () { keyFormOpen = false; renderKeysUI(); });
+    }
+    if (tokenPrompt) bindClick("token-save", saveAdminToken);
+    if (drawerState && drawerState.data) bindClick("drawer-close", function () { drawerState = null; renderKeysUI(); });
+    if (drawerState && drawerState.error) bindClick("drawer-retry", function () { openKeyDrawer(drawerState.key); });
+    keys.forEach(function (k) {
+      var id = String(k.id);
+      bindClick("keyrow-" + id, function (ev) {
+        if (ev && ev.target && ev.target.tagName &&
+            String(ev.target.tagName).toLowerCase() === "button") return;
+        openKeyDrawer(k);
+      });
+      if (k.status !== "active") return;
+      bindClick("rot-" + id, function () {
+        if (pendingConfirm && pendingConfirm.keyId === id && pendingConfirm.type === "rotate") executeRotate(k);
+        else setConfirm("rotate", id);
+      });
+      bindClick("rotcancel-" + id, cancelConfirm);
+      bindClick("rev-" + id, function () {
+        if (pendingConfirm && pendingConfirm.keyId === id && pendingConfirm.type === "revoke") executeRevoke(k);
+        else setConfirm("revoke", id);
+      });
+      bindClick("revcancel-" + id, cancelConfirm);
+    });
+  }
+
+  function bindClick(id, fn) {
+    var el = document.getElementById(id);
+    if (el && el.addEventListener) el.addEventListener("click", fn);
+  }
+
+  function setConfirm(type, keyId) {
+    if (confirmTimer) clearTimeout(confirmTimer);
+    pendingConfirm = { type: type, keyId: keyId };
+    renderKeysUI();
+    confirmTimer = setTimeout(function () {   // §4.3: untouched confirm reverts after 5s
+      confirmTimer = null;
+      if (!onKeysTab()) return;
+      if (pendingConfirm && pendingConfirm.keyId === keyId && pendingConfirm.type === type) {
+        pendingConfirm = null;
+        renderKeysUI();
+      }
+    }, 5000);
+  }
+
+  function cancelConfirm() {
+    pendingConfirm = null;
+    if (confirmTimer) { clearTimeout(confirmTimer); confirmTimer = null; }
+    renderKeysUI();
+  }
+
+  function clearConfirm() {
+    pendingConfirm = null;
+    if (confirmTimer) { clearTimeout(confirmTimer); confirmTimer = null; }
+  }
+
+  /* Every write goes through here: bearer attached only when a token has been
+   * entered (§4.5); 401 clears the token and prompts, preserving the pending
+   * action; any other failure surfaces inline WITHOUT re-rendering (§4.4). */
+  function doWrite(url, body, errId, ok, onFail) {
+    var headers = { "Content-Type": "application/json" };
+    if (adminToken) headers["Authorization"] = "Bearer " + adminToken;
+    return fetch(url, { method: "POST", headers: headers, body: JSON.stringify(body || {}) })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (b) {
+          if (r.status === 401) {
+            var rejected = !!adminToken;
+            adminToken = null;   // §4.5.3: any 401 clears the stored token
+            tokenPrompt = {
+              retry: function () { doWrite(url, body, errId, ok, onFail); },
+              msg: rejected
+                ? "Token rejected — the proxy may have restarted. Enter the current startup-log token."
+                : null,
+            };
+            renderKeysUI();
+            return null;
+          }
+          if (!r.ok) {
+            writeError(errId, b && b.detail ? b.detail : "Request failed (" + r.status + ")");
+            if (onFail) onFail();
+            return null;
+          }
+          return ok(b);
+        });
+      })
+      .catch(function () {
+        writeError(errId, "Request failed — network error.");
+        if (onFail) onFail();
+      });
+  }
+
+  function writeError(errId, msg) {
+    var el = document.getElementById(errId);   // pre-rendered slot; no re-render (§4.4)
+    if (el) el.textContent = msg;
+  }
+
+  function createKey() {
+    var err = document.getElementById("keyerr-create");
+    var btn = document.getElementById("key-create-btn");
+    if (err) err.textContent = "";
+    var cap = null;
+    var capRaw = (document.getElementById("key-cap").value || "").trim();
+    if (capRaw !== "") {
+      cap = Number(capRaw);
+      if (!isFinite(cap) || cap < 0) {
+        if (err) err.textContent = "Spend cap must be a number.";
+        return;
+      }
+    }
+    var scopes = (document.getElementById("key-scopes").value || "").split(",")
+      .map(function (s) { return s.trim(); }).filter(Boolean);
+    if (btn) { btn.disabled = true; btn.textContent = "Creating…"; }
+    var restore = function () { if (btn) { btn.disabled = false; btn.textContent = "Create key"; } };
+    doWrite("/api/keys",
+      { tenant_id: keysCtx.tenant.id, scopes: scopes, spend_cap_usd: cap },
+      "keyerr-create",
+      function (b) {
+        revealData = { key: b.key, last4: b.key_last4, mode: "create" };
+        keyFormOpen = false;
+        renderKeysUI();
+        return b;
+      },
+      restore);
+  }
+
+  function executeRevoke(k) {
+    clearConfirm();
+    doWrite("/api/keys/" + k.id + "/revoke", {}, "keyerr-" + k.id, function () { loadKeys(); });
+  }
+
+  function executeRotate(k) {
+    clearConfirm();
+    doWrite("/api/keys/" + k.id + "/rotate", {}, "keyerr-" + k.id, function (b) {
+      revealData = { key: b.key, last4: b.key_last4, mode: "rotate" };
+      renderKeysUI();
+      return b;
+    });
+  }
+
+  function saveAdminToken() {
+    var input = document.getElementById("token-input");
+    var v = input ? input.value : "";
+    if (!v) return;
+    adminToken = v;          // §4.5.2: module variable only — never storage/URL/log
+    var retry = tokenPrompt && tokenPrompt.retry;
+    tokenPrompt = null;
+    renderKeysUI();
+    if (retry) retry();
+  }
+
+  function openKeyDrawer(k) {
+    drawerState = { key: k, loading: true };
+    renderKeysUI();
+    keysFetch(keysKpisUrl("api_key_id=" + encodeURIComponent(k.id)))
+      .then(function (d) { drawerState = { key: k, data: d }; renderKeysUI(); })
+      .catch(function () { drawerState = { key: k, error: true }; renderKeysUI(); });
   }
 
   // ---------------- data + routing ----------------
@@ -207,12 +594,15 @@
 
   function render(d) {
     destroyCharts();
-    if (!d.overview || !d.overview.requests) { emptyState(); return; }
     var tab = location.hash.replace("#", "") || "overview";
+    // C6 (§4.1): the keys tab's states are its own (skel/error/"No proxy keys
+    // yet") — a zero-traffic KPI window must not hijack it with emptyState().
+    if (tab === "keys") { loadKeys(); return; }
+    if (!d.overview || !d.overview.requests) { emptyState(); return; }
     if (tab === "overview") renderOverview(d);
     else if (tab === "traffic") renderTraffic(d);
     else if (tab === "providers") renderProviders(d);
-    else if (tab === "keys") renderKeys();
+    else if (tab === "keys") loadKeys();
     else renderOverview(d);
   }
 

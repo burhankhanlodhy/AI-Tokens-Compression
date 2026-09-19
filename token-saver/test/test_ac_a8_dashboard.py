@@ -109,8 +109,13 @@ def test_m1_four_tabs_are_distinct_and_complete(tmp_path):
     assert "Latency p50" in htmls["traffic"] and "Latency p99" in htmls["traffic"]
     assert "Requests per bucket" in htmls["traffic"]
     assert "openrouter" in htmls["providers"] and "anthropic" in htmls["providers"]
-    assert "Keys" in htmls["keys"] and "Phase C" in htmls["keys"]
-    assert "last-4 only" in htmls["keys"]
+    # C6: the Phase C placeholder is gone (spec gate 5). The keys tab now
+    # renders the real management surface; with this KPI-only fixture it
+    # surfaces its error state (tenants API not served by the stub), which is
+    # still a distinct, complete surface. Full keys-tab coverage lives in
+    # test_keys_tab_render.py.
+    assert "Couldn't load key management." in htmls["keys"]
+    assert "arrives with" not in htmls["keys"]
 
 
 # ------------------------------------------------- 2: 1:1 money fidelity
@@ -287,7 +292,11 @@ def _js_numbers(x: float) -> str:
 
 def test_m9_only_fetch_is_api_kpis(tmp_path):
     fx = _fixture()
-    for tab in TABS:
+    # C6: the keys tab now issues its own management fetches (/api/tenants,
+    # /api/keys, tenant/key-scoped /api/kpis) by design — its single-source
+    # 1:1 contract is gated in test_keys_tab_render.py. The read-only tabs
+    # remain strictly one-fetch.
+    for tab in ("overview", "traffic", "providers"):
         out = _render(tmp_path, fx, tab)
         assert out["url"] == "/api/kpis?bucket=day", out["url"]
         assert len(out["urls"]) == 1, f"{tab} issued {len(out['urls'])} fetches"

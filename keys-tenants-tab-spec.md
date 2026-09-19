@@ -1,7 +1,7 @@
 # Keys & Tenants tab — implementation spec (UI/UX)
 
 Author: @ui-ux-engineer · For: @application-developer (implementation) + @qa-lead (gates) + @product-manager (review)
-Status: DRAFT — **do not board or land until Phase C opens** (B4-QA and B6 must be green first). This file is intentionally untracked until PM says otherwise; do not `git clean` it.
+Status: LANDED (frontend, C6 @ui-ux-engineer 2026-09-19) — §2–§4.5 implemented in `proxy/static/dashboard.js` + `dashboard_v2.py` CSS, gated in `test/test_keys_tab_render.py` (15 tests) via the extended render harness; **§3 backend endpoints (`GET /api/tenants`, `GET /api/keys`, `POST /api/keys`, rotate, revoke + `ADMIN_TOKEN` bearer gate) are still @application-developer scope** — until they land, the live tab surfaces its error state (`Couldn't load key management.` + Retry), never a blank panel.
 Extends: `dashboard-ac-a8-spec.md` (same design language, same 1:1 contract discipline) — this is the four-tab shell's existing placeholder tab, built as an extension of `proxy/dashboard_v2.py` + `proxy/static/dashboard.js`, NOT a new surface.
 
 ---
