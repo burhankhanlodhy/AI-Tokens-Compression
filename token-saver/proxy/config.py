@@ -62,6 +62,10 @@ class Settings(BaseSettings):
 
     # --- PA-4: exact-prefix cache detection ---
     cache_enabled: bool = True
+    # AC-PC5: semantic cache stays off until the PC4 calibration, isolation,
+    # invalidation, and filtered-HNSW release gate are green. This is a
+    # deployment-only switch; no request header can enable it.
+    semantic_cache_enabled: bool = False
 
     # --- B2: L1 lossless structural cleanup (Phase B) ---
     # Pure deterministic transform (proxy/l1_clean.py, frozen taxonomy

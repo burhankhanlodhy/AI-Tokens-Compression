@@ -119,6 +119,10 @@ All settings are env vars (see `.env.example` and `proxy/config.py`):
   whose *entire* content is pretty-printed JSON with no surrounding prose
   gets whitespace-compacted — if you send "reformat this" as bare JSON, set
   `L1_ENABLED=false`.
+- `SEMANTIC_CACHE_ENABLED` — Phase C pgvector semantic lookup, **off by
+  default**. Do not enable until AC-PC4 has passed the tenant-isolation,
+  calibration, deterministic-invalidation, and filtered-HNSW plan/latency
+  gates; no client header can enable it.
 - `LLMLINGUA_MODEL` / `COMPRESSION_RATE` — compression tuning
 - `DATABASE_PATH` — SQLite location (default `<repo>/data/stats.db`; leave unset)
 - `POSTGRES_PASSWORD` — **your own** Postgres credential; required before

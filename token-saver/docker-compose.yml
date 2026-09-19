@@ -33,6 +33,9 @@ services:
       # L1 lossless structural cleanup — ON by default since B-26; set
       # L1_ENABLED=false in .env to disable (see README flag note).
       L1_ENABLED: ${L1_ENABLED:-true}
+      # AC-PC5: semantic cache remains off until QA clears the PC4 release
+      # gate; this is deployment-only, never a client-request switch.
+      SEMANTIC_CACHE_ENABLED: ${SEMANTIC_CACHE_ENABLED:-false}
       # P6-3 benchmark-only dose-pin gate: lets the proxy honor the
       # x-token-saver-dose-pin control header. Default FALSE — flip it on
       # ONLY for a benchmark/calibration deployment (see .env.example);
