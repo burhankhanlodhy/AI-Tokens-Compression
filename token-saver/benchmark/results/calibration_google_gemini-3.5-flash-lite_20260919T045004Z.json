@@ -1,0 +1,53 @@
+{
+  "artifact_kind": "ac_p6c_calibration",
+  "tier": "bounded",
+  "metric": "output_tokens",
+  "model": "google/gemini-3.5-flash-lite",
+  "sampling_mode": "eligible_only",
+  "source_artifact": "benchmark_google_gemini-3.5-flash-lite_20260919T012823Z.json",
+  "timestamp": "2026-09-19T04:50:04.850714+00:00",
+  "population": {
+    "n": 5,
+    "ids": [
+      "rag-051",
+      "rag-052",
+      "rag-053",
+      "rag-054",
+      "rag-055"
+    ]
+  },
+  "output_reduction_pct": {
+    "mean": 15.48,
+    "ci95_interval": [
+      1.07,
+      43.09
+    ]
+  },
+  "cut_pct_band": [
+    1.07,
+    43.09
+  ],
+  "bounded_output_tokens": {
+    "mean": 521.18,
+    "ci95_interval": [
+      204.75,
+      1105.35
+    ],
+    "n": 5
+  },
+  "quality_parity": {
+    "n_judged": 5,
+    "n_attempted": 5,
+    "n_judged_planned": 5,
+    "population_complete": true,
+    "excluded_judge_ids": [],
+    "upstream_lost_ids": [],
+    "n_regressions_over_1pt": 4,
+    "mean_regression_pt": 2.7,
+    "signed_mean_regression_pt": -2.7,
+    "signed_regression_sign_convention": "score_b - score_a: NEGATIVE = treatment scored lower (regression) \u2014 matches the ratified carve arithmetic",
+    "parity_rule": "mean_regression_le_1pt_calibration_population",
+    "parity_holds": false,
+    "scope": "parity of the calibration population itself (the same paired rows the band above is built from) at the pinned tier"
+  }
+}
