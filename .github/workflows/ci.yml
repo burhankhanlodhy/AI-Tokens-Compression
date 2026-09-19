@@ -148,7 +148,7 @@ jobs:
         env:
           TOKEN_SAVER_PG_BASE: postgresql://postgres:ci-password@localhost:5434
         run: |
-          python -m pytest -q test/test_pc_pgvector_gates.py --junitxml=/tmp/pytest-pgvector.xml
+          python -m pytest -q test/test_pc_pgvector_gates.py test/test_pc2_response_store_gates.py --junitxml=/tmp/pytest-pgvector.xml
           python - <<'PY'
           import xml.etree.ElementTree as ET
 

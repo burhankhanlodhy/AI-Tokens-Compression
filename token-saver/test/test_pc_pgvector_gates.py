@@ -368,9 +368,9 @@ def test_delete_then_reinsert_deterministically_retargets_the_hit(pg_dsn):
 
 # Empirically pinned on pgvector/pgvector:0.8.6-pg16 (probe: 1/50/200 rows
 # plan a Seq Scan — planner-correct for tiny tables — and >=1000 rows plan
-# the HNSW index under the pinned settings).  5000 gives margin without
+# the HNSW index under the pinned settings).  10000 gives margin without
 # turning the lane into a benchmark.
-PLAN_GATE_ROWS = 5000
+PLAN_GATE_ROWS = 10000
 
 
 class _RecordingConnection:
