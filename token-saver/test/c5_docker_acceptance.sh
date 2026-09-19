@@ -121,6 +121,24 @@ if (( ! ready )); then
 fi
 printf 'C-5: proxy health endpoint is ready\n'
 
+# Fresh-volume Phase C schema check: the pgvector extension, PC1 entries table,
+# and PC2 response table/FK must all come from the committed Compose init mounts.
+# This catches the silent fresh-clone failure where the running volume happens
+# to have PC2 from a manual migration but docker-compose.yml does not mount it.
+SEMANTIC_SCHEMA=$(compose exec -T postgres psql -U postgres -d token_saver -Atqc \
+  "SELECT concat_ws('|',
+      (to_regclass('public.semantic_cache_entries') IS NOT NULL),
+      (to_regclass('public.semantic_cache_responses') IS NOT NULL),
+      ((SELECT count(*) FROM pg_extension WHERE extname = 'vector') = 1),
+      ((SELECT count(*) FROM pg_constraint WHERE conname = 'fk_semantic_cache_entry_response') = 1)
+  );")
+SEMANTIC_SCHEMA=${SEMANTIC_SCHEMA//$'\r'/}
+if [[ "$SEMANTIC_SCHEMA" != 't|t|t|t' ]]; then
+  printf 'C-5 FAIL: fresh-volume semantic schema check was %q (expected t|t|t|t)\n' "$SEMANTIC_SCHEMA" >&2
+  exit 1
+fi
+printf 'C-5: fresh-volume pgvector + PC1 entries + PC2 responses/FK schema verified\n'
+
 # The request must reach the real configured upstream.  No provider account is
 # needed: the deliberately invalid credential is expected to be rejected.
 REQUEST_BODY='{"model":"openai/gpt-4o-mini","messages":[{"role":"user","content":"C5 acceptance smoke: reply with one word."}]}'

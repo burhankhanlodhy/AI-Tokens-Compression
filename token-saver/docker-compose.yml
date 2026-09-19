@@ -19,6 +19,9 @@ services:
       # remains stock-Postgres compatible for CI and non-semantic consumers;
       # this runs only because this service uses the pgvector image.
       - ./migrations/20260918_pc1_pgvector.sql:/docker-entrypoint-initdb.d/20-pc1-pgvector.sql:ro
+      # AC-PC2 response store: apply after PC1 so the entry FK has its target
+      # tables and the writer can pair response_ref atomically on fresh volumes.
+      - ./migrations/20260919_pc2_semantic_responses.sql:/docker-entrypoint-initdb.d/30-pc2-semantic-responses.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d token_saver"]
       interval: 5s
