@@ -331,7 +331,7 @@ class TestCalibrationParityLimb:
         # gate mean_regression 2.7pt, 4 items over 1pt → parity FAILS.
         score_a = [9.0, 5.5, 7.0, 9.0, 9.5]
         score_b = [8.0, 2.5, 4.0, 4.0, 8.0]
-        return [{"id": f"rag-05{i}", "baseline_ok": True,
+        return [{"id": f"rag-05{i + 1}", "baseline_ok": True,
                  "treatment_ok": True, "baseline_tokens": 500.0,
                  "treatment_tokens": 250.0, "mode": "model_judge",
                  "score_a": score_a[i], "score_b": score_b[i]}
@@ -391,7 +391,45 @@ class TestCalibrationParityLimb:
         qp = json.loads(path.read_text())["quality_parity"]
         assert qp["parity_holds"] is False
         assert qp["n_judged"] == 4
-        assert qp["excluded_judge_ids"] == ["rag-052"]
+        assert qp["excluded_judge_ids"] == ["rag-053"]
+
+    def test_rows_lost_upstream_fail_closed_on_planned_anchor(self, tmp_path):
+        # P6-3 hole #2 (PM, re-verification of a7fe4e0): two of the five
+        # planned rows die upstream (arm failure) carrying 7pt regressions
+        # — they never reach `paired`, so a survivor-anchored parity would
+        # green 3-of-5. The planned population_ids anchor must make the
+        # loss visible: parity_holds false, upstream_lost_ids named,
+        # n_judged_planned kept so the denominator is on the artifact.
+        from benchmark.run_benchmark import emit_calibration_artifact
+
+        rows = [r for i, r in enumerate(self._judged_rows())
+                if i not in (1, 2)]  # rag-052, rag-053 lost upstream
+        path = emit_calibration_artifact(
+            rows, tmp_path, "m", "bounded", "eligible_only",
+            "benchmark_m.json",
+            population_ids=["rag-051", "rag-052", "rag-053",
+                            "rag-054", "rag-055"])
+        qp = json.loads(path.read_text())["quality_parity"]
+        assert qp["parity_holds"] is False
+        assert qp["n_judged"] == 3
+        assert qp["n_judged_planned"] == 5
+        assert qp["upstream_lost_ids"] == ["rag-052", "rag-053"]
+        assert qp["population_complete"] is False
+
+    def test_full_planned_population_still_greens_on_anchor(self, tmp_path):
+        # The anchor must not over-correct: all five planned rows judged
+        # and clean → population_complete true on the planned anchor.
+        from benchmark.run_benchmark import emit_calibration_artifact
+
+        path = emit_calibration_artifact(
+            self._judged_rows(), tmp_path, "m", "bounded",
+            "eligible_only", "benchmark_m.json",
+            population_ids=["rag-051", "rag-052", "rag-053",
+                            "rag-054", "rag-055"])
+        qp = json.loads(path.read_text())["quality_parity"]
+        assert qp["parity_holds"] is False  # real scores regress; gate holds
+        assert qp["population_complete"] is True
+        assert qp["upstream_lost_ids"] == []
 
 
 class TestReport:

@@ -1057,7 +1057,17 @@ def emit_calibration_artifact(
     # is emitted UNCONDITIONALLY: a red verdict ships beside the band, it
     # never silently drops the block. parity_holds None = no judge
     # evidence in the population rows (vacuous, reported as such).
-    cal_parity = _subset_parity(paired, None)
+    # P6-3 hole #2 (PM re-verification of a7fe4e0): `paired` is filtered
+    # BEFORE parity runs, so anchoring on it alone greens a gutted
+    # population — rows lost upstream (arm failure, 429) vanish without a
+    # trace and a 3-of-5 population publishes "PARITY: PASS". That is the
+    # exact AC-P1b false-green the benchmark path bans. `population_ids`
+    # is the PLANNED grounded population: passing it as the planned anchor
+    # makes upstream_lost_ids visible and fails the limb closed. When the
+    # caller supplies no planned population (None), the pre-1b
+    # attempted-only semantics stay — an unplanned ad-hoc emit cannot
+    # manufacture a denominator it never had.
+    cal_parity = _subset_parity(paired, population_ids)
     cal_parity.pop("_population_incomplete", None)
     cal_parity["parity_rule"] = "mean_regression_le_1pt_calibration_population"
     cal_parity["scope"] = ("parity of the calibration population itself "
