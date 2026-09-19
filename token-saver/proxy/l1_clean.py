@@ -188,24 +188,92 @@ def _clean_json_lines(text: str, c1: bool, c3: bool) -> str | None:
     return "\n".join(out)
 
 
-def clean_text(text: str, c1: bool = True, c3: bool = True) -> str:
+# AC-P6j reuse: bounded scan bound, same spirit as grounded.py's
+# _MAX_JSON_SCAN_ATTEMPTS — pathological inputs must not hang the proxy.
+_MAX_EMBEDDED_SCAN_ATTEMPTS = 64
+
+
+def _embedded_json_spans(text: str) -> list[tuple[int, int, dict]]:
+    """Locate balanced JSON objects anywhere in ``text`` (AC-P6j's widened
+    envelope scan, lifted for L1): left-to-right, deterministic, pure.
+    Returns non-overlapping (start, end, obj) spans; the next search starts
+    AFTER a successfully parsed span, so objects nested inside an accepted
+    span are never returned separately (the recursive _clean_obj pass on the
+    outer object already covers them)."""
+    decoder = json.JSONDecoder()
+    spans: list[tuple[int, int, dict]] = []
+    idx = text.find("{")
+    attempts = 0
+    while idx != -1 and attempts < _MAX_EMBEDDED_SCAN_ATTEMPTS:
+        attempts += 1
+        try:
+            obj, end = decoder.raw_decode(text, idx)
+        except (ValueError, RecursionError):
+            obj, end = None, idx
+        if isinstance(obj, dict):
+            spans.append((idx, end, obj))
+            idx = text.find("{", end)
+        else:
+            idx = text.find("{", idx + 1)
+    return spans
+
+
+def _clean_embedded_json(text: str, c1: bool, c3: bool) -> str:
+    """C1+C3 on JSON spans located wherever they appear in the text
+    (prose-wrapped objects, ```json fenced blocks, trailing questions in
+    the same message). The prose around each located span is conserved
+    byte-for-byte; only the span is re-dumped (compact if c1). Text with
+    no parseable object returns unchanged."""
+    spans = _embedded_json_spans(text)
+    if not spans:
+        return text
+    out: list[str] = []
+    prev = 0
+    changed = False
+    for start, end, obj in spans:
+        out.append(text[prev:start])
+        original = text[start:end]
+        cleaned = _clean_obj(obj, False, c3) if c3 else obj
+        dumped = _dump(cleaned, compact=c1)
+        if dumped != original:
+            changed = True
+        out.append(dumped)
+        prev = end
+    out.append(text[prev:])
+    result = "".join(out)
+    return result if changed else text
+
+
+def clean_text(text: str, c1: bool = True, c3: bool = True,
+               embedded: bool = False) -> str:
     """Clean one string content block. Non-JSON text is returned
-    byte-for-byte unchanged (negative list: prose is never touched)."""
+    byte-for-byte unchanged (negative list: prose is never touched).
+
+    embedded=False (default, committed AC-P1e contract): only whole-block
+    JSON and JSON-lines are cleaned — control-012 (prose-mixed) and
+    control-013 (```json fenced) pin that embedded/fenced spans are
+    conserved byte-for-byte. embedded=True additionally cleans JSON
+    objects located anywhere in the text (AC-P6j scan reuse); surrounding
+    prose is still conserved byte-for-byte. Requires a corpus re-pin
+    ruling before the default flips — see clean_messages.
+    """
     cleaned = _clean_json_block(text, c1, c3)
     if cleaned is not None:
         return cleaned
     cleaned = _clean_json_lines(text, c1, c3)
     if cleaned is not None:
         return cleaned
-    return text
+    if not embedded:
+        return text
+    return _clean_embedded_json(text, c1, c3)
 
 
-def _clean_content(content: Any, c1: bool, c3: bool) -> Any:
+def _clean_content(content: Any, c1: bool, c3: bool, embedded: bool) -> Any:
     if isinstance(content, str):
-        return clean_text(content, c1, c3)
+        return clean_text(content, c1, c3, embedded)
     if isinstance(content, list):
         return [
-            ({**part, "text": clean_text(part["text"], c1, c3)}
+            ({**part, "text": clean_text(part["text"], c1, c3, embedded)}
              if isinstance(part, dict) and part.get("type") == "text"
              and isinstance(part.get("text"), str)
              else part)
@@ -219,11 +287,22 @@ def clean_messages(
     c1: bool = True,
     c2: bool = True,
     c3: bool = True,
+    embedded: bool = False,
 ) -> list[dict]:
     """L1-clean a message list. Pure: same input -> byte-identical output.
 
     c1/c2/c3 flags exist for the B2 decomposition measurement only; the
     production path uses the defaults (all on).
+
+    embedded=False (default) keeps the committed AC-P1e contract: only
+    whole-block JSON and JSON-lines are cleaned; prose-embedded and
+    ```json-fenced spans are conserved byte-for-byte (control-012/-013
+    pin this). embedded=True widens C1/C3 to JSON spans located anywhere
+    in the text (AC-P6j's balanced-object scan lifted into the cleaner);
+    the prose around each located span is still conserved byte-for-byte.
+    Flipping the default requires a corpus re-pin ruling: two committed
+    control fixtures encode the embedded=False contract, and the fixture
+    checksum (AC-P1e) plus the published shape numbers re-base with it.
     """
     out: list[dict] = []
     for msg in messages:
@@ -236,7 +315,7 @@ def clean_messages(
             if (prev is not None and prev.get("role") == "system"
                     and prev.get("content") == content):
                 continue  # adjacent byte-identical system block
-        cleaned = _clean_content(content, c1, c3)
+        cleaned = _clean_content(content, c1, c3, embedded)
         out.append({**msg, "content": cleaned} if cleaned is not content
                    else msg)
     return out

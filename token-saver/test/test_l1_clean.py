@@ -39,6 +39,79 @@ def test_c1_leaves_prose_untouched():
     assert clean_text(prose) == prose
 
 
+def test_c1_compacts_fenced_json_block_keeps_prose():
+    # AC-P6j reuse (embedded=True): a ```json fenced block is how chat UIs
+    # actually paste payloads. The fence and the prose around it are
+    # conserved byte-for-byte; only the located JSON span is compacted.
+    src = ('Here is the payload:\n```json\n{\n  "a": 1,\n  "b": [\n    1,\n'
+           '    2\n  ]\n}\n```\nWhat is the value of a?')
+    assert clean_text(src, embedded=True) == (
+        'Here is the payload:\n```json\n{"a":1,"b":[1,2]}\n'
+        '```\nWhat is the value of a?')
+
+
+def test_default_leaves_fenced_json_untouched():
+    # Committed AC-P1e contract (control-013): embedded=False — the default
+    # — conserves fenced JSON byte-for-byte until the corpus re-pin ruling.
+    src = 'Do not normalize:\n```json\n{\n  "a": 1\n}\n```'
+    assert clean_text(src) == src
+
+
+def test_c3_drops_dead_fields_in_embedded_rag_span():
+    # Same gate as the whole-block path: an embedded object is RAG-shaped
+    # only via content/text/passage; dead fields drop, provenance and
+    # timestamps are conserved (v1.1 negative list).
+    src = ('Context: {"text": "Stage L1 is lossless cleanup.",\n'
+           '  "score": 0.97,\n  "doc_id": "KB-0042",\n'
+           '  "retrieved_at": "2026-09-19T01:28:23Z"}\nWhat does L1 do?')
+    assert clean_text(src, embedded=True) == (
+        'Context: {"text":"Stage L1 is lossless cleanup.",'
+                               '"doc_id":"KB-0042",'
+                               '"retrieved_at":"2026-09-19T01:28:23Z"}\nWhat does L1 do?')
+
+
+def test_embedded_non_rag_json_keeps_answer_bearing_fields():
+    # B2-c pin, embedded form: a bare query object is NOT RAG-shaped —
+    # `score` is answer-bearing and must survive compaction.
+    src = 'I ran {"query": "token saver", "score": 0.9} through the API.'
+    assert clean_text(src, embedded=True) == (
+        'I ran {"query":"token saver","score":0.9} through the API.')
+
+
+def test_embedded_nested_objects_cleaned_once_not_corrupted():
+    # The span scanner must not emit a nested object as a second span:
+    # the recursive _clean_obj pass on the outer object owns the subtree.
+    src = ('Outer {"text": "outer", "score": 1.0, "inner": {\n'
+           '    "text": "inner",\n    "similarity": 0.5\n  }} then a question?')
+    out = clean_text(src, embedded=True)
+    # Inner object is inside the outer span -> cleaned in one recursive pass,
+    # both similarity (dead, in rag scope) and prose conserved correctly.
+    assert out == ('Outer {"text":"outer","inner":{"text":"inner"}} '
+                   'then a question?')
+
+
+def test_embedded_clean_decomposition_c3_off_keeps_dead_fields():
+    # B2 decomposition contract: c3=False must leave dead fields in place
+    # even on embedded spans (only c1 whitespace compaction fires).
+    src = 'Context: {"text": "x", "score": 0.9} question'
+    assert clean_text(src, c3=False, embedded=True) == (
+        'Context: {"text":"x","score":0.9} question')
+
+
+def test_embedded_scan_is_bounded_on_pathological_input():
+    # 200 unparseable braces — must return unchanged without hanging
+    # (bounded attempts, same spirit as grounded.py's scan bound).
+    src = "{" * 200
+    assert clean_text(src) == src
+
+
+def test_embedded_prose_with_no_json_untouched():
+    # Whole-message prose containing braces that never parse as JSON is
+    # conserved byte-for-byte (negative list preserved by the widening).
+    src = "A set literal {not, json} in prose stays untouched."
+    assert clean_text(src) == src
+
+
 # ---------- C2: duplicate / empty system blocks ----------
 
 def test_c2_removes_empty_system():
