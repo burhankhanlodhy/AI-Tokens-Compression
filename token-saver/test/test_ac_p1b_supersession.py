@@ -82,15 +82,23 @@ def test_at_most_one_authoritative_artifact():
     artifacts = _benchmark_artifacts()
     if not artifacts:
         pytest.skip("no artifacts")
-    superseded = {
-        json.loads(p.read_text()).get("superseded_by")
+    # `superseded_by` names the SUCCESSOR (the authority that replaced this
+    # artifact) — see the emitter: stamp_supersession() writes the new name
+    # onto superseded files, _artifact_authoritative_names() selects files
+    # whose superseded_by is None, and the pointer-resolution test above
+    # treats the value as the successor. So the authoritative artifact is
+    # the one whose OWN superseded_by is null — not "a name nobody points
+    # at" (that inverted reading classified the authority as superseded and
+    # mislabeled two reproduction runs deferring to the same authority as
+    # co-authoritative).
+    authoritative = [
+        p.name
         for p in artifacts
-    }
-    superseded.discard(None)
-    authoritative = [p.name for p in artifacts if p.name not in superseded]
+        if json.loads(p.read_text()).get("superseded_by") is None
+    ]
     assert len(authoritative) <= 1, (
-        f"multiple authoritative artifacts (none names them superseded): "
-        f"{authoritative}"
+        f"multiple authoritative artifacts (more than one carries "
+        f"`superseded_by: null`): {authoritative}"
     )
 
 

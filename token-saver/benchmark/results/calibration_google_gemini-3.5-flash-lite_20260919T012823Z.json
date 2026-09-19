@@ -1,0 +1,38 @@
+{
+  "artifact_kind": "ac_p6c_calibration",
+  "tier": "bounded",
+  "metric": "output_tokens",
+  "model": "google/gemini-3.5-flash-lite",
+  "sampling_mode": "eligible_only",
+  "source_artifact": "benchmark_google_gemini-3.5-flash-lite_20260919T012823Z.json",
+  "timestamp": "2026-09-19T01:28:23.658888+00:00",
+  "population": {
+    "n": 5,
+    "ids": [
+      "rag-051",
+      "rag-052",
+      "rag-053",
+      "rag-054",
+      "rag-055"
+    ]
+  },
+  "output_reduction_pct": {
+    "mean": 15.48,
+    "ci95_interval": [
+      1.07,
+      43.09
+    ]
+  },
+  "cut_pct_band": [
+    1.07,
+    43.09
+  ],
+  "bounded_output_tokens": {
+    "mean": 521.18,
+    "ci95_interval": [
+      204.75,
+      1105.35
+    ],
+    "n": 5
+  }
+}
