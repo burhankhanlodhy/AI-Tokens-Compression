@@ -52,7 +52,7 @@ jobs:
           TOKEN_SAVER_PG_BASE: postgresql://postgres:ci-password@localhost:5432
           TOKEN_SAVER_PG_DSN: postgresql://postgres:ci-password@localhost:5432/postgres
         run: |
-          python -m pytest -q --ignore=test/test_pc_pgvector_gates.py --junitxml=/tmp/pytest-standard.xml
+          python -m pytest -q --ignore=test/test_pc_pgvector_gates.py --ignore=test/test_pc2_response_store_gates.py --junitxml=/tmp/pytest-standard.xml
           python - <<'PY'
           import xml.etree.ElementTree as ET
 
@@ -74,7 +74,7 @@ jobs:
           # --ignore is inert against explicitly-named paths, so the pgvector
           # gates must be filtered out of the list before pytest sees them:
           # they error (not skip) on the stock postgres:16 service.
-          mapfile -t tests < <(printf '%s\n' test/test_*.py | sort -r | grep -vx "test/test_pc_pgvector_gates.py")
+          mapfile -t tests < <(printf '%s\n' test/test_*.py | sort -r | grep -vx -e "test/test_pc_pgvector_gates.py" -e "test/test_pc2_response_store_gates.py")
           python -m pytest -q --junitxml=/tmp/pytest-reverse.xml "${tests[@]}"
           python - <<'PY'
           import xml.etree.ElementTree as ET
@@ -157,6 +157,6 @@ jobs:
                     for key in ('tests', 'failures', 'errors', 'skipped')}
           executed = totals['tests'] - totals['skipped']
           print(f"pgvector gates: executed={executed} passed={totals['tests'] - totals['failures'] - totals['errors'] - totals['skipped']} skipped={totals['skipped']} failures={totals['failures']} errors={totals['errors']}")
-          if executed < 14 or totals['skipped']:
-              raise SystemExit('pgvector gate floor violated: expected at least 14 non-skipped pgvector gates')
+          if executed < 33 or totals['skipped']:
+              raise SystemExit('pgvector gate floor violated: expected at least 33 non-skipped pgvector gates')
           PY
