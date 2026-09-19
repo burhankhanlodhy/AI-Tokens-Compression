@@ -9,13 +9,18 @@ The proxy never stores API keys.
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
+import os
+import secrets
 import time
+import uuid
 from contextlib import asynccontextmanager
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, Query, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, StreamingResponse
 
 from . import stats
@@ -126,6 +131,7 @@ def _ensure_cache_seed_rows() -> None:
 async def lifespan(app: FastAPI) -> Iterator[None]:
     stats.init_db()
     s = get_settings()
+    _ensure_admin_token(app)
     load_pricing()  # startup: pricing.json is THE price source (PM ruling)
     _ensure_cache_seed_rows()
     app.state.http = httpx.AsyncClient(
@@ -139,6 +145,89 @@ async def lifespan(app: FastAPI) -> Iterator[None]:
 
 
 app = FastAPI(title="token-saver proxy", lifespan=lifespan)
+
+
+def _ensure_admin_token(application: FastAPI) -> str:
+    """Resolve the C-2 write token once for this process/app lifetime.
+
+    Operators may supply ``ADMIN_TOKEN``.  In the safer no-config default, a
+    high-entropy replacement is intentionally visible exactly once at boot so
+    the local dashboard can perform a write without persisting a credential.
+    """
+    existing = getattr(application.state, "admin_token", None)
+    if existing:
+        return str(existing)
+    configured = (get_settings().admin_token or "").strip()
+    token = configured or secrets.token_urlsafe(32)
+    application.state.admin_token = token
+    if not configured:
+        logger.info("ADMIN_TOKEN=%s (generated at boot; not persisted)", token)
+    return token
+
+
+def _unauthorized() -> HTTPException:
+    """Keep the proxy's compact JSON error convention for bearer failures."""
+    return HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _require_admin(request: Request) -> None:
+    auth = request.headers.get("authorization", "")
+    if not auth.lower().startswith("bearer "):
+        raise _unauthorized()
+    candidate = auth[7:]
+    expected = _ensure_admin_token(request.app)
+    if not secrets.compare_digest(candidate, expected):
+        raise _unauthorized()
+
+
+def _keys_dsn() -> str:
+    dsn = os.environ.get("TOKEN_SAVER_PG_DSN")
+    if not dsn:
+        raise HTTPException(status_code=503, detail="Postgres ledger is not configured.")
+    return dsn
+
+
+def _tenant_id(value: object) -> str:
+    if not isinstance(value, str):
+        raise HTTPException(status_code=400, detail="tenant_id must be a UUID.")
+    try:
+        return str(uuid.UUID(value))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="tenant_id must be a UUID.") from exc
+
+
+def _key_id(value: str) -> str:
+    try:
+        return str(uuid.UUID(value))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="key id must be a UUID.") from exc
+
+
+def _create_scopes(value: object) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(not isinstance(scope, str) for scope in value):
+        raise HTTPException(status_code=400, detail="scopes must be an array of non-empty strings.")
+    scopes = [scope.strip() for scope in value]
+    if any(not scope for scope in scopes) or len(set(scopes)) != len(scopes):
+        raise HTTPException(status_code=400, detail="scopes must be unique, non-empty strings.")
+    return scopes
+
+
+def _spend_cap(value: object) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        cap = Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="spend_cap_usd must be a non-negative number.") from exc
+    if not cap.is_finite() or cap < 0:
+        raise HTTPException(status_code=400, detail="spend_cap_usd must be a non-negative number.")
+    return cap
+
+
+def _tenant_exists(conn, tenant_id: str) -> bool:
+    return conn.execute("SELECT 1 FROM tenants WHERE id = %s", (tenant_id,)).fetchone() is not None
 
 
 PROXY_CONTROL_HEADERS = {
@@ -1131,6 +1220,126 @@ async def dashboard():
 async def dashboard_js():
     js_path = Path(__file__).resolve().parent / "static" / "dashboard.js"
     return PlainTextResponse(js_path.read_text(), media_type="application/javascript")
+
+
+# --- C-2: proxy-facing key and tenant management ---------------------------
+
+@app.get("/api/tenants")
+async def api_tenants():
+    """List tenant management facts; proxy key hashes never join this path."""
+    import psycopg
+
+    with psycopg.connect(_keys_dsn()) as conn:
+        rows = conn.execute(
+            """SELECT id::text, name, plan, spend_cap_usd, created_at
+               FROM tenants ORDER BY created_at, id"""
+        ).fetchall()
+    return [
+        {"id": row[0], "name": row[1], "plan": row[2], "spend_cap_usd": row[3], "created_at": row[4]}
+        for row in rows
+    ]
+
+
+@app.get("/api/keys")
+async def api_keys(tenant_id: str | None = None):
+    """List redacted proxy-key facts for exactly one tenant."""
+    import psycopg
+
+    tenant = _tenant_id(tenant_id)
+    with psycopg.connect(_keys_dsn()) as conn:
+        if not _tenant_exists(conn, tenant):
+            raise HTTPException(status_code=400, detail="Unknown tenant.")
+        rows = conn.execute(
+            """SELECT id::text, tenant_id::text, key_last4, scopes, spend_cap_usd,
+                      status, created_at, revoked_at
+               FROM api_keys WHERE tenant_id = %s ORDER BY created_at, id""",
+            (tenant,),
+        ).fetchall()
+    return [
+        {
+            "id": row[0], "tenant_id": row[1], "key_last4": row[2], "scopes": row[3],
+            "spend_cap_usd": row[4], "status": row[5], "created_at": row[6], "revoked_at": row[7],
+        }
+        for row in rows
+    ]
+
+
+def _new_proxy_key() -> tuple[str, str, str]:
+    """Return plaintext, hash and display suffix without logging any of them."""
+    plaintext = f"tsk_{secrets.token_urlsafe(32)}"
+    return plaintext, hashlib.sha256(plaintext.encode("utf-8")).hexdigest(), plaintext[-4:]
+
+
+@app.post("/api/keys", status_code=201)
+async def create_api_key(request: Request, payload: dict):
+    """Create one proxy-facing key and reveal its plaintext exactly once."""
+    import psycopg
+
+    _require_admin(request)
+    tenant = _tenant_id(payload.get("tenant_id"))
+    scopes = _create_scopes(payload.get("scopes"))
+    cap = _spend_cap(payload.get("spend_cap_usd"))
+    plaintext, key_hash, last4 = _new_proxy_key()
+    with psycopg.connect(_keys_dsn()) as conn:
+        if not _tenant_exists(conn, tenant):
+            raise HTTPException(status_code=400, detail="Unknown tenant.")
+        row = conn.execute(
+            """INSERT INTO api_keys (tenant_id, key_hash, key_last4, scopes, spend_cap_usd)
+               VALUES (%s, %s, %s, %s, %s) RETURNING id::text""",
+            (tenant, key_hash, last4, scopes, cap),
+        ).fetchone()
+    return {"id": row[0], "key_last4": last4, "key": plaintext}
+
+
+@app.post("/api/keys/{key_id}/rotate")
+async def rotate_api_key(key_id: str, request: Request):
+    """Atomically replace an active key and immediately retire its predecessor."""
+    import psycopg
+
+    _require_admin(request)
+    key = _key_id(key_id)
+    plaintext, key_hash, last4 = _new_proxy_key()
+    with psycopg.connect(_keys_dsn()) as conn:
+        with conn.transaction():
+            old = conn.execute(
+                """SELECT tenant_id::text, scopes, spend_cap_usd, status
+                   FROM api_keys WHERE id = %s FOR UPDATE""", (key,)
+            ).fetchone()
+            if old is None:
+                raise HTTPException(status_code=400, detail="Unknown key.")
+            if old[3] != "active":
+                raise HTTPException(status_code=400, detail="Key is not active.")
+            conn.execute("UPDATE api_keys SET status = 'rotated' WHERE id = %s", (key,))
+            new = conn.execute(
+                """INSERT INTO api_keys (tenant_id, key_hash, key_last4, scopes, spend_cap_usd)
+                   VALUES (%s, %s, %s, %s, %s) RETURNING id::text""",
+                (old[0], key_hash, last4, old[1], old[2]),
+            ).fetchone()
+    return {"id": new[0], "key_last4": last4, "key": plaintext, "previous_status": "rotated"}
+
+
+@app.post("/api/keys/{key_id}/revoke")
+async def revoke_api_key(key_id: str, request: Request):
+    """Revoke a key idempotently, preserving its original revocation timestamp."""
+    import psycopg
+
+    _require_admin(request)
+    key = _key_id(key_id)
+    with psycopg.connect(_keys_dsn()) as conn:
+        with conn.transaction():
+            row = conn.execute(
+                "SELECT status, revoked_at FROM api_keys WHERE id = %s FOR UPDATE", (key,)
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=400, detail="Unknown key.")
+            if row[0] == "revoked":
+                revoked_at = row[1]
+            else:
+                revoked_at = conn.execute(
+                    """UPDATE api_keys SET status = 'revoked', revoked_at = now()
+                       WHERE id = %s RETURNING revoked_at""", (key,)
+                ).fetchone()[0]
+    return {"id": key, "status": "revoked", "revoked_at": revoked_at}
 
 
 @app.get("/api/kpis")

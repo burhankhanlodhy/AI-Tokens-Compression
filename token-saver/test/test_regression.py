@@ -69,10 +69,19 @@ def test_embeddings_forwards_upstream_error_body(client):
 # ---------------------------------------------------------------- T4: route uniqueness
 
 def test_routes_are_unique():
-    """T4: /health and every other path is registered exactly once."""
-    paths = [getattr(r, "path", None) for r in app.routes if getattr(r, "path", None)]
-    dupes = {p for p in paths if paths.count(p) > 1}
-    assert dupes == set(), f"duplicate routes: {dupes}"
+    """T4: every method/path handler is registered exactly once.
+
+    GET and POST legitimately share /api/keys; FastAPI's duplicate-decorator
+    hazard is two handlers claiming the same method/path pair.
+    """
+    pairs = []
+    for route in app.routes:
+        path = getattr(route, "path", None)
+        for method in getattr(route, "methods", set()) or set():
+            if path and method not in {"HEAD", "OPTIONS"}:
+                pairs.append((method, path))
+    dupes = {pair for pair in pairs if pairs.count(pair) > 1}
+    assert dupes == set(), f"duplicate method/path routes: {dupes}"
 
 
 # ---------------------------------------------------------------- T5: metrics

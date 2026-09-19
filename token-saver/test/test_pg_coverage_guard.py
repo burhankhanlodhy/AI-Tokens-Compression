@@ -16,6 +16,7 @@ PG_MODULES = {
     "test_benchmark_control.py",
     "test_caching.py",
     "test_kpis.py",
+    "test_keys_api.py",
     "test_live_routing.py",
     "test_matrix_live.py",
     "test_streaming.py",
@@ -44,7 +45,7 @@ PG_EXTRA = {
 
 
 def test_postgres_sensitive_test_floor():
-    """The acceptance matrix must retain at least the current 71 test items."""
+    """The acceptance matrix must retain at least the current 77 test items."""
     root = Path(__file__).resolve().parent.parent
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "--collect-only", "-q", "test"],
@@ -64,6 +65,6 @@ def test_postgres_sensitive_test_floor():
             count += 1
         elif (filename, name) in PG_EXTRA:
             count += 1
-    assert count >= 71, (
-        f"Postgres-sensitive test inventory dropped to {count} (minimum 71)"
+    assert count >= 77, (
+        f"Postgres-sensitive test inventory dropped to {count} (minimum 77)"
     )

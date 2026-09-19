@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # --- Proxy server ---
     host: str = "0.0.0.0"
     port: int = 8000
+    # Phase C-2 dashboard-write gate. When absent, main.py generates an
+    # ephemeral boot token and prints it once to the startup log.
+    admin_token: str | None = None
 
     # --- Upstream provider (BYOK: client's key is forwarded, never stored) ---
     # OpenRouter (OpenAI-compatible). Any other OpenAI-compatible provider works

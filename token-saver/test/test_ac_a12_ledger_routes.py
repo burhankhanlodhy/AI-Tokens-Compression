@@ -31,6 +31,13 @@ NO_LOG_ROUTES = {
     ("GET", "/dashboard"),
     ("GET", "/static/dashboard.js"),
     ("GET", "/api/kpis"),
+    # C-2 management reads/writes operate on api_keys metadata; they are never
+    # proxy inference requests and must not create financial ledger facts.
+    ("GET", "/api/tenants"),
+    ("GET", "/api/keys"),
+    ("POST", "/api/keys"),
+    ("POST", "/api/keys/{key_id}/rotate"),
+    ("POST", "/api/keys/{key_id}/revoke"),
     ("GET", "/api/tripwire"),  # AC-P6f: read-only monitoring over the ledger
     ("GET", "/stats"),
     ("GET", "/metrics"),

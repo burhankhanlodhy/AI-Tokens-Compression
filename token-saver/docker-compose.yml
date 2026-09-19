@@ -43,6 +43,9 @@ services:
       # AC-PC5: semantic cache remains off until QA clears the PC4 release
       # gate; this is deployment-only, never a client-request switch.
       SEMANTIC_CACHE_ENABLED: ${SEMANTIC_CACHE_ENABLED:-false}
+      # C-2 Keys & Tenants writes: an explicit operator token is preferred;
+      # blank means the proxy generates and boot-prints one once.
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       # P6-3 benchmark-only dose-pin gate: lets the proxy honor the
       # x-token-saver-dose-pin control header. Default FALSE — flip it on
       # ONLY for a benchmark/calibration deployment (see .env.example);
