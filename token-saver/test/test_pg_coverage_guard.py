@@ -20,6 +20,7 @@ PG_MODULES = {
     "test_live_routing.py",
     "test_matrix_live.py",
     "test_pc_pgvector_gates.py",
+    "test_pc2_response_store_gates.py",
     "test_streaming.py",
 }
 

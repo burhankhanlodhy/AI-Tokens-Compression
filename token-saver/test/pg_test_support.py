@@ -36,6 +36,11 @@ SCHEMA = (Path(__file__).resolve().parents[2] / "postgres-schema-v2.sql").read_t
 PGVECTOR_MIGRATION = (
     Path(__file__).resolve().parents[2] / "token-saver/migrations/20260918_pc1_pgvector.sql"
 ).read_text()
+# AC-PC2/PC3 response payload store, applied after the pgvector migration on
+# every response-store-lane database.
+PC2_MIGRATION = (
+    Path(__file__).resolve().parents[2] / "token-saver/migrations/20260919_pc2_semantic_responses.sql"
+).read_text()
 DEFAULT_TENANT = "00000000-0000-0000-0000-000000000000"
 TENANT_A = "11111111-1111-1111-1111-111111111111"
 TENANT_B = "22222222-2222-2222-2222-222222222222"
@@ -79,6 +84,20 @@ def make_pgvector_database(name: str) -> str:
     dsn = make_database(name)
     with psycopg.connect(dsn, autocommit=True) as pg:
         pg.execute(PGVECTOR_MIGRATION)
+    return dsn
+
+
+def make_response_store_database(name: str) -> str:
+    """Base schema + pgvector migration + AC-PC2 response-store migration.
+
+    Proves the committed 20260919_pc2_semantic_responses.sql applies cleanly
+    (it is deliberately fire-once: any breakage surfaces here as an error,
+    never as a silent skip).  Used only by test_pc2_response_store_gates.py on
+    the pinned pgvector lane.
+    """
+    dsn = make_pgvector_database(name)
+    with psycopg.connect(dsn, autocommit=True) as pg:
+        pg.execute(PC2_MIGRATION)
     return dsn
 
 
