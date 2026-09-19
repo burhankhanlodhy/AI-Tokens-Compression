@@ -82,6 +82,17 @@ def _writer_env(monkeypatch, pg_dsn):
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _clean_pair_tables(pg_dsn):
+    """Per-test isolation: the DB is module-scoped for speed, but every gate
+    gets an empty pair of tables.  Several writer gates assert GLOBAL emptiness
+    (a committed row anywhere is a rollback failure), so they must never see a
+    prior test's unexpired rows."""
+    with psycopg.connect(pg_dsn, autocommit=True) as pg:
+        pg.execute("TRUNCATE semantic_cache_responses, semantic_cache_entries CASCADE")
+    yield
+
+
 # --------------------------------------------------------------------------
 # shared helpers
 
@@ -199,10 +210,14 @@ def _writer_unavailable() -> str:
     )
 
 
-def _store(scope, body: bytes, **kwargs) -> str | None:
+def _store(scope, body: bytes, canonical_prompt_hash: str | None = None, **kwargs) -> str | None:
     if not hasattr(semantic_cache, "store_response"):
         pytest.fail(_writer_unavailable())
-    return semantic_cache.store_response(scope, "pc2-" + uuid4().hex, _uniform_unit("pc2-store"), body, **kwargs)
+    if canonical_prompt_hash is None:
+        canonical_prompt_hash = "pc2-" + uuid4().hex
+    return semantic_cache.store_response(
+        scope, canonical_prompt_hash, _uniform_unit("pc2-store"), body, **kwargs
+    )
 
 
 def _response_rows(pg_dsn: str, tenant_id: str = TENANT_A, ref: str | None = None) -> list[dict]:
@@ -397,9 +412,13 @@ def test_writer_replays_body_byte_identically(pg_dsn):
 def test_writer_supersession_replaces_both_tables(pg_dsn):
     scope = _scope()
     body1, body2 = _body("supersede-1"), _body("supersede-2")
-    ref1 = _store(scope, body1)
+    # ONE canonical hash across both writes: the hash is part of the committed
+    # unique identity, so a fixed value is what makes the second write a
+    # supersession of the first (random hashes would be two distinct identities).
+    identity_hash = "pc2-supersede-fixed-identity"
+    ref1 = _store(scope, body1, canonical_prompt_hash=identity_hash)
     assert ref1
-    ref2 = _store(scope, body2)
+    ref2 = _store(scope, body2, canonical_prompt_hash=identity_hash)
     assert ref2 and ref2 != ref1, "supersession must mint a new response_ref"
 
     assert _response_rows(pg_dsn, ref=ref1) == [], "old response row survived supersession"
