@@ -96,3 +96,36 @@ jobs:
 
       - name: Run clean-clone Docker acceptance gate
         run: ./token-saver/test/c5_docker_acceptance.sh
+
+  pc1-pgvector:
+    name: PC1/PC2 pinned pgvector lane
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg16-bookworm
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-password
+          POSTGRES_DB: postgres
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update -qq && sudo apt-get install -y postgresql-client
+
+      - name: Apply and reapply the pinned pgvector migration
+        env:
+          TOKEN_SAVER_PG_ADMIN_DSN: postgresql://postgres:ci-password@localhost:5434/postgres
+          TOKEN_SAVER_PG_DSN: postgresql://postgres:ci-password@localhost:5434/token_saver
+        run: ./token-saver/test/pc1_pgvector_acceptance.sh

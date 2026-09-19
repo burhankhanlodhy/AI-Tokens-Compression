@@ -21,5 +21,6 @@ htmlcov/
 *.sqlite
 *.sqlite3
 *.db
+backups/
 
 .DS_Store
