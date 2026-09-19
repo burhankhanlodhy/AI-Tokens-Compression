@@ -1,0 +1,28 @@
+{
+  "spec": "AC-PC4 calibration corpus for the semantic-cache distance gate (qa-lead)",
+  "comment": [
+    "Cases are deterministic: each embedding is derived from its seed string via",
+    "SHA-256 expansion (see build_seed_vector in test/test_pc_pgvector_gates.py),",
+    "then normalized. A 'near' case pairs a base vector u with a perturbation p",
+    "(built from near_seed) combined as u*cos(a) + p*sin(a) so the expected cosine",
+    "distance is 1 - cos(a) by construction; 'independent' pairs use two unrelated",
+    "seeds. The gate asserts pgvector's <=> distance matches the analytic value",
+    "and that the committed threshold classifies every case exactly as 'expected'.",
+    "provisional_max_cosine_distance gates the FILTER MECHANICS only. The production",
+    "calibrated threshold is ratified by AC-PC4 (dba EXPLAIN/latency limb + false-hit",
+    "review) and must replace this value before SEMANTIC_CACHE_ENABLED is ever",
+    "flipped on; changing this file's threshold alone does not enable the cache."
+  ],
+  "embedding_dimensions": 1536,
+  "provisional_max_cosine_distance": 0.12,
+  "cases": [
+    {"id": "identical", "kind": "identical", "seed": "pc4-identical-0001", "expected": "hit"},
+    {"id": "near-hit-a", "kind": "near", "seed": "pc4-near-a", "near_seed": "pc4-near-a-perturb", "target_distance": 0.05, "expected": "hit"},
+    {"id": "near-hit-b", "kind": "near", "seed": "pc4-near-b", "near_seed": "pc4-near-b-perturb", "target_distance": 0.08, "expected": "hit"},
+    {"id": "just-miss-a", "kind": "near", "seed": "pc4-miss-a", "near_seed": "pc4-miss-a-perturb", "target_distance": 0.2, "expected": "miss"},
+    {"id": "just-miss-b", "kind": "near", "seed": "pc4-miss-b", "near_seed": "pc4-miss-b-perturb", "target_distance": 0.3, "expected": "miss"},
+    {"id": "far-miss", "kind": "near", "seed": "pc4-miss-c", "near_seed": "pc4-miss-c-perturb", "target_distance": 0.6, "expected": "miss"},
+    {"id": "independent-a", "kind": "independent", "seed": "pc4-orth-a", "near_seed": "pc4-orth-a-other", "expected": "miss"},
+    {"id": "independent-b", "kind": "independent", "seed": "pc4-orth-b", "near_seed": "pc4-orth-b-other", "expected": "miss"}
+  ]
+}

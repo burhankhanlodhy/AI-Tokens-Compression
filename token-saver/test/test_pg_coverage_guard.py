@@ -18,6 +18,7 @@ PG_MODULES = {
     "test_kpis.py",
     "test_live_routing.py",
     "test_matrix_live.py",
+    "test_pc_pgvector_gates.py",
     "test_streaming.py",
 }
 
@@ -64,6 +65,6 @@ def test_postgres_sensitive_test_floor():
             count += 1
         elif (filename, name) in PG_EXTRA:
             count += 1
-    assert count >= 71, (
-        f"Postgres-sensitive test inventory dropped to {count} (minimum 71)"
+    assert count >= 85, (
+        f"Postgres-sensitive test inventory dropped to {count} (minimum 85)"
     )
