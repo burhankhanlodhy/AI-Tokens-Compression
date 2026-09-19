@@ -20,6 +20,13 @@ Gates owned here:
      must be exact: future expiry hits, past expiry misses, the boundary is
      strict (> now(), not >=), supersession is blocked by the identity unique
      index, and delete+reinsert deterministically retargets the hit.
+  4. Plan pin (AC-PC4) — at traffic-shaped volume the lookup query must be
+     served by idx_semantic_cache_embedding_hnsw, never a Seq Scan.  The
+     behavior gates above assert results, not plans: a 216x Seq Scan
+     regression would pass them silently.  The gate drives the real lookup()
+     path and EXPLAINs the exact statement it ran, in the session state that
+     lookup itself pinned (ef_search + force_custom_plan), so removing the
+     pin, the index, or the cosine opclass fails here.
 """
 from __future__ import annotations
 
@@ -353,3 +360,124 @@ def test_delete_then_reinsert_deterministically_retargets_the_hit(pg_dsn):
     assert hit is not None and hit.entry_id == fresh
     assert hit.response_ref == "response-fresh"
     assert hit.entry_id != stale
+
+
+# --------------------------------------------------------------------------
+# gate 4: AC-PC4 plan pin — HNSW, never a Seq Scan, at traffic-shaped volume
+
+
+# Empirically pinned on pgvector/pgvector:0.8.6-pg16 (probe: 1/50/200 rows
+# plan a Seq Scan — planner-correct for tiny tables — and >=1000 rows plan
+# the HNSW index under the pinned settings).  5000 gives margin without
+# turning the lane into a benchmark.
+PLAN_GATE_ROWS = 5000
+
+
+class _RecordingConnection:
+    """Wraps a real psycopg connection so the true lookup() path runs while
+    every statement is captured.  Mirrors psycopg's connection context
+    manager semantics (close on exit)."""
+
+    def __init__(self, pg: psycopg.Connection):
+        self._pg = pg
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+    def __enter__(self) -> "_RecordingConnection":
+        return self
+
+    def __exit__(self, *_args) -> None:
+        self._pg.close()
+
+    def execute(self, sql, params=None):
+        self.calls.append((sql, tuple(params or ())))
+        return self._pg.execute(sql, params)
+
+
+def _seed_plan_volume(dsn: str) -> None:
+    """Fill semantic_cache_entries with PLAN_GATE_ROWS same-scope rows so the
+    planner's cost model sees a traffic-shaped table, then refresh stats."""
+    with psycopg.connect(dsn, autocommit=True) as pg:
+        pg.execute(
+            f"""
+            INSERT INTO semantic_cache_entries (
+                tenant_id, provider_id, model, embedding_model, embedding_dimensions,
+                embedding_version, quality_version, request_parameters_hash,
+                canonical_prompt_hash, embedding, response_ref, expires_at
+            )
+            SELECT %s, (SELECT id FROM providers WHERE name = %s), %s, %s, %s,
+                   %s, %s, %s, 'pc4-plan-vol-' || g,
+                   ('[' || array_to_string(
+                       array(SELECT round(random()::numeric, 4)::float8
+                             FROM generate_series(1, %s)), ',') || ']')::vector,
+                   'response-plan-vol', now() + interval '1 hour'
+              FROM generate_series(1, %s) g
+            """,
+            (
+                TENANT_A, _scope().provider, _scope().model, _scope().embedding_model,
+                DIMS, _scope().embedding_version, _scope().quality_version,
+                _scope().request_parameters_hash, DIMS, PLAN_GATE_ROWS,
+            ),
+        )
+        pg.execute("ANALYZE semantic_cache_entries")
+
+
+def test_lookup_plans_the_hnsw_index_not_a_seq_scan(pg_dsn, monkeypatch):
+    """AC-PC4: the statement lookup() actually runs — in the session state
+    lookup() itself pinned — must be served by
+    idx_semantic_cache_embedding_hnsw.  A Seq Scan here is the latency
+    regression the behavior gates cannot see.
+
+    The assertion is about the PLAN only: HNSW is approximate and this gate
+    deliberately does not require the seeded exact-match row to be *found*
+    (probe result 2026-09-19: at 5001 random 1536-dim vectors the pinned
+    lookup misses a distance-0.0 row even at ef_search=300 — a recall
+    question for AC-PC4 calibration, tracked separately)."""
+    embedding = _uniform_unit("pc4-plan-pin")
+    entry_id = insert_entry(pg_dsn, embedding)
+    _seed_plan_volume(pg_dsn)
+
+    # Scenario reality check without trusting the HNSW graph: a forced Seq
+    # Scan must compute distance ~0.0 for the exact-match row.
+    with psycopg.connect(pg_dsn) as pg:
+        pg.execute("SET enable_indexscan TO off; SET enable_indexonlyscan TO off")
+        row = pg.execute(
+            "SELECT embedding <=> %s::vector FROM semantic_cache_entries WHERE id = %s",
+            (_vec(embedding), entry_id),
+        ).fetchone()
+        assert row is not None and abs(row[0]) < 1e-9, (
+            "seeded exact-match row does not reproduce distance 0.0 under Seq Scan"
+        )
+
+    recorded: _RecordingConnection | None = None
+
+    def _connect():
+        nonlocal recorded
+        recorded = _RecordingConnection(psycopg.connect(pg_dsn))
+        return recorded
+
+    monkeypatch.setattr(semantic_cache, "_connect", _connect)
+    semantic_cache.lookup(_scope(), embedding, max_cosine_distance=PROVISIONAL_THRESHOLD)
+
+    assert recorded is not None
+    lookup_sql, lookup_params = recorded.calls[-1]
+    assert "semantic_cache_entries" in lookup_sql
+
+    # EXPLAIN in a fresh session restored to the exact state lookup() pinned,
+    # replayed from the captured statements themselves.
+    with psycopg.connect(pg_dsn) as pg:
+        for sql, params in recorded.calls[:-1]:
+            pg.execute(sql, params)
+        assert (
+            pg.execute("SHOW hnsw.ef_search").fetchone()[0]
+            == str(get_settings().semantic_cache_hnsw_ef_search)
+        ), "lookup() must pin hnsw.ef_search on its session for this plan to be meaningful"
+        plan_rows = pg.execute("EXPLAIN " + lookup_sql, lookup_params).fetchall()
+    plan = "\n".join(row[0] for row in plan_rows)
+
+    assert "idx_semantic_cache_embedding_hnsw" in plan, (
+        "lookup() query plan does not use the HNSW index:\n" + plan
+    )
+    assert "Seq Scan on semantic_cache_entries" not in plan, (
+        "lookup() query plan Seq-Scans semantic_cache_entries at "
+        f"{PLAN_GATE_ROWS} rows:\n" + plan
+    )
