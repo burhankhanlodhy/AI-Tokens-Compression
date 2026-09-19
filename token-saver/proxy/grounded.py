@@ -325,29 +325,40 @@ def _last_user_text(messages: list[dict]) -> str | None:
     return texts[-1] if texts else None
 
 
+def _message_text(message: dict) -> str:
+    """Normalize one message's textual content without trusting client types.
+
+    A typed text part may legally omit ``text`` or carry JSON ``null``;
+    both are empty text, not a detector crash. Providers also send text
+    parts without the optional ``type`` discriminator, so a string ``text``
+    field remains auditable rather than being silently discarded.
+    """
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        value = part.get("text")
+        if isinstance(value, str):
+            parts.append(value)
+        elif value is None and ("text" in part or part.get("type") == "text"):
+            parts.append("")
+    return "\n".join(parts)
+
+
 def _user_and_system_texts(
     messages: list[dict], roles: tuple[str, ...] = ("system", "user")
 ) -> list[str]:
-    """Texts of the messages whose role is in ``roles``, in order.
-
-    Handles both content shapes: a plain string (OpenAI ``role: system`` /
-    ``role: user``) and a list of typed parts (Anthropic-style content
-    blocks — text parts joined, non-text parts ignored).
-    """
+    """Texts of selected messages under the tolerant content-part contract."""
     texts: list[str] = []
     for msg in messages or []:
-        if msg.get("role") not in roles:
+        if not isinstance(msg, dict) or msg.get("role") not in roles:
             continue
-        content = msg.get("content")
-        if isinstance(content, str):
-            texts.append(content)
-        elif isinstance(content, list):
-            parts = [
-                p.get("text", "")
-                for p in content
-                if isinstance(p, dict) and p.get("type") == "text"
-            ]
-            texts.append("\n".join(parts))
+        texts.append(_message_text(msg))
     return texts
 
 
@@ -378,18 +389,19 @@ def grounding_features(messages: list[dict]) -> list[dict]:
     rows: list[dict] = []
     for message in messages or []:
         if not isinstance(message, dict):
+            # Preserve cardinality and ordering in the historical artifact:
+            # silently dropping a malformed message would falsely claim a
+            # complete raw record. Its content is deliberately normalized to
+            # empty, matching the detector's safe no-crash behavior.
+            rows.append({
+                "role": None,
+                "text": "",
+                "source_block_present": False,
+                "policy_block_present": False,
+                "malformed_message": True,
+            })
             continue
-        content = message.get("content")
-        if isinstance(content, str):
-            text = content
-        elif isinstance(content, list):
-            text = "\n".join(
-                part.get("text", "")
-                for part in content
-                if isinstance(part, dict) and part.get("type") == "text"
-            )
-        else:
-            text = ""
+        text = _message_text(message)
         rows.append({
             "role": message.get("role"),
             "text": text,

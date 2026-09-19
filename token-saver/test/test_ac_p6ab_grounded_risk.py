@@ -65,6 +65,26 @@ def test_ac_p6h_grounding_features_preserve_raw_text_and_source_policy_flags():
     ]
 
 
+def test_ac_p6h_malformed_messages_and_typed_text_parts_are_auditable():
+    """P1: malformed client content never crashes or vanishes from the audit."""
+    messages = [
+        "garbage-string",
+        {"role": "user", "content": [
+            {"type": "text", "text": None},
+            {"text": "SOURCE: /src/payments.py"},
+            {"type": "text"},
+        ]},
+    ]
+    assert grounded_answer_risk(messages, cfg()) == {
+        "grounded": True, "risk": RISK_FIDELITY_CRITICAL}
+    assert grounding_features(messages) == [
+        {"role": None, "text": "", "source_block_present": False,
+         "policy_block_present": False, "malformed_message": True},
+        {"role": "user", "text": "\nSOURCE: /src/payments.py\n",
+         "source_block_present": True, "policy_block_present": False},
+    ]
+
+
 # --- AC-P6a: fixture classification -----------------------------------
 
 
