@@ -1,5 +1,6 @@
 {
   "artifact_kind": "ac_p6c_calibration",
+  "superseded_by": "calibration_google_gemini-3.5-flash-lite_20260919T045004Z.json",
   "tier": "bounded",
   "metric": "output_tokens",
   "model": "google/gemini-3.5-flash-lite",
