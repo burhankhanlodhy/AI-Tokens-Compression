@@ -31,6 +31,11 @@ def require_pg_base() -> str:
     return PG_BASE
 
 SCHEMA = (Path(__file__).resolve().parents[2] / "postgres-schema-v2.sql").read_text()
+# PC1/PC2 upgrade (pgvector image + semantic_cache_entries DDL), applied after
+# the base schema on every pgvector-lane database.
+PGVECTOR_MIGRATION = (
+    Path(__file__).resolve().parents[2] / "token-saver/migrations/20260918_pc1_pgvector.sql"
+).read_text()
 DEFAULT_TENANT = "00000000-0000-0000-0000-000000000000"
 TENANT_A = "11111111-1111-1111-1111-111111111111"
 TENANT_B = "22222222-2222-2222-2222-222222222222"
@@ -61,6 +66,19 @@ def make_database(name: str) -> str:
                ('legacy', 'https://openrouter.ai/api/v1', 'OpenAICompatAdapter', 'bearer'),
                ('openai', 'https://api.openai.com/v1', 'OpenAICompatAdapter', 'bearer')"""
         )
+    return dsn
+
+
+def make_pgvector_database(name: str) -> str:
+    """Create a clean database, apply the base schema, then the pgvector migration.
+
+    Requires a pgvector-capable server (the pinned pgvector/pgvector:0.8.6-pg16
+    lane).  Used only by test_pc_pgvector_gates.py, which CI runs exclusively
+    on that lane so the stock postgres:16 job never collects it.
+    """
+    dsn = make_database(name)
+    with psycopg.connect(dsn, autocommit=True) as pg:
+        pg.execute(PGVECTOR_MIGRATION)
     return dsn
 
 
