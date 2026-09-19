@@ -1048,9 +1048,36 @@ def emit_calibration_artifact(
             "n": len(tokens),
         },
     }
+    # P6-3 parity limb (PM blocker, 2026-09-19): the calibration artifact
+    # publishes the band for a population whose quality it must also
+    # account for — an artifact that omits the parity limb it fails is
+    # exactly the measurement defect the AC-P1g brand exists to prevent.
+    # The block reuses _subset_parity verbatim (same sign conventions,
+    # same <=1pt gate) so it cannot drift from the benchmark artifact, and
+    # is emitted UNCONDITIONALLY: a red verdict ships beside the band, it
+    # never silently drops the block. parity_holds None = no judge
+    # evidence in the population rows (vacuous, reported as such).
+    cal_parity = _subset_parity(paired, None)
+    cal_parity.pop("_population_incomplete", None)
+    cal_parity["parity_rule"] = "mean_regression_le_1pt_calibration_population"
+    cal_parity["scope"] = ("parity of the calibration population itself "
+                           "(the same paired rows the band above is built "
+                           "from) at the pinned tier")
+    artifact["quality_parity"] = cal_parity
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     path = out_dir / f"calibration_{model.replace('/', '_')}_{stamp}.json"
     path.write_text(json.dumps(artifact, indent=2))
+    qp = artifact["quality_parity"]
+    if qp["parity_holds"] is False:
+        print(f"Calibration PARITY: FAIL (mean_regression_pt="
+              f"{qp['mean_regression_pt']}, regressions over 1pt: "
+              f"{qp['n_regressions_over_1pt']}/{qp['n_judged']}) — band "
+              f"published with its red parity limb attached")
+    elif qp["parity_holds"] is None:
+        print("Calibration PARITY: NO JUDGE EVIDENCE in population rows "
+              "(parity_holds=null)")
+    else:
+        print("Calibration PARITY: PASS")
     return path
 
 

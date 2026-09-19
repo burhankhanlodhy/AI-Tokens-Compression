@@ -319,6 +319,81 @@ class TestBandLoaderAndEmitContract:
                 tmp_path, "m", "bounded", "eligible_only", "src.json")
 
 
+class TestCalibrationParityLimb:
+    """P6-3 (PM blocker, 2026-09-19): the calibration artifact must carry
+    the parity block for the very population whose band it publishes —
+    red, green, or vacuous, the block is ALWAYS present. An artifact that
+    omits the limb it fails is the AC-P1g defect all over again."""
+
+    @staticmethod
+    def _judged_rows():
+        # The real 012823Z grounded population's judge scores (rag-051..055):
+        # gate mean_regression 2.7pt, 4 items over 1pt → parity FAILS.
+        score_a = [9.0, 5.5, 7.0, 9.0, 9.5]
+        score_b = [8.0, 2.5, 4.0, 4.0, 8.0]
+        return [{"id": f"rag-05{i}", "baseline_ok": True,
+                 "treatment_ok": True, "baseline_tokens": 500.0,
+                 "treatment_tokens": 250.0, "mode": "model_judge",
+                 "score_a": score_a[i], "score_b": score_b[i]}
+                for i in range(5)]
+
+    def test_failing_parity_is_emitted_not_omitted(self, tmp_path):
+        from benchmark.run_benchmark import emit_calibration_artifact
+
+        path = emit_calibration_artifact(
+            self._judged_rows(), tmp_path, "google/gemini-3.5-flash-lite",
+            "bounded", "eligible_only", "benchmark_m.json")
+        qp = json.loads(path.read_text())["quality_parity"]
+        assert qp["parity_holds"] is False
+        assert qp["parity_rule"] == "mean_regression_le_1pt_calibration_population"
+        # Same numbers the PM recomputed from the source run's judged rows.
+        assert qp["mean_regression_pt"] == 2.7
+        assert qp["signed_mean_regression_pt"] == -2.7
+        assert qp["n_regressions_over_1pt"] == 4
+        assert qp["n_judged"] == 5
+
+    def test_passing_parity_emits_true(self, tmp_path):
+        from benchmark.run_benchmark import emit_calibration_artifact
+
+        rows = [{"id": f"rag-05{i}", "baseline_ok": True,
+                 "treatment_ok": True, "baseline_tokens": 500.0,
+                 "treatment_tokens": 250.0, "mode": "model_judge",
+                 "score_a": 9.0, "score_b": 9.0} for i in range(5)]
+        path = emit_calibration_artifact(
+            rows, tmp_path, "m", "bounded", "eligible_only", "benchmark_m.json")
+        qp = json.loads(path.read_text())["quality_parity"]
+        assert qp["parity_holds"] is True
+        assert qp["mean_regression_pt"] == 0.0
+
+    def test_vacuous_population_still_emits_block(self, tmp_path):
+        # Rows with no judge fields (mode/score_*) carry no parity
+        # evidence: parity_holds must be null, NOT silently green — and
+        # the block must still ship.
+        from benchmark.run_benchmark import emit_calibration_artifact
+
+        path = emit_calibration_artifact(
+            _benchmark_results(), tmp_path, "m", "bounded",
+            "eligible_only", "benchmark_m_x.json")
+        qp = json.loads(path.read_text())["quality_parity"]
+        assert qp["parity_holds"] is None
+        assert qp["n_judged"] == 0
+
+    def test_partial_judge_population_fails_closed(self, tmp_path):
+        # One of five rows fell back to no-judge mode: the population is
+        # incomplete → the limb must read False (a half-judged population
+        # must not green the band), and the row is named as excluded.
+        from benchmark.run_benchmark import emit_calibration_artifact
+
+        rows = self._judged_rows()
+        rows[2]["mode"] = "no_judge_key"
+        path = emit_calibration_artifact(
+            rows, tmp_path, "m", "bounded", "eligible_only", "benchmark_m.json")
+        qp = json.loads(path.read_text())["quality_parity"]
+        assert qp["parity_holds"] is False
+        assert qp["n_judged"] == 4
+        assert qp["excluded_judge_ids"] == ["rag-052"]
+
+
 class TestReport:
     def test_report_pending_without_calibration_artifact(self, tmp_path,
                                                           monkeypatch):
