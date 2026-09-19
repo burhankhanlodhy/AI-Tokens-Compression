@@ -139,14 +139,14 @@ jobs:
 
       - name: Apply and reapply the pinned pgvector migration
         env:
-          TOKEN_SAVER_PG_ADMIN_DSN: postgresql://postgres:***@localhost:5434/postgres
-          TOKEN_SAVER_PG_DSN: postgresql://postgres:***@localhost:5434/token_saver
+          TOKEN_SAVER_PG_ADMIN_DSN: postgresql://postgres:ci-password@localhost:5434/postgres
+          TOKEN_SAVER_PG_DSN: postgresql://postgres:ci-password@localhost:5434/token_saver
         run: ./token-saver/test/pc1_pgvector_acceptance.sh
 
       - name: Run pgvector behavior gates (PC1/PC2/PC4 corpus)
         working-directory: token-saver
         env:
-          TOKEN_SAVER_PG_BASE: postgresql://postgres:***@localhost:5434
+          TOKEN_SAVER_PG_BASE: postgresql://postgres:ci-password@localhost:5434
         run: |
           python -m pytest -q test/test_pc_pgvector_gates.py --junitxml=/tmp/pytest-pgvector.xml
           python - <<'PY'
