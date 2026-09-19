@@ -155,6 +155,36 @@ def test_emit_calibration_runs_with_matching_pin(offline_main):
         "calibration artifact must trace to a pinned source run")
 
 
+def test_calibration_artifact_persists_population_scoped_raw_grounding_features(
+        offline_main):
+    """AC-P6h: re-derivable calibration evidence, never detector labels alone."""
+    set_argv, _calls, out = offline_main
+    set_argv("--emit-calibration", "--dose-pin", "bounded")
+    assert rb.main() == 0
+
+    artifact = json.loads(next(out.glob("calibration_*.json")).read_text())
+    features = artifact["grounding_features"]
+    assert features["scope"] == "calibration_population"
+    assert [row["id"] for row in features["rows"]] == artifact["population"]["ids"]
+    assert len(features["rows"]) == artifact["population"]["n"] == 5
+
+    row = next(row for row in features["rows"] if row["id"] == "rag-051")
+    assert row["computed_grounded_risk"] == "fidelity_critical"
+    messages = row["messages"]
+    assert messages[0] == {
+        "role": "system",
+        "text": ("You are a support agent for the Acme billing platform. "
+                 "Answer using only the retrieved knowledge snippets "
+                 "provided by the user."),
+        "source_block_present": False,
+        "policy_block_present": False,
+    }
+    assert messages[1]["role"] == "user"
+    assert messages[1]["text"].startswith("Retrieved knowledge:")
+    assert messages[1]["source_block_present"] is True
+    assert messages[1]["policy_block_present"] is False
+
+
 # --- Blocker 4 (PM, 2026-09-18): unsampled-treatment rows poison the band --
 
 def test_emit_calibration_excludes_unsampled_treatment_rows(tmp_path):

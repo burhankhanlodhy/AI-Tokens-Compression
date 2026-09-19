@@ -84,13 +84,17 @@ def lookup(
 ) -> SemanticCacheHit | None:
     """Find one compatible unexpired pgvector candidate, or return no hit.
 
-    A disabled deployment, incomplete scope, invalid embedding, or absent
-    calibrated threshold is a deliberate cache miss *without a database
-    query*.  The WHERE clause repeats every mandatory isolation/compatibility
+    A disabled deployment is a deliberate cache miss without a database
+    query. A filter-less enabled lookup is a caller error: it is refused
+    before opening a connection rather than being widened into an unsafe
+    query. Invalid embeddings and absent calibrated thresholds remain cache
+    misses. The WHERE clause repeats every mandatory isolation/compatibility
     filter before HNSW ordering; no filter may be optional or client-derived.
     """
-    if not get_settings().semantic_cache_enabled or not scope.complete():
+    if not get_settings().semantic_cache_enabled:
         return None
+    if not scope.complete():
+        raise ValueError("mandatory semantic lookup filters are required")
     if not _valid_threshold(max_cosine_distance):
         return None
     vector = _vector_literal(embedding, scope.embedding_dimensions)

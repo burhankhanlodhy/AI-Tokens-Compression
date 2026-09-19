@@ -96,7 +96,8 @@ def test_lookup_does_not_contact_postgres_when_flag_is_off(monkeypatch):
         _scope(request_parameters_hash=""),
     ],
 )
-def test_lookup_refuses_incomplete_scope_without_contacting_postgres(monkeypatch, scope):
+def test_lookup_rejects_filterless_scope_without_contacting_postgres(monkeypatch, scope):
+    """AC-PC3: a call missing any mandatory filter is refused, not a miss."""
     monkeypatch.setenv("SEMANTIC_CACHE_ENABLED", "true")
     get_settings.cache_clear()
     called = False
@@ -108,7 +109,8 @@ def test_lookup_refuses_incomplete_scope_without_contacting_postgres(monkeypatch
 
     monkeypatch.setattr(semantic_cache, "_connect", _connect)
     try:
-        assert semantic_cache.lookup(scope, [0.1, 0.2], max_cosine_distance=0.12) is None
+        with pytest.raises(ValueError, match="mandatory semantic lookup filters"):
+            semantic_cache.lookup(scope, [0.1, 0.2], max_cosine_distance=0.12)
         assert called is False
     finally:
         get_settings.cache_clear()

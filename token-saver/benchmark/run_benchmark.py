@@ -131,6 +131,14 @@ def grounded_risk_of(prompt: dict) -> str:
     return grounded_answer_risk(prompt["messages"])["risk"]
 
 
+def grounding_features_of(prompt: dict) -> list[dict]:
+    """AC-P6h raw audit evidence from the shared production detector module."""
+    sys.path.insert(0, str(ROOT.parent))
+    from proxy.grounded import grounding_features
+
+    return grounding_features(prompt["messages"])
+
+
 def _reasoning_control(model: str) -> dict:
     """The reasoning control sent EXPLICITLY on both benchmark arms (PM v4
     ruling, consequence 2): the run must pin the same control the proxy
@@ -379,6 +387,10 @@ def entry_from_arms(p: dict, eligible: bool, base: dict, treat: dict) -> dict:
     entry = {
         "id": p["id"], "category": p["category"], "eligible": eligible,
         "grounded_risk": grounded_risk_of(p),
+        # AC-P6h: raw per-message grounding evidence, not only the label
+        # produced by today's detector. The calibration emitter restricts
+        # this evidence to its measured population.
+        "grounding_features": grounding_features_of(p),
         "baseline_tokens": (base.get("tokens_total", 0) / base_calls
                             if base_calls else 0.0),
         "treatment_tokens": (treat.get("tokens_total", 0) / treat_calls
@@ -1036,6 +1048,21 @@ def emit_calibration_artifact(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "population": {"n": len(paired),
                        "ids": sorted(r["id"] for r in paired)},
+        # AC-P6h: retain raw grounding evidence beside the computed label,
+        # scoped exactly to the calibration population. A later detector fix
+        # can re-derive historical labels rather than treating blind-spot-era
+        # classifications as immutable truth.
+        "grounding_features": {
+            "scope": "calibration_population",
+            "rows": [
+                {
+                    "id": row["id"],
+                    "computed_grounded_risk": row.get("grounded_risk"),
+                    "messages": row.get("grounding_features", []),
+                }
+                for row in sorted(paired, key=lambda row: row["id"])
+            ],
+        },
         # OUTPUT-token reduction (treatment vs baseline, per-prompt, k=30
         # aggregated) — the band the dose-drift tripwire compares against.
         "output_reduction_pct": {

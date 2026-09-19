@@ -146,6 +146,14 @@ _LABELED_BLOCK = re.compile(
     r"\s*(?:\([^)]{0,40}\))?:\s"
 )
 
+# AC-P6h audit feature: retain the per-message fact that a POLICY-labelled
+# block was present. This is narrower than source-context: a retrieved-
+# document envelope is source context but is not itself a POLICY block.
+_POLICY_BLOCK = re.compile(
+    r"\b(?:policy\s*:|policy excerpt\b|quoted (?:policy|guideline)s?\b)",
+    re.IGNORECASE,
+)
+
 # --- Signal 1d: structured retrieval envelopes (AC-P6i canonical shape,
 # --- widened to common wrapper shapes by AC-P6j, pre-publication gate) ----
 # Canonical RAG-wrapper shape: a JSON object payload carrying a
@@ -349,6 +357,48 @@ def _has_quoted_policy_fragment(text: str) -> bool:
     )
 
 
+def _source_block_present(text: str) -> bool:
+    """Whether one message carries a detector source-context signal."""
+    return (
+        any(pattern.search(text) for pattern in _SOURCE_BLOCK_PATTERNS)
+        or _has_quoted_policy_fragment(text)
+        or bool(_LABELED_BLOCK.search(text))
+        or _is_retrieval_envelope(text)
+    )
+
+
+def grounding_features(messages: list[dict]) -> list[dict]:
+    """Return raw, per-message AC-P6h evidence for a calibration artifact.
+
+    Role/text is retained with source/POLICY-block facts so clean post-fix
+    detector code can re-derive historical labels. Every message is emitted
+    for audit completeness; the detector itself continues to read only
+    system/user turns. Typed content follows the detector's text-part rule.
+    """
+    rows: list[dict] = []
+    for message in messages or []:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text = "\n".join(
+                part.get("text", "")
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "text"
+            )
+        else:
+            text = ""
+        rows.append({
+            "role": message.get("role"),
+            "text": text,
+            "source_block_present": _source_block_present(text),
+            "policy_block_present": bool(_POLICY_BLOCK.search(text)),
+        })
+    return rows
+
+
 def grounded_answer_risk(
     messages: list[dict], config: Settings | None = None
 ) -> dict:
@@ -369,11 +419,7 @@ def grounded_answer_risk(
     if not texts:
         return {"grounded": False, "risk": RISK_NONE}
 
-    has_source_block = any(
-        p.search(t) for t in texts for p in _SOURCE_BLOCK_PATTERNS
-    ) or any(_has_quoted_policy_fragment(t) for t in texts) or any(
-        _LABELED_BLOCK.search(t) for t in texts
-    ) or any(_is_retrieval_envelope(t) for t in texts)
+    has_source_block = any(_source_block_present(text) for text in texts)
     if has_source_block:
         return {"grounded": True, "risk": RISK_FIDELITY_CRITICAL}
 

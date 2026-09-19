@@ -26,6 +26,7 @@ from proxy.grounded import (  # noqa: E402
     RISK_NONE,
     _is_retrieval_envelope,
     grounded_answer_risk,
+    grounding_features,
     select_dose_tier,
 )
 from test_matrix_live import routed  # noqa: E402,F401
@@ -45,6 +46,23 @@ def cfg(**overrides) -> Settings:
     )
     base.update(overrides)
     return Settings(**base)
+
+
+def test_ac_p6h_grounding_features_preserve_raw_text_and_source_policy_flags():
+    """Raw artifact evidence must distinguish source context from POLICY."""
+    features = grounding_features([
+        {"role": "system", "content": "POLICY: Refunds require a receipt."},
+        {"role": "user", "content": "Retrieved knowledge: [1] Invoice paid."},
+        {"role": "assistant", "content": "Earlier answer."},
+    ])
+    assert features == [
+        {"role": "system", "text": "POLICY: Refunds require a receipt.",
+         "source_block_present": True, "policy_block_present": True},
+        {"role": "user", "text": "Retrieved knowledge: [1] Invoice paid.",
+         "source_block_present": True, "policy_block_present": False},
+        {"role": "assistant", "text": "Earlier answer.",
+         "source_block_present": False, "policy_block_present": False},
+    ]
 
 
 # --- AC-P6a: fixture classification -----------------------------------
