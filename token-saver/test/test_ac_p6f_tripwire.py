@@ -334,6 +334,21 @@ class TestBandLoaderAndEmitContract:
         assert band is not None
         assert band["artifact"] == authority.name
 
+    # AC-P6k: two unsuperseded parity-green artifacts (e.g. two model slugs
+    # both believing they are current) is an authority deadlock, not a
+    # pick-one — the loader must fail closed to None, disarming the band.
+    def test_ac_p6k_two_unsuperseded_green_artifacts_disarm(self, tmp_path):
+        from benchmark.run_benchmark import emit_calibration_artifact
+
+        for slug in ("model-alpha", "model-beta"):
+            emitted = emit_calibration_artifact(
+                _parity_green_results(), tmp_path, slug, "bounded",
+                "eligible_only", f"benchmark_{slug}.json")
+            data = json.loads(emitted.read_text())
+            assert data["superseded_by"] is None
+            assert data["quality_parity"]["parity_holds"] is True
+        assert tripwire.load_calibration_band(tmp_path) is None
+
     @pytest.mark.parametrize("parity", [None, False])
     def test_ac_p6k_loader_refuses_missing_or_red_quality_parity(
             self, tmp_path, parity):
