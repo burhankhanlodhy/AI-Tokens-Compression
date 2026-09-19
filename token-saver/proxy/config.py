@@ -69,6 +69,13 @@ class Settings(BaseSettings):
     # invalidation, and filtered-HNSW release gate are green. This is a
     # deployment-only switch; no request header can enable it.
     semantic_cache_enabled: bool = False
+    # AC-PC2/PC3: a semantic entry and its verbatim response payload expire as
+    # one pair. This deployment-level control is deliberately not request
+    # configurable; traffic-shaped calibration owns future tuning.
+    semantic_cache_ttl_seconds: int = Field(default=300, ge=1, le=86_400)
+    # Payloads larger than this are clean semantic-cache misses. Never truncate
+    # a provider response: cache replay must preserve its bytes exactly.
+    semantic_cache_max_response_bytes: int = Field(default=1_048_576, ge=1)
 
     # --- B2: L1 lossless structural cleanup (Phase B) ---
     # Pure deterministic transform (proxy/l1_clean.py, frozen taxonomy
