@@ -163,6 +163,23 @@ enables `PRAGMA journal_mode=WAL`, so you will see `stats.db-wal` /
 without them while the proxy is running, and make sure any Docker
 volume/backups cover the whole `data/` directory.
 
+### Existing Postgres volume upgrade (Phase C-1)
+
+A fresh volume gets the pgvector extension and semantic-cache table from
+`../postgres-schema-v2.sql`. For an existing `postgres-data` volume, take a
+backup, switch to the pgvector image, start Postgres, and apply the one-shot
+upgrade explicitly:
+
+```bash
+docker compose up -d postgres
+docker compose exec -T postgres psql -U postgres -d token_saver \
+  -v ON_ERROR_STOP=1 -f - < migrations/20260918_pc1_pgvector.sql
+```
+
+The migration is intentionally fire-once and fails loudly if the table already
+exists. Semantic caching remains disabled until AC-PC4 passes; the deployment
+flag cannot be enabled by a client request.
+
 ## Tests
 
 ```bash

@@ -1,6 +1,9 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # Pin the pgvector release as well as the Postgres major.  The semantic
+    # cache migration requires CREATE EXTENSION vector; plain postgres:16 does
+    # not ship that extension.
+    image: pgvector/pgvector:0.8.6-pg16-bookworm
     ports:
       - "5433:5432"
     env_file:
