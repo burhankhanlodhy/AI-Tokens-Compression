@@ -69,6 +69,14 @@ class Settings(BaseSettings):
     # invalidation, and filtered-HNSW release gate are green. This is a
     # deployment-only switch; no request header can enable it.
     semantic_cache_enabled: bool = False
+    # C-1: each lookup pins this above pgvector's default 40. The DBA's
+    # traffic-shaped probe found 100 selects the filtered HNSW index.
+    semantic_cache_hnsw_ef_search: int = Field(default=100, ge=1, le=1000)
+    # Conservative v1 retention shared by a semantic entry and its response;
+    # tune only after traffic-shaped calibration data exists.
+    semantic_cache_ttl_seconds: int = Field(default=300, ge=1, le=86_400)
+    semantic_cache_max_response_bytes: int = Field(default=1_048_576, ge=1)
+    embedding_model: str = "text-embedding-3-small"
 
     # --- B2: L1 lossless structural cleanup (Phase B) ---
     # Pure deterministic transform (proxy/l1_clean.py, frozen taxonomy

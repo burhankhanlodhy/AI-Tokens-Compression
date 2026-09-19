@@ -91,7 +91,8 @@ def lookup(
     misses. The WHERE clause repeats every mandatory isolation/compatibility
     filter before HNSW ordering; no filter may be optional or client-derived.
     """
-    if not get_settings().semantic_cache_enabled:
+    settings = get_settings()
+    if not settings.semantic_cache_enabled:
         return None
     if not scope.complete():
         raise ValueError("mandatory semantic lookup filters are required")
@@ -103,6 +104,17 @@ def lookup(
 
     try:
         with _connect() as pg:
+            # Default ef_search=40 and generic prepared plans both selected a
+            # Seq Scan at traffic-shaped volume. These are transaction-local
+            # so the policy also holds if lookup later uses a connection pool.
+            pg.execute(
+                "SELECT set_config('hnsw.ef_search', %s, true)",
+                (str(settings.semantic_cache_hnsw_ef_search),),
+            )
+            pg.execute(
+                "SELECT set_config('plan_cache_mode', %s, true)",
+                ("force_custom_plan",),
+            )
             row = pg.execute(
                 """
                 WITH nearest AS (

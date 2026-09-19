@@ -131,8 +131,8 @@ def test_lookup_binds_every_tenant_provider_model_and_parameter_filter(monkeypat
     assert hit == semantic_cache.SemanticCacheHit(
         entry_id=42, response_ref="response-v7", cosine_distance=0.08
     )
-    assert len(conn.calls) == 1
-    sql, params = conn.calls[0]
+    assert len(conn.calls) == 3
+    sql, params = conn.calls[2]
     normalized = " ".join(sql.split())
     for required in (
         "tenant_id = %s",
@@ -160,6 +160,27 @@ def test_lookup_binds_every_tenant_provider_model_and_parameter_filter(monkeypat
         scope.request_parameters_hash,
         "[0.1,0.2]",
         0.12,
+    )
+
+
+def test_lookup_pins_hnsw_and_custom_plan_for_its_transaction(monkeypatch):
+    """AC-PC3: every lookup must defeat the default/generic Seq Scan plan."""
+    monkeypatch.setenv("SEMANTIC_CACHE_ENABLED", "true")
+    monkeypatch.setenv("SEMANTIC_CACHE_HNSW_EF_SEARCH", "100")
+    get_settings.cache_clear()
+    conn = _Connection((42, "response-v7", 0.08))
+    monkeypatch.setattr(semantic_cache, "_connect", lambda: conn)
+
+    try:
+        assert semantic_cache.lookup(_scope(), [0.1, 0.2], max_cosine_distance=0.12)
+    finally:
+        get_settings.cache_clear()
+
+    assert conn.calls[0] == (
+        "SELECT set_config('hnsw.ef_search', %s, true)", ("100",)
+    )
+    assert conn.calls[1] == (
+        "SELECT set_config('plan_cache_mode', %s, true)", ("force_custom_plan",)
     )
 
 
