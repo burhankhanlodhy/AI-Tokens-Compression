@@ -145,7 +145,7 @@ async def lifespan(app: FastAPI) -> Iterator[None]:
             await client.aclose()
 
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 app = FastAPI(title="token-saver proxy", version=APP_VERSION, lifespan=lifespan)
 
