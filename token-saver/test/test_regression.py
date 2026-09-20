@@ -54,6 +54,16 @@ def test_startup_has_no_rate_limiter_code_path():
     assert not hasattr(app.state, "rate_limiter")
 
 
+# --------------------------------------------------------- release version
+
+def test_v1_release_version_is_exposed_by_health(client):
+    """A deployed v1.0.0 instance identifies the exact release at runtime."""
+    assert app.version == "1.0.0"
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "version": "1.0.0"}
+
+
 # ---------------------------------------------------------------- T3: embeddings
 
 def test_embeddings_forwards_upstream_error_body(client):

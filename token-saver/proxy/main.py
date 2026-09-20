@@ -144,7 +144,9 @@ async def lifespan(app: FastAPI) -> Iterator[None]:
             await client.aclose()
 
 
-app = FastAPI(title="token-saver proxy", lifespan=lifespan)
+APP_VERSION = "1.0.0"
+
+app = FastAPI(title="token-saver proxy", version=APP_VERSION, lifespan=lifespan)
 
 
 def _ensure_admin_token(application: FastAPI) -> str:
@@ -1204,8 +1206,8 @@ async def metrics(format: str = "text"):
 
 @app.get("/health")
 async def health_ok():
-    """Simple health check; return 200."""
-    return {"status": "ok"}
+    """Simple health check that identifies the deployed release."""
+    return {"status": "ok", "version": app.version}
 
 
 # --- PA-3: 4-tab dashboard (server-rendered shell + Chart.js) ---
