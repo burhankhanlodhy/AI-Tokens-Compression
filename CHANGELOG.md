@@ -16,7 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bypass lossy compression and L1 cleanup. Tool protocol envelopes are
   preserved so agentic requests reach the upstream provider unchanged in
   their message content and remain valid for function calling.
+- **LLMLingua 512-token input-window guard** — lossy compression now
+  counts the input's tokens and leaves the text unchanged when it would
+  exceed LLMLingua-2's bundled 512-token BERT input window, instead of
+  invoking the compressor past its positional-embedding limit and risking
+  corrupted output.
 
+## [1.0.0] - 2026-09-19
 
 Initial release. token-saver is an OpenAI-compatible drop-in proxy that
 compresses prompts before they hit the upstream LLM, injects a conciseness
