@@ -82,7 +82,7 @@ CREATE TABLE requests (
     ts                      TIMESTAMPTZ NOT NULL DEFAULT now(),
     model                   TEXT NOT NULL,
     route                   TEXT NOT NULL,           -- 'compress' | 'passthrough'
-    cache_status            TEXT NOT NULL DEFAULT 'miss',  -- 'miss' | 'exact_hit' (semantic_hit reserved, Phase C)
+    cache_status            TEXT NOT NULL DEFAULT 'miss',  -- 'miss' | 'exact_hit' | 'semantic_hit' | 'semantic_threshold_miss'
     input_tokens_before     INTEGER NOT NULL,
     input_tokens_after      INTEGER NOT NULL,
     output_tokens           INTEGER NOT NULL DEFAULT 0,
@@ -107,7 +107,7 @@ CREATE TABLE requests (
     -- date() expression issue flagged in the v1 schema review)
     day_bucket              DATE GENERATED ALWAYS AS ((ts AT TIME ZONE 'UTC')::date) STORED,
     CONSTRAINT chk_route CHECK (route IN ('compress', 'passthrough')),
-    CONSTRAINT chk_cache_status CHECK (cache_status IN ('miss', 'exact_hit', 'semantic_hit'))
+    CONSTRAINT chk_cache_status CHECK (cache_status IN ('miss', 'exact_hit', 'semantic_hit', 'semantic_threshold_miss'))
 );
 
 -- KPI time-bucket queries: per-tenant and per-provider dashboards filter by
