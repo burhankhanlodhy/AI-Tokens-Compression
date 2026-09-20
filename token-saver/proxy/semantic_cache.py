@@ -4,6 +4,25 @@ This module owns only the safe read boundary.  Embedding production, the
 pgvector image/table migration, calibration corpus, and enablement remain
 separate owner/gate responsibilities.  In particular, there is no fallback
 threshold: callers must supply the value calibrated by AC-PC4.
+
+PM rulings (ratified 2026-09-19 for the PC5 vertical slice; do not re-litigate):
+- embedding_version = "{relay}:{model}@{dims}", derived once at process start
+  from the effective embedding config; default "openai:text-embedding-3-small@1536".
+  Bump on any input-side change that can shift the vector for identical text:
+  relay/upstream class that produced the vectors, model identifier, dimensions,
+  or the text-preparation pipeline (template/prefix, truncation, future
+  chunking). Query-time knobs (ef_search, threshold, index parameters) never
+  change vectors and never bump.
+- quality_version = the app release semver at write time (version()).
+  Bump on any release whose diff touches response-shaping behavior: compression
+  engine, token counting, conciseness/grounded gates (P6, AC-P6c tiers),
+  response templates. Bias to bump: over-quarantine costs a cold cache;
+  under-quarantine serves bytes the current pipeline would not produce.
+- Both columns are cache namespaces: lookup filters WHERE <col> = current and
+  the unique identity index includes both, so a bump silently quarantines old
+  entries until expires_at / the re-insert sweep, and a config or release
+  rollback restores their readability without a migration. Guardrail tests:
+  same text + bumped version -> clean miss; rollback -> old version readable.
 """
 from __future__ import annotations
 
