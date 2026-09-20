@@ -10,6 +10,7 @@ import re
 from typing import Literal
 
 from .config import get_settings
+from .tool_protocol import has_tool_calling_state
 
 Route = Literal["compress", "passthrough"]
 
