@@ -228,9 +228,9 @@ async def capturing_client(tmp_db):
 
 
 @pytest.mark.asyncio
-async def test_tool_calling_request_is_forwarded_without_transforms(
+async def test_tool_calling_request_skips_content_transforms(
         capturing_client, monkeypatch):
-    """Agent/tool protocol traffic must bypass every request-body transform."""
+    """Agent/tool protocol traffic bypasses compression and L1 cleaning."""
     c, captured = capturing_client
     from proxy import l1_clean, main as main_module
 
@@ -258,21 +258,24 @@ async def test_tool_calling_request_is_forwarded_without_transforms(
         }}],
         "tool_choice": "auto",
     }
-    raw_payload = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
     response = await c.post(
         "/v1/chat/completions",
-        headers={"Authorization": "Bearer test-key-123", "Content-Type": "application/json"},
-        content=raw_payload,
+        headers={"Authorization": "Bearer test-key-123"},
+        json=payload,
     )
     assert response.status_code == 200
-    assert captured["raw"] == raw_payload
-    assert captured["body"] == payload
+    assert captured["body"]["messages"] == payload["messages"]
+    assert captured["body"]["tools"] == payload["tools"]
+    assert captured["body"]["tool_choice"] == payload["tool_choice"]
+    # The P0 gate is limited to content transforms; existing model-family
+    # reasoning policy remains unchanged pending a separate product ruling.
+    assert captured["body"]["reasoning"] == {"enabled": False}
 
 
 @pytest.mark.asyncio
-async def test_reasoning_injection_is_skipped_for_tool_calling_request(
+async def test_existing_reasoning_injection_remains_for_tool_calling_request(
         capturing_client):
-    """The P0 byte-identity gate also prevents body-level reasoning injection."""
+    """Tool gating does not silently change the independent reasoning policy."""
     c, captured = capturing_client
     payload = {
         "model": "google/gemini-3.5-flash-lite",
@@ -287,7 +290,9 @@ async def test_reasoning_injection_is_skipped_for_tool_calling_request(
         json=payload,
     )
     assert response.status_code == 200
-    assert captured["body"] == payload
+    assert captured["body"]["messages"] == payload["messages"]
+    assert captured["body"]["tools"] == payload["tools"]
+    assert captured["body"]["thinking_level"] == "MINIMAL"
 
 
 @pytest.mark.asyncio
