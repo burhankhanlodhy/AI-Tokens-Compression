@@ -166,11 +166,50 @@ volume/backups cover the whole `data/` directory.
 ### Existing Postgres volume upgrade (Phase C-1)
 
 A fresh Compose volume gets the Phase A ledger from
-`../postgres-schema-v2.sql`, then the pgvector extension and semantic-cache
-table from `migrations/20260918_pc1_pgvector.sql`. For an existing
-`postgres-data` volume, take a backup, complete the libc-safe cutover below,
-then apply the one-shot upgrade explicitly. The migration is
-intentionally fire-once and fails loudly if the table already exists.
+`../postgres-schema-v2.sql`, the pgvector extension and semantic-cache entry
+table from `migrations/20260918_pc1_pgvector.sql`, and the response store from
+`migrations/20260919_pc2_semantic_responses.sql`. The canonical base schema
+already contains the final four-value `chk_cache_status` taxonomy. Compose also
+mounts the strict `20260920_ac_pcui_cache_status.sql` outside initdb and runs a
+small initdb bridge: on a fresh volume it verifies that the canonical schema is
+already widened and does not replay a fire-once migration; on a legacy volume,
+apply the same SQL explicitly as described below.
+
+For an existing `postgres-data` volume, take a backup, complete the libc-safe
+cutover below, then apply the one-shot upgrades in order with
+`psql -v ON_ERROR_STOP=1`:
+
+```bash
+psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \\
+  -f migrations/20260918_pc1_pgvector.sql
+psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \\
+  -f migrations/20260919_pc2_semantic_responses.sql
+psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \\
+  -f migrations/20260920_ac_pcui_cache_status.sql
+```
+
+The first migration creates pgvector and `semantic_cache_entries`; the second
+creates the tenant-scoped `semantic_cache_responses` table and its composite
+foreign key; the third replaces the pre-`b4baf47` `chk_cache_status` constraint.
+Do not skip the third step on a volume created before `b4baf47`: the application
+must be able to record all four literals, including `semantic_threshold_miss`.
+These migrations are intentionally fire-once and fail loudly if their reviewed
+preconditions are absent or they have already been applied.
+
+Verify the upgrade and a fresh-volume initialization with the same query:
+
+```bash
+psql "$TOKEN_SAVER_PG_DSN" -Atc \\
+  "SELECT pg_get_constraintdef(oid) FROM pg_constraint
+    WHERE conrelid = 'requests'::regclass AND conname = 'chk_cache_status';"
+# Expected: a CHECK containing miss, exact_hit, semantic_hit,
+# semantic_threshold_miss.
+```
+
+The fresh-volume bridge is not a replacement for the explicit legacy-volume
+upgrade: initdb scripts run only when the data directory is empty. Back up the
+volume before any cutover or migration, and retain the rollback copy until the
+post-upgrade health/KPI checks pass.
 
 ### Existing-volume libc-safe cutover
 

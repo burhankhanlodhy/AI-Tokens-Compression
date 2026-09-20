@@ -139,6 +139,22 @@ if [[ "$SEMANTIC_SCHEMA" != 't|t|t|t' ]]; then
 fi
 printf 'C-5: fresh-volume pgvector + PC1 entries + PC2 responses/FK schema verified\n'
 
+# Fresh schema and an upgraded pre-b4baf47 volume must expose the same four
+# cache-status literals.  The base schema is final; the strict 20260920 SQL is
+# replayed only by the initdb bridge for a legacy constraint.
+CACHE_STATUS_CONSTRAINT=$(compose exec -T postgres psql -U postgres -d token_saver -Atqc \
+  "SELECT pg_get_constraintdef(oid) FROM pg_constraint
+    WHERE conrelid = 'requests'::regclass AND conname = 'chk_cache_status';")
+CACHE_STATUS_CONSTRAINT=${CACHE_STATUS_CONSTRAINT//$'\r'/}
+case "$CACHE_STATUS_CONSTRAINT" in
+  *miss*exact_hit*semantic_hit*semantic_threshold_miss*) ;;
+  *)
+    printf 'C-5 FAIL: chk_cache_status was %q; expected all four frozen literals\n' "$CACHE_STATUS_CONSTRAINT" >&2
+    exit 1
+    ;;
+esac
+printf 'C-5: fresh-volume chk_cache_status accepts all four frozen literals\n'
+
 # The request must reach the real configured upstream.  No provider account is
 # needed: the deliberately invalid credential is expected to be rejected.
 REQUEST_BODY='{"model":"openai/gpt-4o-mini","messages":[{"role":"user","content":"C5 acceptance smoke: reply with one word."}]}'
