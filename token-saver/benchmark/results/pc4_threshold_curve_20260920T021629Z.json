@@ -1,0 +1,84 @@
+{
+  "method": "synthetic labeled positives/negatives over committed PC4 lookup SQL",
+  "database": "dba_verify_pc4_curve_1789870367",
+  "server_rows": 10000,
+  "total_rows_seeded": 10000,
+  "positive_cases": 30,
+  "negative_cases": 30,
+  "ef_search": 100,
+  "plan_nodes": [
+    "Subquery Scan",
+    "Limit",
+    "Index Scan",
+    "Index Scan"
+  ],
+  "plan_details": [
+    {
+      "node_type": "Subquery Scan",
+      "index_name": null,
+      "actual_total_time_ms": 6.954,
+      "actual_rows": 0
+    },
+    {
+      "node_type": "Limit",
+      "index_name": null,
+      "actual_total_time_ms": 6.951,
+      "actual_rows": 1
+    },
+    {
+      "node_type": "Index Scan",
+      "index_name": "idx_semantic_cache_embedding_hnsw",
+      "actual_total_time_ms": 6.948,
+      "actual_rows": 1
+    },
+    {
+      "node_type": "Index Scan",
+      "index_name": "providers_name_key",
+      "actual_total_time_ms": 0.019,
+      "actual_rows": 1
+    }
+  ],
+  "recall_probe": [
+    {
+      "label": "positive",
+      "exact_distance": 0.004983365238688475,
+      "hnsw": [
+        {"ef_search": 100, "distance": 0.9603254607068618},
+        {"ef_search": 300, "distance": 0.9592163354186669},
+        {"ef_search": 1000, "distance": 0.004983365238688475}
+      ]
+    },
+    {
+      "label": "positive",
+      "exact_distance": 0.05676244231646144,
+      "hnsw": [
+        {"ef_search": 100, "distance": 0.9608542069240553},
+        {"ef_search": 300, "distance": 0.9569349478502801},
+        {"ef_search": 1000, "distance": 0.05676244231646144}
+      ]
+    },
+    {
+      "label": "negative",
+      "exact_distance": 0.1296096907649762,
+      "hnsw": [
+        {"ef_search": 100, "distance": 0.916300254951313},
+        {"ef_search": 300, "distance": 0.916300254951313},
+        {"ef_search": 1000, "distance": 0.1296096907649762}
+      ]
+    }
+  ],
+  "thresholds": [
+    {"ef_search": 100, "threshold": 0.05, "positive_hits": 1, "positive_misses": 29, "negative_false_hits": 0, "negative_true_misses": 30, "false_hit_rate_pct": 0.0, "false_miss_rate_pct": 96.67, "latency_ms": {"p50": 6.781, "p95": 7.652, "p99": 8.016, "max": 8.462}},
+    {"ef_search": 100, "threshold": 0.08, "positive_hits": 1, "positive_misses": 29, "negative_false_hits": 0, "negative_true_misses": 30, "false_hit_rate_pct": 0.0, "false_miss_rate_pct": 96.67, "latency_ms": {"p50": 7.246, "p95": 7.646, "p99": 7.944, "max": 8.143}},
+    {"ef_search": 100, "threshold": 0.12, "positive_hits": 4, "positive_misses": 26, "negative_false_hits": 0, "negative_true_misses": 30, "false_hit_rate_pct": 0.0, "false_miss_rate_pct": 86.67, "latency_ms": {"p50": 6.034, "p95": 7.404, "p99": 7.659, "max": 7.673}},
+    {"ef_search": 100, "threshold": 0.20, "positive_hits": 4, "positive_misses": 26, "negative_false_hits": 1, "negative_true_misses": 29, "false_hit_rate_pct": 3.33, "false_miss_rate_pct": 86.67, "latency_ms": {"p50": 7.382, "p95": 8.715, "p99": 9.146, "max": 9.16}},
+    {"ef_search": 300, "threshold": 0.05, "positive_hits": 3, "positive_misses": 27, "negative_false_hits": 0, "negative_true_misses": 30, "false_hit_rate_pct": 0.0, "false_miss_rate_pct": 90.0, "latency_ms": {"p50": 12.728, "p95": 13.4, "p99": 13.654, "max": 13.665}},
+    {"ef_search": 300, "threshold": 0.08, "positive_hits": 4, "positive_misses": 26, "negative_false_hits": 0, "negative_true_misses": 30, "false_hit_rate_pct": 0.0, "false_miss_rate_pct": 86.67, "latency_ms": {"p50": 12.7, "p95": 13.127, "p99": 13.529, "max": 13.872}},
+    {"ef_search": 300, "threshold": 0.12, "positive_hits": 7, "positive_misses": 23, "negative_false_hits": 0, "negative_true_misses": 30, "false_hit_rate_pct": 0.0, "false_miss_rate_pct": 76.67, "latency_ms": {"p50": 12.631, "p95": 13.039, "p99": 13.201, "max": 13.236}},
+    {"ef_search": 300, "threshold": 0.20, "positive_hits": 8, "positive_misses": 22, "negative_false_hits": 3, "negative_true_misses": 27, "false_hit_rate_pct": 10.0, "false_miss_rate_pct": 73.33, "latency_ms": {"p50": 12.303, "p95": 13.081, "p99": 13.416, "max": 13.686}},
+    {"ef_search": 1000, "threshold": 0.05, "positive_hits": 12, "positive_misses": 18, "negative_false_hits": 0, "negative_true_misses": 30, "false_hit_rate_pct": 0.0, "false_miss_rate_pct": 60.0, "latency_ms": {"p50": 143.368, "p95": 161.536, "p99": 162.576, "max": 162.685}},
+    {"ef_search": 1000, "threshold": 0.08, "positive_hits": 19, "positive_misses": 11, "negative_false_hits": 0, "negative_true_misses": 30, "false_hit_rate_pct": 0.0, "false_miss_rate_pct": 36.67, "latency_ms": {"p50": 140.703, "p95": 161.44, "p99": 162.384, "max": 163.045}},
+    {"ef_search": 1000, "threshold": 0.12, "positive_hits": 29, "positive_misses": 1, "negative_false_hits": 0, "negative_true_misses": 30, "false_hit_rate_pct": 0.0, "false_miss_rate_pct": 3.33, "latency_ms": {"p50": 141.323, "p95": 159.043, "p99": 160.59, "max": 160.76}},
+    {"ef_search": 1000, "threshold": 0.20, "positive_hits": 30, "positive_misses": 0, "negative_false_hits": 13, "negative_true_misses": 17, "false_hit_rate_pct": 43.33, "false_miss_rate_pct": 0.0, "latency_ms": {"p50": 142.85, "p95": 159.097, "p99": 159.222, "max": 159.282}}
+  ]
+}
