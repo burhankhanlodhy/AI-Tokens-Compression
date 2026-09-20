@@ -61,8 +61,11 @@ jobs:
                     for key in ('tests', 'failures', 'errors', 'skipped')}
           executed = totals['tests'] - totals['skipped']
           print(f"standard suite: executed={executed} passed={totals['tests'] - totals['failures'] - totals['errors'] - totals['skipped']} skipped={totals['skipped']} failures={totals['failures']} errors={totals['errors']}")
-          if executed < 712 or totals['skipped']:
-              raise SystemExit('executed test floor violated: expected at least 712 non-skipped tests')
+          # Standard/reverse lanes collect exactly 678 tests: the 34
+          # pgvector-only tests are intentionally reserved for pc1-pgvector.
+          # Keep this ratchet synchronized with any test additions/removals.
+          if executed < 678 or totals['skipped']:
+              raise SystemExit('executed test floor violated: expected at least 678 non-skipped tests')
           PY
 
       - name: Run reverse-order suite
@@ -84,8 +87,11 @@ jobs:
                     for key in ('tests', 'failures', 'errors', 'skipped')}
           executed = totals['tests'] - totals['skipped']
           print(f"reverse suite: executed={executed} passed={totals['tests'] - totals['failures'] - totals['errors'] - totals['skipped']} skipped={totals['skipped']} failures={totals['failures']} errors={totals['errors']}")
-          if executed < 712 or totals['skipped']:
-              raise SystemExit('executed test floor violated: expected at least 712 non-skipped tests')
+          # Standard/reverse lanes collect exactly 678 tests: the 34
+          # pgvector-only tests are intentionally reserved for pc1-pgvector.
+          # Keep this ratchet synchronized with any test additions/removals.
+          if executed < 678 or totals['skipped']:
+              raise SystemExit('executed test floor violated: expected at least 678 non-skipped tests')
           PY
 
   c5-docker-acceptance:
