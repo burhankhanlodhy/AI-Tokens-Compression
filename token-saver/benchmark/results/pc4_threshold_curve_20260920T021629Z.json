@@ -1,5 +1,7 @@
 {
   "method": "synthetic labeled positives/negatives over committed PC4 lookup SQL",
+  "status": "exploratory_only_not_for_threshold_ratification",
+  "limitation": "Uniformly random high-dimensional vectors do not model real embedding neighborhoods; this run is valid for plan/index plumbing only, not HNSW recall or production threshold selection.",
   "database": "dba_verify_pc4_curve_1789870367",
   "server_rows": 10000,
   "total_rows_seeded": 10000,
