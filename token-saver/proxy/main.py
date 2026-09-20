@@ -25,6 +25,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Str
 
 from . import stats
 from .classifier import classify
+from .classifier import has_tool_calling_state
 from .compression import compress_messages, has_compressible_content
 from .config import estimate_cost, get_settings, load_pricing, reasoning_control_for
 from .counting import (
@@ -518,8 +519,17 @@ async def chat_completions(request: Request):
     # Taxonomy v1.1 §5: L1 is OFF for passthrough routes — a
     # passthrough-classified request reaches upstream byte-identical,
     # independent of L1_ENABLED/COMPRESSION_ENABLED.
+    # Tool-calling is a hard correctness boundary. A prose-heavy agent turn
+    # still carries machine-readable protocol state that neither L1 nor the
+    # lossy compressor may rewrite. Keep this decision on the raw envelope so
+    # normalization cannot hide a partial tool-call marker.
+    tool_calling = has_tool_calling_state(body)
     classify_needed = s.compression_enabled or s.l1_enabled
-    route = classify(messages) if classify_needed else "passthrough"
+    route = (
+        "passthrough"
+        if tool_calling
+        else (classify(messages) if classify_needed else "passthrough")
+    )
 
     # --- B2: L1 lossless structural cleanup (runs BEFORE the PA-4 cache key) ---
     # Taxonomy §1 pipeline ordering: L1 clean first, then the cache key is
@@ -535,7 +545,7 @@ async def chat_completions(request: Request):
 
     l1_tokens_stripped = 0
     l1_applied = False
-    if s.l1_enabled and _l1_eligible(messages, route):
+    if s.l1_enabled and not tool_calling and _l1_eligible(messages, route):
         l1_before = count_messages(messages, model)
         l1_messages = _l1_clean_messages(messages)
         l1_after = count_messages(l1_messages, model)
@@ -627,6 +637,7 @@ async def chat_completions(request: Request):
     injected_keys: set[str] = set()
     if (
         s.disable_reasoning_by_default
+        and not tool_calling
         and "reasoning" not in body
         and "thinking_level" not in body
         and model not in _reasoning_mandatory_models
@@ -651,7 +662,10 @@ async def chat_completions(request: Request):
         )
 
     in_after = count_messages(body.get("messages") or [], model)
-    payload = json.dumps(body).encode()
+    # The hard tool-call gate promises a byte-identical legacy forward. Keep
+    # the caller's original JSON bytes rather than reserializing normalized
+    # protocol envelopes (routing adapters may still translate at their edge).
+    payload = raw if tool_calling and not s.provider_routing else json.dumps(body).encode()
 
     # --- C7: upstream transport failures surface as normalized errors ---
     # AC-A9: transport failures and relayed provider errors share ONE

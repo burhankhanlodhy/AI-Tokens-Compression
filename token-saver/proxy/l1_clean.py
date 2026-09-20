@@ -32,6 +32,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from .tool_protocol import is_tool_protocol_message
+
 # Reserved answer-bearing keys (taxonomy §4) — never dropped, never recursed.
 RESERVED_KEYS = {"content", "text", "answer", "passage", "doc", "query"}
 
@@ -306,6 +308,12 @@ def clean_messages(
     """
     out: list[dict] = []
     for msg in messages:
+        # Never parse or rewrite protocol envelopes. In particular, tool
+        # results may contain source code and function arguments must retain
+        # their exact JSON spelling for the next model turn.
+        if is_tool_protocol_message(msg):
+            out.append(msg)
+            continue
         role = msg.get("role")
         content = msg.get("content")
         if c2 and role == "system" and isinstance(content, str):

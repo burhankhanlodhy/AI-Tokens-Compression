@@ -10,6 +10,7 @@ import threading
 from typing import Any
 
 from .config import get_settings
+from .tool_protocol import is_tool_protocol_message
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,12 @@ def compress_messages(messages: list[dict]) -> list[dict]:
     s = get_settings()
     out: list[dict] = []
     for msg in messages:
+        # Tool results and assistant tool-call envelopes are machine-readable
+        # protocol state. Keep the entire message untouched even if a future
+        # caller invokes this helper outside the request-level hard gate.
+        if is_tool_protocol_message(msg):
+            out.append(msg)
+            continue
         content = msg.get("content")
         if isinstance(content, str):
             eligible = msg.get("role") != "system" or s.compress_system_messages
