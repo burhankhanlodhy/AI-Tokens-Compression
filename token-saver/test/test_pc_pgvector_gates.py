@@ -269,13 +269,26 @@ def test_corpus_threshold_separates_hits_from_misses(pg_dsn):
 
 
 def test_threshold_boundary_is_inclusive_at_exact_distance(pg_dsn):
-    """Querying with the analytically exact distance as the threshold must hit
-    (the seam filters cosine_distance <= max_cosine_distance)."""
+    """The exact pgvector distance must hit (the seam filters with <=).
+
+    Vectors are stored as float32 by pgvector, whereas ``expected_distance``
+    is calculated from Python float64 components.  The analytic value can lie
+    on either side of pgvector's real distance across CPU/libm builds, so it
+    cannot represent the database boundary under test.
+    """
     case = CORPUS["cases"][1]  # near-hit-a
-    u, w, expected_distance = build_case_vectors(case)
-    insert_entry(pg_dsn, u, canonical_prompt_hash="pc4-boundary-probe")
+    u, w, _expected_distance = build_case_vectors(case)
+    entry_id = insert_entry(pg_dsn, u, canonical_prompt_hash="pc4-boundary-probe")
+    vector = "[" + ",".join(str(value) for value in w) + "]"
+    with psycopg.connect(pg_dsn) as pg:
+        exact_pgvector_distance = float(
+            pg.execute(
+                "SELECT embedding <=> %s::vector FROM semantic_cache_entries WHERE id = %s",
+                (vector, entry_id),
+            ).fetchone()[0]
+        )
     hit = semantic_cache.lookup(
-        _scope(), w, max_cosine_distance=expected_distance
+        _scope(), w, max_cosine_distance=exact_pgvector_distance
     )
     assert hit is not None, "inclusive <= boundary at the exact distance was refused"
 
