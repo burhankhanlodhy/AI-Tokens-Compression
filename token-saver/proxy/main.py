@@ -637,7 +637,6 @@ async def chat_completions(request: Request):
     injected_keys: set[str] = set()
     if (
         s.disable_reasoning_by_default
-        and not tool_calling
         and "reasoning" not in body
         and "thinking_level" not in body
         and model not in _reasoning_mandatory_models
@@ -662,10 +661,7 @@ async def chat_completions(request: Request):
         )
 
     in_after = count_messages(body.get("messages") or [], model)
-    # The hard tool-call gate promises a byte-identical legacy forward. Keep
-    # the caller's original JSON bytes rather than reserializing normalized
-    # protocol envelopes (routing adapters may still translate at their edge).
-    payload = raw if tool_calling and not s.provider_routing else json.dumps(body).encode()
+    payload = json.dumps(body).encode()
 
     # --- C7: upstream transport failures surface as normalized errors ---
     # AC-A9: transport failures and relayed provider errors share ONE

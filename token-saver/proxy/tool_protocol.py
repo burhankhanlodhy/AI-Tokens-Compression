@@ -17,12 +17,12 @@ def is_tool_protocol_message(message: Mapping[str, Any]) -> bool:
 
 
 def has_tool_calling_state(body: Mapping[str, Any]) -> bool:
-    """Return whether a request must bypass all body transforms.
+    """Return whether a request must bypass lossy/L1 body transforms.
 
     A declared non-empty ``tools`` list, any present ``tool_choice`` field, a
     message carrying ``tool_calls``, or a ``role=tool`` result is enough to
     activate the hard passthrough gate. This is intentionally conservative:
-    protocol state must remain byte-identical even when the envelope is partial.
+    protocol state must remain unchanged even when the envelope is partial.
     """
     if body.get("tools"):
         return True
