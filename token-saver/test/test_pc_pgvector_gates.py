@@ -8,9 +8,10 @@ semantic-cache migration needs the vector extension, and a skip is a floor
 violation in the standard suites.
 
 Gates owned here:
-  1. Cross-tenant/isolation probe — a lookup carrying tenant B's scope can
-     never return tenant A's row, on the live HNSW query path, and every
-     mandatory compatibility filter actually filters (not just parses).
+  1. Cross-tenant/isolation probe — both legacy ``lookup`` and production
+     ``lookup_result`` carrying tenant B's scope can never return tenant A's
+     row, on the live HNSW query path, and every mandatory compatibility filter
+     actually filters (not just parses).
   2. Committed calibration corpus (test/data/pc4_calibration_corpus.json) —
      deterministic seeds with expected hit AND miss classes; pgvector's
      computed <=> distance must match the analytic value and the committed
@@ -20,7 +21,9 @@ Gates owned here:
      must be exact: future expiry hits, past expiry misses, the boundary is
      strict (> now(), not >=), supersession is blocked by the identity unique
      index, and delete+reinsert deterministically retargets the hit.
-  4. Plan pin (AC-PC4) — at traffic-shaped volume the lookup query must be
+  4. Replay integrity — the production path verifies response sha256 and length
+     before serving a hit; a corrupt-at-rest row is a miss and is lazily purged.
+  5. Plan pin (AC-PC4) — at traffic-shaped volume the lookup query must be
      served by idx_semantic_cache_embedding_hnsw, never a Seq Scan.  The
      behavior gates above assert results, not plans: a 216x Seq Scan
      regression would pass them silently.  The gate drives the real lookup()
@@ -44,7 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from proxy.config import get_settings
 from proxy import semantic_cache
-from pg_test_support import TENANT_A, TENANT_B, make_pgvector_database, unique_db_name
+from pg_test_support import TENANT_A, TENANT_B, make_response_store_database, unique_db_name
 
 CORPUS = json.loads(
     (Path(__file__).resolve().parent / "data" / "pc4_calibration_corpus.json").read_text()
@@ -57,7 +60,7 @@ DB_NAME = unique_db_name("pc_pgvector_gates")
 
 @pytest.fixture(scope="module")
 def pg_dsn():
-    dsn = make_pgvector_database(DB_NAME)
+    dsn = make_response_store_database(DB_NAME)
     with psycopg.connect(dsn, autocommit=True) as pg:
         pg.execute(
             "INSERT INTO tenants (id, name) VALUES (%s, 'tenant-a'), (%s, 'tenant-b') "
@@ -157,7 +160,26 @@ def insert_entry(
         # the identity unique index is real: never let two inserts collide by
         # accident — a deliberate collision is a test's explicit choice
         canonical_prompt_hash = "pc4-" + uuid4().hex
+    response_body = b"{}"
     with psycopg.connect(dsn) as pg:
+        pg.execute(
+            """
+            INSERT INTO semantic_cache_responses (
+                tenant_id, response_ref, payload, payload_bytes,
+                schema_version, sha256, content_length, expires_at
+            )
+            VALUES (%s, %s, %s::jsonb, %s, 1, %s, %s, now() + interval '1 hour')
+            ON CONFLICT (tenant_id, response_ref) DO NOTHING
+            """,
+            (
+                scope.tenant_id,
+                response_ref,
+                response_body.decode("utf-8"),
+                response_body,
+                hashlib.sha256(response_body).hexdigest(),
+                len(response_body),
+            ),
+        )
         row = pg.execute(
             f"""
             INSERT INTO semantic_cache_entries (
@@ -245,6 +267,140 @@ def test_lookup_misses_for_unregistered_provider_without_raising(pg_dsn):
 def test_lookup_rejects_dimension_mismatched_embedding_without_query_error(pg_dsn):
     insert_entry(pg_dsn, _uniform_unit("pc4-dim-mismatch"))
     assert lookup(_scope(), [0.3, 0.4]) is None
+
+
+def test_legacy_and_structured_lookups_share_the_query_candidate_seam(pg_dsn, monkeypatch):
+    """Both public paths must reach one SQL seam; otherwise a production-only
+    filter regression can escape the legacy pgvector gates."""
+    embedding = _uniform_unit("pc4-shared-query-seam")
+    insert_entry(pg_dsn, embedding)
+    original = semantic_cache._query_candidate
+    calls: list[tuple[semantic_cache.SemanticLookupScope, str]] = []
+
+    def record(scope, vector):
+        calls.append((scope, vector))
+        return original(scope, vector)
+
+    monkeypatch.setattr(semantic_cache, "_query_candidate", record)
+    assert lookup(_scope(), embedding) is not None
+    result = semantic_cache.lookup_result(
+        _scope(), embedding, max_cosine_distance=PROVISIONAL_THRESHOLD
+    )
+    assert result.kind is semantic_cache.SemanticLookupKind.HIT
+    assert result.response is not None and result.response.body == b"{}"
+    assert len(calls) == 2
+    assert all(scope == _scope() and vector.startswith("[") for scope, vector in calls)
+
+
+def test_lookup_result_never_returns_another_tenants_row(pg_dsn):
+    """Production lookup_result must preserve the tenant predicate, not merely
+    the legacy lookup() seam."""
+    embedding = _uniform_unit("pc4-result-xtenant")
+    insert_entry(pg_dsn, embedding)
+    result = semantic_cache.lookup_result(
+        _scope(tenant_id=TENANT_B), embedding, max_cosine_distance=PROVISIONAL_THRESHOLD
+    )
+    assert result.kind is semantic_cache.SemanticLookupKind.NO_COMPATIBLE_ROW
+    assert result.hit is None and result.response is None
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("model", "other/model"),
+        ("embedding_version", "1999-01-01"),
+        ("quality_version", "stale-quality"),
+        ("request_parameters_hash", "different-params"),
+    ],
+)
+def test_lookup_result_rejects_each_incompatible_scope_dimension(pg_dsn, field, value):
+    """The production classification path must retain every compatibility
+    predicate before it selects its nearest candidate."""
+    embedding = _uniform_unit(f"pc4-result-incompat-{field}")
+    insert_entry(pg_dsn, embedding)
+    result = semantic_cache.lookup_result(
+        _scope(**{field: value}), embedding, max_cosine_distance=PROVISIONAL_THRESHOLD
+    )
+    assert result.kind is semantic_cache.SemanticLookupKind.NO_COMPATIBLE_ROW
+
+
+def test_lookup_result_classifies_nearest_over_threshold_separately(pg_dsn):
+    """A compatible nearest row above the calibrated threshold is pressure,
+    not a hit and not an empty compatibility window."""
+    case = next(case for case in CORPUS["cases"] if case["expected"] == "miss")
+    stored, probe, _distance = build_case_vectors(case)
+    insert_entry(pg_dsn, stored)
+    result = semantic_cache.lookup_result(
+        _scope(), probe, max_cosine_distance=PROVISIONAL_THRESHOLD
+    )
+    assert result.kind is semantic_cache.SemanticLookupKind.THRESHOLD_MISS
+    assert result.hit is None and result.response is None
+
+
+def test_lookup_result_corrupt_payload_is_miss_and_lazily_cleans_pair(pg_dsn):
+    """Replay metadata is defense in depth: a corrupt-at-rest body is never
+    served even if a privileged mutation bypassed the response-table CHECKs."""
+    embedding = _uniform_unit("pc4-corrupt-at-rest")
+    response_ref = "response-corrupt-at-rest"
+    entry_id = insert_entry(pg_dsn, embedding, response_ref=response_ref)
+    with psycopg.connect(pg_dsn, autocommit=True) as pg:
+        pg.execute(
+            "ALTER TABLE semantic_cache_responses DROP CONSTRAINT chk_semantic_response_sha256"
+        )
+        pg.execute(
+            "ALTER TABLE semantic_cache_responses DROP CONSTRAINT chk_semantic_response_content_length"
+        )
+        pg.execute(
+            "ALTER TABLE semantic_cache_responses DROP CONSTRAINT chk_semantic_response_payload_projection"
+        )
+        pg.execute(
+            "UPDATE semantic_cache_responses SET payload_bytes = %s WHERE tenant_id = %s AND response_ref = %s",
+            (b'{"tampered":true}', TENANT_A, response_ref),
+        )
+
+    try:
+        result = semantic_cache.lookup_result(
+            _scope(), embedding, max_cosine_distance=PROVISIONAL_THRESHOLD
+        )
+        assert result.kind is semantic_cache.SemanticLookupKind.NOT_ATTEMPTED
+        assert result.hit is None and result.response is None
+        with psycopg.connect(pg_dsn) as pg:
+            assert pg.execute(
+                "SELECT count(*) FROM semantic_cache_entries WHERE id = %s", (entry_id,)
+            ).fetchone()[0] == 0
+            assert pg.execute(
+                "SELECT count(*) FROM semantic_cache_responses WHERE tenant_id = %s AND response_ref = %s",
+                (TENANT_A, response_ref),
+            ).fetchone()[0] == 0
+    finally:
+        # A deliberately disabled verifier leaves the corrupt pair behind;
+        # remove it before restoring the DDL so this cleanup path remains safe
+        # even while this test is proving a mutation fails.
+        with psycopg.connect(pg_dsn, autocommit=True) as pg:
+            pg.execute(
+                "DELETE FROM semantic_cache_entries WHERE tenant_id = %s AND response_ref = %s",
+                (TENANT_A, response_ref),
+            )
+            pg.execute(
+                "DELETE FROM semantic_cache_responses WHERE tenant_id = %s AND response_ref = %s",
+                (TENANT_A, response_ref),
+            )
+        # The test intentionally weakens the isolated database to model a
+        # privileged at-rest mutation. Restore its committed invariants before
+        # the module's other gates continue.
+        with psycopg.connect(pg_dsn, autocommit=True) as pg:
+            pg.execute(
+                "ALTER TABLE semantic_cache_responses ADD CONSTRAINT chk_semantic_response_sha256 "
+                "CHECK (sha256 ~ '^[0-9a-f]{64}$' AND encode(digest(payload_bytes, 'sha256'), 'hex') = sha256)"
+            )
+            pg.execute(
+                "ALTER TABLE semantic_cache_responses ADD CONSTRAINT chk_semantic_response_content_length "
+                "CHECK (content_length >= 0 AND content_length = octet_length(payload_bytes))"
+            )
+            pg.execute(
+                "ALTER TABLE semantic_cache_responses ADD CONSTRAINT chk_semantic_response_payload_projection "
+                "CHECK (payload = convert_from(payload_bytes, 'UTF8')::jsonb)"
+            )
 
 
 # --------------------------------------------------------------------------
@@ -410,6 +566,24 @@ def _seed_plan_volume(dsn: str) -> None:
     """Fill semantic_cache_entries with PLAN_GATE_ROWS same-scope rows so the
     planner's cost model sees a traffic-shaped table, then refresh stats."""
     with psycopg.connect(dsn, autocommit=True) as pg:
+        response_body = b"{}"
+        pg.execute(
+            """
+            INSERT INTO semantic_cache_responses (
+                tenant_id, response_ref, payload, payload_bytes,
+                schema_version, sha256, content_length, expires_at
+            )
+            VALUES (%s, 'response-plan-vol', %s::jsonb, %s, 1, %s, %s, now() + interval '1 hour')
+            ON CONFLICT (tenant_id, response_ref) DO NOTHING
+            """,
+            (
+                TENANT_A,
+                response_body.decode("utf-8"),
+                response_body,
+                hashlib.sha256(response_body).hexdigest(),
+                len(response_body),
+            ),
+        )
         pg.execute(
             f"""
             INSERT INTO semantic_cache_entries (

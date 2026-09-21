@@ -214,79 +214,40 @@ def lookup(
         raise ValueError("mandatory semantic lookup filters are required")
     if not _valid_threshold(max_cosine_distance):
         return None
+    assert max_cosine_distance is not None
     vector = _vector_literal(embedding, scope.embedding_dimensions)
     if vector is None:
         return None
 
     try:
-        with _connect() as pg:
-            # Default ef_search=40 and generic prepared plans both selected a
-            # Seq Scan at traffic-shaped volume. These are transaction-local
-            # so the policy also holds if lookup later uses a connection pool.
-            pg.execute(
-                "SELECT set_config('hnsw.ef_search', %s, true)",
-                (str(settings.semantic_cache_hnsw_ef_search),),
-            )
-            pg.execute(
-                "SELECT set_config('plan_cache_mode', %s, true)",
-                ("force_custom_plan",),
-            )
-            row = pg.execute(
-                """
-                WITH nearest AS (
-                    SELECT id, response_ref, embedding <=> %s::vector AS cosine_distance
-                      FROM semantic_cache_entries
-                     WHERE tenant_id = %s
-                       AND provider_id = (SELECT id FROM providers WHERE name = %s)
-                       AND model = %s
-                       AND embedding_model = %s
-                       AND embedding_dimensions = %s
-                       AND embedding_version = %s
-                       AND quality_version = %s
-                       AND request_parameters_hash = %s
-                       AND expires_at > now()
-                     ORDER BY embedding <=> %s::vector
-                     LIMIT 1
-                )
-                SELECT id, response_ref, cosine_distance
-                  FROM nearest
-                 WHERE cosine_distance <= %s
-                """,
-                (
-                    vector,
-                    scope.tenant_id,
-                    scope.provider,
-                    scope.model,
-                    scope.embedding_model,
-                    scope.embedding_dimensions,
-                    scope.embedding_version,
-                    scope.quality_version,
-                    scope.request_parameters_hash,
-                    vector,
-                    max_cosine_distance,
-                ),
-            ).fetchone()
+        candidate = _query_candidate(scope, vector)
     except (psycopg.Error, RuntimeError):
         # Semantic caching is an optional optimization.  A missing migration or
         # temporary database failure cannot degrade the proxied request path.
         return None
 
-    if row is None:
+    if candidate is None:
+        return None
+    entry_id, response_ref, cosine_distance = candidate
+    if cosine_distance > max_cosine_distance:
         return None
     return SemanticCacheHit(
-        entry_id=int(row[0]), response_ref=str(row[1]), cosine_distance=float(row[2])
+        entry_id=entry_id, response_ref=response_ref, cosine_distance=cosine_distance
     )
 
 
-def _candidate(
+def _query_candidate(
     scope: SemanticLookupScope,
-    embedding: Sequence[float],
+    vector: str,
 ) -> tuple[int, str, float] | None:
-    """Return the nearest compatible candidate without applying a threshold."""
+    """Run the one tenant/compatibility-filtered nearest-row SQL seam.
+
+    Both the legacy hit-only ``lookup`` API and the production structured
+    ``lookup_result`` path flow through here. Keeping this SQL singular makes
+    the mandatory predicates a single production boundary rather than two
+    copyable implementations that can silently drift apart.
+    """
     settings = get_settings()
-    vector = _vector_literal(embedding, scope.embedding_dimensions)
-    if vector is None:
-        return None
     with _connect() as pg:
         pg.execute(
             "SELECT set_config('hnsw.ef_search', %s, true)",
@@ -328,6 +289,17 @@ def _candidate(
     if row is None:
         return None
     return int(row[0]), str(row[1]), float(row[2])
+
+
+def _candidate(
+    scope: SemanticLookupScope,
+    embedding: Sequence[float],
+) -> tuple[int, str, float] | None:
+    """Return the nearest compatible candidate without applying a threshold."""
+    vector = _vector_literal(embedding, scope.embedding_dimensions)
+    if vector is None:
+        return None
+    return _query_candidate(scope, vector)
 
 
 def _cleanup_candidate(scope: SemanticLookupScope, entry_id: int, response_ref: str) -> None:

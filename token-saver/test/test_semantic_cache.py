@@ -147,7 +147,7 @@ def test_lookup_binds_every_tenant_provider_model_and_parameter_filter(monkeypat
     ):
         assert required in normalized
     assert "embedding <=> %s::vector" in normalized
-    assert "cosine_distance <= %s" in normalized
+    assert "cosine_distance <= %s" not in normalized
     assert params == (
         "[0.1,0.2]",
         scope.tenant_id,
@@ -159,7 +159,6 @@ def test_lookup_binds_every_tenant_provider_model_and_parameter_filter(monkeypat
         scope.quality_version,
         scope.request_parameters_hash,
         "[0.1,0.2]",
-        0.12,
     )
 
 
