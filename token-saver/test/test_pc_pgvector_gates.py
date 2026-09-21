@@ -668,3 +668,255 @@ def test_lookup_plans_the_hnsw_index_not_a_seq_scan(pg_dsn, monkeypatch):
         "lookup() query plan Seq-Scans semantic_cache_entries at "
         f"{PLAN_GATE_ROWS} rows:\n" + plan
     )
+
+# --------------------------------------------------------------------------
+# gate 6: t_b5ccefc3 — DBA-audit volume tier (11,500 rows) and the
+# stale-statistics planner state
+#
+# The DBA audit (benchmark/pc5_c1_recalibration_audit.md) measured the lookup
+# flipping between the HNSW index (~1-9 ms) and a scope/expiry-index scan
+# reading 10,000 rows + sort (~104-110 ms) at 11,500 rows.  Independent QA
+# reproduction (kanban t_b5ccefc3, planner_flip_probe_results.json, pinned
+# pgvector/pgvector:0.8.6-pg16, synthetic random vectors in the DBA harness
+# SHAPE — the planner's cost model sees row counts and statistics, never
+# vector contents):
+#   - ANALYZEd table, ef=100 (production default) and ef=300: 24/24 fresh
+#     sessions and 24/24 plans inside one session all use HNSW — the flip
+#     does NOT reproduce in the ratified operating region with fresh stats;
+#   - ef=1000 (config.py permits up to 1000): 0/48 sessions on HNSW, ~309 ms
+#     EXPLAIN ANALYZE — deterministic scan path, outside the DBA's ratified
+#     "keep ef_search <= 300" region; routed to application-developer;
+#   - STALE statistics (no ANALYZE after an 11,500-row bulk insert): the
+#     scan path wins at EVERY ef including the production default (3/3 plans
+#     per ef) — reachable in production during rapid cache fill, covered by
+#     no committed harness; gated below as xfail until the engine-side guard
+#     lands.
+#
+# Both the legacy ``lookup`` seam and the production ``lookup_result`` path
+# flow through the singular _query_candidate SQL boundary, so capturing the
+# statements lookup() runs pins the exact SQL that serves production.
+
+TIER2_MAIN_ROWS = 10_000
+# The DBA's 1,500-row selectivity mix: 500 rows per incompatible arm.
+TIER2_SELECTIVITY_ROWS = 500
+TIER2_ROWS = TIER2_MAIN_ROWS + 3 * TIER2_SELECTIVITY_ROWS  # 11,500
+TIER2_SESSIONS = 6  # fresh sessions per ef value; production opens one per lookup
+
+
+def _seed_tier2_volume(pg: psycopg.Connection, *, analyze: bool) -> None:
+    """Fill semantic_cache_entries to the DBA-audit harness shape.
+
+    10,000 same-scope rows plus the DBA's 1,500-row selectivity mix (500
+    tenant-B, 500 other-provider, 500 stale embedding_version).  Random
+    distinct vectors — duplicate-heavy fillers degenerate the HNSW graph,
+    which is a recall property no plan gate measures.
+    """
+    scope = _scope()
+    # The pc2 migration FKs entries to (tenant_id, response_ref): seed one
+    # response pair per tenant used by the volume before inserting entries.
+    response_body = b"{}"
+    with pg.cursor() as cur:
+        cur.executemany(
+            """
+            INSERT INTO semantic_cache_responses (
+                tenant_id, response_ref, payload, payload_bytes,
+                schema_version, sha256, content_length, expires_at
+            )
+            VALUES (%s, 'response-tier2', %s::jsonb, %s, 1, %s, %s, now() + interval '1 hour')
+            ON CONFLICT (tenant_id, response_ref) DO NOTHING
+            """,
+            [
+                (tenant, response_body.decode("utf-8"), response_body,
+                 hashlib.sha256(response_body).hexdigest(), len(response_body))
+                for tenant in (TENANT_A, TENANT_B)
+            ],
+        )
+    arms = (
+        (TENANT_A, scope.provider, TIER2_MAIN_ROWS),
+        (TENANT_B, scope.provider, TIER2_SELECTIVITY_ROWS),
+        (TENANT_A, "legacy", TIER2_SELECTIVITY_ROWS),  # other-provider arm
+    )
+    for tenant, provider, count in arms:
+        pg.execute(
+            """
+            INSERT INTO semantic_cache_entries (
+                tenant_id, provider_id, model, embedding_model,
+                embedding_dimensions, embedding_version, quality_version,
+                request_parameters_hash, canonical_prompt_hash, embedding,
+                response_ref, expires_at
+            )
+            SELECT %s, (SELECT id FROM providers WHERE name = %s), %s, %s,
+                   %s, %s, %s, %s, 'pc4-tier2-' || g,
+                   ('[' || array_to_string(
+                       array(SELECT round(random()::numeric, 4)::float8
+                             FROM generate_series(1, %s)), ',') || ']')::vector,
+                   'response-tier2', now() + interval '1 hour'
+              FROM generate_series(1, %s) g
+            """,
+            (
+                tenant, provider, scope.model, scope.embedding_model, DIMS,
+                scope.embedding_version, scope.quality_version,
+                scope.request_parameters_hash, DIMS, count,
+            ),
+        )
+    pg.execute(
+        """
+        INSERT INTO semantic_cache_entries (
+            tenant_id, provider_id, model, embedding_model,
+            embedding_dimensions, embedding_version, quality_version,
+            request_parameters_hash, canonical_prompt_hash, embedding,
+            response_ref, expires_at
+        )
+        SELECT %s, (SELECT id FROM providers WHERE name = %s), %s, %s,
+               %s, '1999-01-01', %s, %s, 'pc4-tier2-' || g,
+               ('[' || array_to_string(
+                   array(SELECT round(random()::numeric, 4)::float8
+                         FROM generate_series(1, %s)), ',') || ']')::vector,
+               'response-tier2', now() + interval '1 hour'
+          FROM generate_series(1, %s) g
+        """,
+        (
+            TENANT_A, scope.provider, scope.model, scope.embedding_model, DIMS,
+            scope.quality_version, scope.request_parameters_hash, DIMS,
+            TIER2_SELECTIVITY_ROWS,
+        ),
+    )
+    if analyze:
+        pg.execute("ANALYZE semantic_cache_entries")
+
+
+def _capture_lookup_sql(dsn: str, monkeypatch) -> _RecordingConnection:
+    """Run the real lookup() seam once against dsn with every statement
+    captured, so the exact production SQL can be EXPLAINed elsewhere."""
+    monkeypatch.setenv("TOKEN_SAVER_PG_DSN", dsn)
+    get_settings.cache_clear()
+    recorded: _RecordingConnection | None = None
+
+    def _connect():
+        nonlocal recorded
+        recorded = _RecordingConnection(psycopg.connect(dsn))
+        return recorded
+
+    monkeypatch.setattr(semantic_cache, "_connect", _connect)
+    semantic_cache.lookup(
+        _scope(), _uniform_unit("pc4-tier2-probe"), max_cosine_distance=PROVISIONAL_THRESHOLD
+    )
+    assert recorded is not None and recorded.calls, "lookup() issued no statements"
+    return recorded
+
+
+def _explain_captured_lookup(dsn: str, recorded: _RecordingConnection, ef: int) -> str:
+    """Replay lookup()'s pinned session statements in a FRESH session (the
+    shape production sees: one connection per lookup) and EXPLAIN the captured
+    lookup statement under the requested ef_search."""
+    with psycopg.connect(dsn) as pg:
+        for sql, params in recorded.calls[:-1]:
+            pg.execute(sql, params)
+        pg.execute("SELECT set_config('hnsw.ef_search', %s, true)", (str(ef),))
+        plan_rows = pg.execute(
+            "EXPLAIN " + recorded.calls[-1][0], recorded.calls[-1][1]
+        ).fetchall()
+    return "\n".join(row[0] for row in plan_rows)
+
+
+def _assert_hnsw_plan(plan: str, context: str) -> None:
+    assert "idx_semantic_cache_embedding_hnsw" in plan, (
+        f"{context}: lookup() left the HNSW index:\n" + plan
+    )
+    assert "Seq Scan on semantic_cache_entries" not in plan, (
+        f"{context}: lookup() Seq-Scans semantic_cache_entries:\n" + plan
+    )
+
+
+@pytest.fixture(scope="module")
+def tier2_dsn():
+    """Fresh pgvector database at the DBA-audit volume, ANALYZEd — the healthy
+    state every committed harness measures."""
+    from pg_test_support import drop_database
+
+    name = unique_db_name("pc_plan_gate_tier2")
+    dsn = make_response_store_database(name)
+    with psycopg.connect(dsn, autocommit=True) as pg:
+        pg.execute(
+            "INSERT INTO tenants (id, name) VALUES (%s, 'tenant-a'), (%s, 'tenant-b') "
+            "ON CONFLICT (id) DO NOTHING",
+            (TENANT_A, TENANT_B),
+        )
+        _seed_tier2_volume(pg, analyze=True)
+        count = pg.execute("SELECT count(*) FROM semantic_cache_entries").fetchone()[0]
+        assert count == TIER2_ROWS, f"tier-2 seed produced {count} rows, expected {TIER2_ROWS}"
+    yield dsn
+    drop_database(name)
+
+
+@pytest.fixture(scope="module")
+def stale_stats_dsn():
+    """Fresh pgvector database right after an 11,500-row bulk insert with
+    statistics never collected — autovacuum pinned off so the stale state is
+    deterministic and autovacuum cannot race the probe."""
+    from pg_test_support import drop_database
+
+    name = unique_db_name("pc_plan_gate_stale")
+    dsn = make_response_store_database(name)
+    with psycopg.connect(dsn, autocommit=True) as pg:
+        pg.execute(f"ALTER DATABASE {name} SET autovacuum = off")
+    with psycopg.connect(dsn, autocommit=True) as pg:
+        pg.execute(
+            "INSERT INTO tenants (id, name) VALUES (%s, 'tenant-a'), (%s, 'tenant-b') "
+            "ON CONFLICT (id) DO NOTHING",
+            (TENANT_A, TENANT_B),
+        )
+        _seed_tier2_volume(pg, analyze=False)
+        never_analyzed = pg.execute(
+            "SELECT last_analyze IS NULL AND last_autoanalyze IS NULL "
+            "FROM pg_stat_user_tables WHERE relname = 'semantic_cache_entries'"
+        ).fetchone()[0]
+        assert never_analyzed, "stale-stats fixture must hold zero statistics"
+    yield dsn
+    drop_database(name)
+
+
+def test_plan_gate_holds_at_dba_audit_volume_across_sessions(tier2_dsn, monkeypatch):
+    """AC-PC4 extension: at the 11,500-row DBA-audit volume with the
+    production scope mix, the lookup plan must be served by the HNSW index in
+    EVERY fresh session, at the production default ef_search and at the
+    ratified-region boundary ef=300.  The DBA measured the planner flipping
+    between HNSW and a ~104-110 ms scope/expiry scan at this volume; a
+    single-session EXPLAIN cannot pin a coin flip."""
+    recorded = _capture_lookup_sql(tier2_dsn, monkeypatch)
+    default_ef = get_settings().semantic_cache_hnsw_ef_search
+    for ef in (default_ef, 300):
+        plans = [
+            _explain_captured_lookup(tier2_dsn, recorded, ef=ef)
+            for _ in range(TIER2_SESSIONS)
+        ]
+        for i, plan in enumerate(plans):
+            _assert_hnsw_plan(
+                plan,
+                f"fresh session {i + 1}/{TIER2_SESSIONS} at ef_search={ef}, "
+                f"{TIER2_ROWS} rows",
+            )
+
+
+@pytest.mark.xfail(
+    reason=(
+        "t_b5ccefc3: with stale statistics (no ANALYZE after an 11,500-row bulk "
+        "insert, autovacuum off) the planner leaves the HNSW index for the "
+        "scope-index scan path at EVERY ef_search including the production "
+        "default — measured 3/3 sessions per ef in the QA probe.  Engine-side "
+        "guard owned by the application-developer card spawned from t_b5ccefc3 "
+        "(partial index on unexpired entries / expires_at estimation / plan "
+        "pin — their call).  When the guard lands, remove this marker and "
+        "hard-require the assertion; if the fix instead guarantees the scan "
+        "path is latency-bounded rather than HNSW-shaped, replace the "
+        "assertion with that guarantee."
+    ),
+    strict=False,
+)
+def test_plan_gate_survives_stale_statistics_at_dba_volume(stale_stats_dsn, monkeypatch):
+    """The stale-statistics state — production-reachable during rapid cache
+    fill — must not fall off the HNSW index at the production default ef."""
+    recorded = _capture_lookup_sql(stale_stats_dsn, monkeypatch)
+    default_ef = get_settings().semantic_cache_hnsw_ef_search
+    plan = _explain_captured_lookup(stale_stats_dsn, recorded, ef=default_ef)
+    _assert_hnsw_plan(plan, f"stale statistics, {TIER2_ROWS} rows, ef_search={default_ef}")
