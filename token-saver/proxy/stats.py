@@ -113,6 +113,8 @@ def log_request(
     grounded_risk: str | None = None,
     envelope_shape: int | None = None,
     measurement_tag: str | None = None,
+    embedding_version: str | None = None,
+    quality_version: str | None = None,
 ) -> None:
     """Append to the request ledger.
 
@@ -147,6 +149,8 @@ def log_request(
             dose_tier=dose_tier, grounded_risk=grounded_risk,
             envelope_shape=envelope_shape,
             measurement_tag=measurement_tag,
+            embedding_version=embedding_version,
+            quality_version=quality_version,
         )
         return
     with _lock, get_conn() as conn:
@@ -184,7 +188,7 @@ def _log_postgres(
     cache_status, cache_savings, l1_tokens_stripped=0, l1_savings=0.0,
     provider=None,
     dose_tier=None, grounded_risk=None, envelope_shape=None,
-    measurement_tag=None,
+    measurement_tag=None, embedding_version=None, quality_version=None,
 ) -> None:
     import psycopg
 
@@ -204,32 +208,35 @@ def _log_postgres(
                  and any(r.name == p for r in DEFAULT_REGISTRY)),
                 None,
             )
+        version_columns = ", embedding_version, quality_version" if embedding_version is not None or quality_version is not None else ""
+        version_values = ", %s, %s" if version_columns else ""
+        values = (
+            provider or "legacy", model, route,
+            input_tokens_before, input_tokens_after, output_tokens,
+            str(est_cost_before), str(est_cost_after),
+            cache_status, str(cache_savings),
+            l1_tokens_stripped, str(l1_savings),
+            latency_ms, compressed, status,
+            dose_tier, grounded_risk, envelope_shape, measurement_tag,
+            *((embedding_version, quality_version) if version_columns else ()),
+        )
         conn.execute(
-            """
+            f"""
             INSERT INTO requests (tenant_id, provider_id, model, route,
                 input_tokens_before, input_tokens_after, output_tokens,
                 est_cost_before, est_cost_after, cache_status, cache_savings,
                 l1_tokens_stripped, l1_savings,
                 latency_ms, compressed, status,
-                dose_tier, grounded_risk, envelope_shape, measurement_tag)
+                dose_tier, grounded_risk, envelope_shape, measurement_tag
+                {version_columns})
             SELECT '00000000-0000-0000-0000-000000000000',
                    COALESCE((SELECT id FROM providers WHERE name = %s),
                             (SELECT id FROM providers WHERE name = 'legacy')),
                    %s, %s, %s, %s, %s, %s::numeric, %s::numeric, %s,
                    %s::numeric, %s::numeric, %s, %s::numeric, %s, %s,
-                   %s, %s, %s, %s
+                   %s, %s, %s, %s{version_values}
             """,
-            (
-                provider or "legacy", model, route,
-                input_tokens_before, input_tokens_after, output_tokens,
-                str(est_cost_before), str(est_cost_after),
-                cache_status, str(cache_savings),
-                l1_tokens_stripped, str(l1_savings),
-                latency_ms,
-                compressed, status,
-                dose_tier, grounded_risk, envelope_shape,
-                measurement_tag,
-            ),
+            values,
         )
 
 

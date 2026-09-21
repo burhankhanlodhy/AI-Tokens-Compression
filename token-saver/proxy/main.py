@@ -43,6 +43,9 @@ from .dashboard_v2 import render_shell
 from .kpis import kpis_endpoint
 from .tripwire import tripwire_endpoint
 from . import caching
+from . import semantic_cache
+from .semantic_cache import DEFAULT_TENANT_ID, SemanticLookupKind, SemanticLookupScope
+from .version import __version__
 from .providers.model import ProviderError
 from .providers.anthropic import AnthropicAdapter
 from .providers.base import error_from_status
@@ -135,6 +138,14 @@ async def lifespan(app: FastAPI) -> Iterator[None]:
     _ensure_admin_token(app)
     load_pricing()  # startup: pricing.json is THE price source (PM ruling)
     _ensure_cache_seed_rows()
+    try:
+        app.state.semantic_embedding_version = semantic_cache.derive_embedding_version()
+        app.state.semantic_quality_version = semantic_cache.derive_quality_version()
+    except ValueError:
+        # Invalid semantic configuration is a clean disabled/miss state.  Do
+        # not make an optional cache prevent the proxy from starting.
+        app.state.semantic_embedding_version = None
+        app.state.semantic_quality_version = None
     app.state.http = httpx.AsyncClient(
         base_url=s.upstream_base_url.rstrip("/"),
         timeout=s.upstream_timeout_seconds,
@@ -145,7 +156,7 @@ async def lifespan(app: FastAPI) -> Iterator[None]:
             await client.aclose()
 
 
-APP_VERSION = "1.0.1"
+APP_VERSION = __version__
 
 app = FastAPI(title="token-saver proxy", version=APP_VERSION, lifespan=lifespan)
 
@@ -332,6 +343,69 @@ def _upstream_credential(request: Request) -> str:
     if auth.lower().startswith("bearer "):
         return auth[7:]
     return request.headers.get("x-api-key", "")
+
+
+async def acquire_embedding(
+    request: Request, model: str, canonical_input: str
+) -> list[float] | None:
+    """Acquire a semantic vector through the configured upstream credential.
+
+    Embedding acquisition is deliberately best-effort.  It is never allowed
+    to turn an optimization failure into a client-visible proxy failure.
+    """
+    settings = get_settings()
+    if settings.embedding_dimensions != 1536:
+        return None
+    provider = _provider_for_model(model)
+    try:
+        payload = json.dumps(
+            {"model": settings.embedding_model, "input": canonical_input},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        if settings.provider_routing and provider:
+            adapter = ProviderRegistry().route(model)
+            if adapter is None:
+                return None
+            registry = ProviderRegistry()
+            base_url = (
+                settings.provider_base_urls.get(adapter.name)
+                or registry.base_url_for(adapter.name)
+                or settings.upstream_base_url
+            )
+            client = _get_http_for(request, base_url)
+            headers = {
+                **adapter.auth_headers(_upstream_credential(request)),
+                **{
+                    key: value
+                    for key, value in _forward_headers(request).items()
+                    if key.lower() not in {"authorization", "x-api-key"}
+                },
+            }
+            base = base_url.rstrip("/")
+            url = f"{base}/embeddings"
+            req = client.build_request("POST", url, content=payload, headers=headers)
+        else:
+            client = _get_http(request)
+            req = client.build_request(
+                "POST", "/embeddings", content=payload,
+                headers=_forward_headers(request),
+            )
+        response = await client.send(req, stream=True)
+        content = await response.aread()
+        await response.aclose()
+        if response.status_code >= 400:
+            return None
+        data = json.loads(content)
+        vector = data["data"][0]["embedding"]
+        if not isinstance(vector, list) or len(vector) != settings.embedding_dimensions:
+            return None
+        # _vector_literal performs the finite-number validation used by SQL.
+        if semantic_cache._vector_literal(vector, settings.embedding_dimensions) is None:
+            return None
+        return [float(value) for value in vector]
+    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError,
+            json.JSONDecodeError):
+        return None
 
 
 def _to_normalized(model: str, payload: bytes):
@@ -571,6 +645,96 @@ async def chat_completions(request: Request):
         logger.exception("cache lookup failed; continuing with cache_status=miss")
         cache_status = "miss"
 
+    # --- v1.1 semantic cache (exact-first, non-streaming only) ---
+    # The semantic key is the clean request, before lossy compression or
+    # response-control fields are injected.  Exact hits are terminal for cache
+    # attribution: semantic lookup must not run after an exact hit.
+    semantic_scope: SemanticLookupScope | None = None
+    semantic_embedding: list[float] | None = None
+    semantic_prompt_hash: str | None = None
+    semantic_lookup_result = None
+    if (
+        s.semantic_cache_enabled
+        and not streaming
+        and cache_status == "miss"
+    ):
+        try:
+            embedding_version = getattr(
+                request.app.state, "semantic_embedding_version", None
+            ) or semantic_cache.derive_embedding_version()
+            quality_version = getattr(
+                request.app.state, "semantic_quality_version", None
+            ) or semantic_cache.derive_quality_version()
+            if s.provider_routing and provider is None:
+                raise ValueError("semantic cache requires a routed provider")
+            if s.semantic_cache_max_cosine_distance is None:
+                raise ValueError("semantic cache threshold is not ratified")
+            effective_provider = provider if s.provider_routing else "legacy"
+            semantic_scope = SemanticLookupScope(
+                tenant_id=DEFAULT_TENANT_ID,
+                provider=effective_provider,
+                model=str(model),
+                embedding_model=s.embedding_model,
+                embedding_dimensions=s.embedding_dimensions,
+                embedding_version=embedding_version,
+                quality_version=quality_version,
+                request_parameters_hash=semantic_cache.request_parameters_hash(body),
+            )
+            semantic_prompt_hash = semantic_cache.canonical_prompt_hash(body)
+            semantic_embedding = await acquire_embedding(
+                request, str(model), semantic_cache.canonical_request(body)
+            )
+            if semantic_embedding is not None:
+                semantic_lookup_result = semantic_cache.lookup_result(
+                    semantic_scope,
+                    semantic_embedding,
+                    max_cosine_distance=s.semantic_cache_max_cosine_distance,
+                )
+                if semantic_lookup_result.kind == SemanticLookupKind.THRESHOLD_MISS:
+                    cache_status = "semantic_threshold_miss"
+                elif semantic_lookup_result.kind == SemanticLookupKind.HIT:
+                    response_body = (
+                        semantic_lookup_result.response.body
+                        if semantic_lookup_result.response is not None
+                        else None
+                    )
+                    if response_body is not None:
+                        try:
+                            cached_output = count_output(json.loads(response_body), str(model))
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            cached_output = 0
+                        _log(
+                            str(model), route, in_before, in_before, cached_output,
+                            (time.perf_counter() - started) * 1000, False, 200,
+                            cache_status="semantic_hit",
+                            cache_savings=estimate_cost(str(model), in_before, cached_output),
+                            provider=provider if s.provider_routing else "legacy",
+                            embedding_version=embedding_version,
+                            quality_version=quality_version,
+                            envelope_shape=envelope_shape,
+                        )
+                        return Response(
+                            content=response_body,
+                            status_code=200,
+                            media_type="application/json",
+                        )
+                    # Integrity failures are already cleaned lazily by the
+                    # seam; treat them as a normal miss and go upstream.
+                    semantic_lookup_result = semantic_cache.SemanticLookupResult.not_attempted()
+                elif semantic_lookup_result.kind == SemanticLookupKind.NOT_ATTEMPTED:
+                    # A DB/threshold/config failure is not an eligible lookup
+                    # miss, so do not populate a cache from that request.
+                    semantic_scope = None
+                    semantic_embedding = None
+                    semantic_prompt_hash = None
+        except Exception:  # noqa: BLE001 — semantic failures are clean misses
+            # Version/config/embedding/DB failures are clean misses.  The
+            # original request still reaches the upstream below.
+            semantic_scope = None
+            semantic_embedding = None
+            semantic_prompt_hash = None
+            semantic_lookup_result = semantic_cache.SemanticLookupResult.not_attempted()
+
     # --- Output-conciseness control (P1-1) ---
     # Precedence: per-request header (benchmark A/B arms) > config default.
     # The benchmark arms MUST be able to force baseline (off) vs treatment (on)
@@ -753,6 +917,9 @@ async def chat_completions(request: Request):
         # AC-P6f: tripwire context rides every ledger row the request writes.
         dose_tier=dose_tier_ctx, grounded_risk=grounded_risk_ctx,
         envelope_shape=envelope_shape,
+        semantic_scope=semantic_scope,
+        semantic_embedding=semantic_embedding,
+        semantic_prompt_hash=semantic_prompt_hash,
     )
 
 
@@ -804,6 +971,9 @@ async def _relay(
     dose_tier: str | None = None,
     grounded_risk: str | None = None,
     envelope_shape: int | None = None,
+    semantic_scope: SemanticLookupScope | None = None,
+    semantic_embedding: list[float] | None = None,
+    semantic_prompt_hash: str | None = None,
 ):
     """Stream or buffer the upstream response back, then log stats.
 
@@ -823,7 +993,7 @@ async def _relay(
     # (taxonomy §1; UI/UX stated rule; QA reconciliation contract).
     l1_savings = (
         estimate_cost(model, l1_tokens_stripped, 0)
-        if cache_status != "exact_hit" and l1_tokens_stripped > 0
+        if cache_status not in {"exact_hit", "semantic_hit"} and l1_tokens_stripped > 0
         else 0.0
     )
     out_headers = {
@@ -1036,6 +1206,22 @@ async def _relay(
         output_tokens = count_output(parsed, model)
     except (json.JSONDecodeError, AttributeError):
         pass  # non-JSON body (e.g. HTML error page): relay raw, 0 tokens
+    if (
+        resp.status_code == 200
+        and semantic_scope is not None
+        and semantic_embedding is not None
+        and semantic_prompt_hash is not None
+        and isinstance(reshaped, bytes)
+        and len(reshaped) <= s.semantic_cache_max_response_bytes
+    ):
+        # Store only successful non-streaming JSON responses.  The response
+        # store enforces the size and integrity constraints atomically.
+        try:
+            semantic_cache.store_response(
+                semantic_scope, semantic_prompt_hash, semantic_embedding, reshaped
+            )
+        except Exception:  # noqa: BLE001 — cache persistence never breaks relay
+            logger.exception("semantic response store failed; continuing")
     _log(model, route, in_before, in_after, output_tokens,
          latency_ms, compressed, resp.status_code,
          cache_status=cache_status,
@@ -1088,7 +1274,7 @@ def _log(model, route, in_before, in_after, output_tokens,
          latency_ms, compressed, status, cache_status="miss",
          cache_savings=0.0, l1_tokens_stripped=0, l1_savings=0.0,
          provider=None, dose_tier=None, grounded_risk=None,
-         envelope_shape=None):
+         envelope_shape=None, embedding_version=None, quality_version=None):
     global LEDGER_WRITE_FAILURES
     try:
         cost_before = estimate_cost(model, in_before, output_tokens)
@@ -1104,6 +1290,8 @@ def _log(model, route, in_before, in_after, output_tokens,
             provider=provider,
             dose_tier=dose_tier, grounded_risk=grounded_risk,
             envelope_shape=envelope_shape,
+            embedding_version=embedding_version,
+            quality_version=quality_version,
         )
         saved = in_before - in_after
         if saved > 0:

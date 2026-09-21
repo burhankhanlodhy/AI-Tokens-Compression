@@ -80,6 +80,12 @@ class Settings(BaseSettings):
     # a provider response: cache replay must preserve its bytes exactly.
     semantic_cache_max_response_bytes: int = Field(default=1_048_576, ge=1)
     embedding_model: str = "text-embedding-3-small"
+    # Semantic embedding namespace.  The dimension is fixed by the pgvector
+    # migration; an absent threshold deliberately fails closed until AC-PC4
+    # ratifies a deployment value.
+    embedding_relay: str = "openai"
+    embedding_dimensions: int = Field(default=1536, ge=1)
+    semantic_cache_max_cosine_distance: float | None = Field(default=None, ge=0.0, le=2.0)
 
     # --- B2: L1 lossless structural cleanup (Phase B) ---
     # Pure deterministic transform (proxy/l1_clean.py, frozen taxonomy

@@ -22,6 +22,8 @@ services:
       # AC-PC2 response store: apply after PC1 so the entry FK has its target
       # tables and the writer can pair response_ref atomically on fresh volumes.
       - ./migrations/20260919_pc2_semantic_responses.sql:/docker-entrypoint-initdb.d/30-pc2-semantic-responses.sql:ro
+      # v1.1 ledger namespace columns used to attribute semantic-hit rows.
+      - ./migrations/20260920_pc5_request_versions.sql:/docker-entrypoint-initdb.d/35-pc5-request-versions.sql:ro
       # The canonical base schema already contains the final four-value cache
       # taxonomy.  Mount the strict existing-volume migration outside initdb and
       # run its fresh-volume bridge below; legacy volumes use the same SQL file.

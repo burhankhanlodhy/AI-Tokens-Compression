@@ -41,6 +41,9 @@ PGVECTOR_MIGRATION = (
 PC2_MIGRATION = (
     Path(__file__).resolve().parents[2] / "token-saver/migrations/20260919_pc2_semantic_responses.sql"
 ).read_text()
+PC5_MIGRATION = (
+    Path(__file__).resolve().parents[2] / "token-saver/migrations/20260920_pc5_request_versions.sql"
+).read_text()
 DEFAULT_TENANT = "00000000-0000-0000-0000-000000000000"
 TENANT_A = "11111111-1111-1111-1111-111111111111"
 TENANT_B = "22222222-2222-2222-2222-222222222222"
@@ -84,6 +87,7 @@ def make_pgvector_database(name: str) -> str:
     dsn = make_database(name)
     with psycopg.connect(dsn, autocommit=True) as pg:
         pg.execute(PGVECTOR_MIGRATION)
+        pg.execute(PC5_MIGRATION)
     return dsn
 
 

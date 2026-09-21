@@ -16,6 +16,7 @@ from typing import Any
 import psycopg
 from fastapi.responses import JSONResponse
 
+from .config import get_settings
 from .db import get_pg_dsn
 
 BUCKETS = {"minute": "minute", "hour": "hour", "day": "day"}
@@ -98,6 +99,67 @@ def _fetch_kpis(
             "errors": int(errors),
             "error_rate_pct": round(100 * errors / n, 2) if n else 0.0,
             "avg_latency_ms": float(avg_lat),
+        }
+
+        # v1.1 semantic-cache contract.  Status counts and savings are
+        # ledger-derived; the client never reconstructs these categories.
+        cur.execute(
+            f"""
+            SELECT COUNT(*),
+                   COALESCE(SUM(CASE WHEN cache_status = 'exact_hit' THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN cache_status = 'semantic_hit' THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN cache_status = 'semantic_threshold_miss' THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN cache_status = 'miss' THEN 1 ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN cache_status = 'exact_hit' THEN cache_savings ELSE 0 END), 0),
+                   COALESCE(SUM(CASE WHEN cache_status = 'semantic_hit' THEN cache_savings ELSE 0 END), 0)
+              FROM requests WHERE TRUE {where}
+            """,
+            params,
+        )
+        total, exact_count, semantic_count, threshold_count, miss_count, exact_savings, semantic_savings = cur.fetchone()
+        total = int(total)
+        exact_count, semantic_count = int(exact_count), int(semantic_count)
+        threshold_count, miss_count = int(threshold_count), int(miss_count)
+
+        # Version namespace columns are introduced by the v1.1 migration and
+        # are absent on legacy databases.  Keep KPI reads backward compatible
+        # while returning the frozen array shape whenever they are present.
+        cur.execute(
+            """SELECT count(*) FROM information_schema.columns
+               WHERE table_name = 'requests'
+                 AND column_name IN ('embedding_version', 'quality_version')"""
+        )
+        has_version_columns = int(cur.fetchone()[0]) == 2
+        embedding_versions: list[dict[str, Any]] = []
+        quality_versions: list[dict[str, Any]] = []
+        if has_version_columns:
+            for column, target in (("embedding_version", embedding_versions), ("quality_version", quality_versions)):
+                cur.execute(
+                    f"""
+                    SELECT {column}, COUNT(*)
+                      FROM requests
+                     WHERE cache_status = 'semantic_hit'
+                       AND {column} IS NOT NULL {where}
+                     GROUP BY {column}
+                     ORDER BY COUNT(*) DESC, {column} ASC
+                    """,
+                    params,
+                )
+                target.extend({"version": row[0], "hit_count": int(row[1])} for row in cur.fetchall())
+        cache = {
+            "enabled": bool(get_settings().semantic_cache_enabled),
+            "total_requests": total,
+            "exact_hit_count": exact_count,
+            "semantic_hit_count": semantic_count,
+            "semantic_threshold_miss_count": threshold_count,
+            "miss_count": miss_count,
+            "hit_rate": round(100 * (exact_count + semantic_count) / total, 2) if total else None,
+            "semantic_hit_rate": round(100 * semantic_count / total, 2) if total else None,
+            "semantic_threshold_miss_rate": round(100 * threshold_count / total, 2) if total else None,
+            "semantic_hit_savings": float(semantic_savings),
+            "exact_hit_savings": float(exact_savings),
+            "embedding_versions": embedding_versions,
+            "quality_versions": quality_versions,
         }
 
         # ---- time-bucketed series ----
@@ -190,6 +252,7 @@ def _fetch_kpis(
     return {
         "bucket": bucket,
         "overview": overview,
+        "cache": cache,
         "series": series,
         "by_model": by_model,
         "by_provider": by_provider,

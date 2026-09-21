@@ -65,6 +65,9 @@ th { color: var(--muted); font-size: .75rem; text-transform: uppercase; }
 .badge.red { background: rgba(229,72,77,.15); color: var(--red); }
 .badge.green { background: rgba(53,194,143,.15); color: var(--green); }
 .badge.neutral { background: rgba(139,147,163,.15); color: var(--muted); }
+/* AC-PC-UI §4.3: threshold-miss pressure badge (gold) and the v1.1 semantic
+   tint — badges keep raw ledger status text (no renaming layer). */
+.badge.gold { background: rgba(217,165,63,.15); color: var(--gold); }
 /* Keys & Tenants tab (C6, keys-tenants-tab-spec.md) — shared component set. */
 .chip { display: inline-block; padding: .05rem .45rem; margin: 0 .15rem .15rem 0;
         border: 1px solid var(--border); border-radius: 999px;
