@@ -1206,19 +1206,32 @@ async def _relay(
         output_tokens = count_output(parsed, model)
     except (json.JSONDecodeError, AttributeError):
         pass  # non-JSON body (e.g. HTML error page): relay raw, 0 tokens
+    client_body: bytes | None = None
+    rendered_response: JSONResponse | None = None
+    if reshaped_obj is not None:
+        # Render once: these are the exact bytes visible to the storing client
+        # and the only bytes allowed into the semantic response store.  Parsing
+        # and later rendering twice would let JSON formatting drift between a
+        # miss response and its replay.
+        rendered_response = JSONResponse(
+            content=reshaped_obj,
+            status_code=resp.status_code,
+            headers={k: v for k, v in out_headers.items() if k.lower() != "content-length"},
+        )
+        client_body = bytes(rendered_response.body)
     if (
         resp.status_code == 200
         and semantic_scope is not None
         and semantic_embedding is not None
         and semantic_prompt_hash is not None
-        and isinstance(reshaped, bytes)
-        and len(reshaped) <= s.semantic_cache_max_response_bytes
+        and client_body is not None
+        and len(client_body) <= s.semantic_cache_max_response_bytes
     ):
         # Store only successful non-streaming JSON responses.  The response
         # store enforces the size and integrity constraints atomically.
         try:
             semantic_cache.store_response(
-                semantic_scope, semantic_prompt_hash, semantic_embedding, reshaped
+                semantic_scope, semantic_prompt_hash, semantic_embedding, client_body
             )
         except Exception:  # noqa: BLE001 — cache persistence never breaks relay
             logger.exception("semantic response store failed; continuing")
@@ -1230,9 +1243,8 @@ async def _relay(
          provider=provider,
          dose_tier=dose_tier, grounded_risk=grounded_risk,
          envelope_shape=envelope_shape)
-    if reshaped_obj is not None:
-        return JSONResponse(content=reshaped_obj, status_code=resp.status_code,
-                            headers=out_headers)
+    if rendered_response is not None:
+        return rendered_response
     # non-JSON body: pass through raw with the provider's content-type
     media = resp.headers.get("content-type", "application/octet-stream")
     return Response(content=reshaped or b"", status_code=resp.status_code,
