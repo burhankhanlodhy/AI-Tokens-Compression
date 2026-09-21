@@ -257,6 +257,15 @@ def _query_candidate(
             "SELECT set_config('plan_cache_mode', %s, true)",
             ("force_custom_plan",),
         )
+        # A scope-index scan must explicitly sort every compatible row by
+        # vector distance.  With stale table statistics that path can look
+        # falsely cheap during rapid cache fill; disable that required sort
+        # only for this lookup transaction so PostgreSQL selects the ordered
+        # HNSW KNN index instead.  This leaves global planner policy unchanged.
+        pg.execute(
+            "SELECT set_config('enable_sort', %s, true)",
+            ("off",),
+        )
         row = pg.execute(
             """
             SELECT id, response_ref, embedding <=> %s::vector AS cosine_distance

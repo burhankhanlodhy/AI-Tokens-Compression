@@ -65,6 +65,17 @@ def test_semantic_cache_is_disabled_by_default(monkeypatch):
         get_settings.cache_clear()
 
 
+def test_hnsw_ef_search_1000_remains_a_valid_deployment_value(monkeypatch):
+    """The stale-statistics guard is planner-local, not a config cap: 1000
+    remains a supported setting for deployments that intentionally use it."""
+    monkeypatch.setenv("SEMANTIC_CACHE_HNSW_EF_SEARCH", "1000")
+    get_settings.cache_clear()
+    try:
+        assert get_settings().semantic_cache_hnsw_ef_search == 1000
+    finally:
+        get_settings.cache_clear()
+
+
 def test_lookup_does_not_contact_postgres_when_flag_is_off(monkeypatch):
     monkeypatch.setenv("SEMANTIC_CACHE_ENABLED", "false")
     get_settings.cache_clear()
@@ -131,8 +142,8 @@ def test_lookup_binds_every_tenant_provider_model_and_parameter_filter(monkeypat
     assert hit == semantic_cache.SemanticCacheHit(
         entry_id=42, response_ref="response-v7", cosine_distance=0.08
     )
-    assert len(conn.calls) == 3
-    sql, params = conn.calls[2]
+    assert len(conn.calls) == 4
+    sql, params = conn.calls[3]
     normalized = " ".join(sql.split())
     for required in (
         "tenant_id = %s",
@@ -162,8 +173,15 @@ def test_lookup_binds_every_tenant_provider_model_and_parameter_filter(monkeypat
     )
 
 
-def test_lookup_pins_hnsw_and_custom_plan_for_its_transaction(monkeypatch):
-    """AC-PC3: every lookup must defeat the default/generic Seq Scan plan."""
+def test_lookup_pins_hnsw_custom_plan_and_ordered_vector_plan(monkeypatch):
+    """Every lookup must make the vector KNN order cheaper than a filtered
+    scope-index scan followed by a distance sort.
+
+    Stale table statistics can make the latter plan look deceptively cheap at
+    production volume.  Disabling its required explicit sort in this lookup
+    transaction keeps the HNSW KNN path eligible without changing global DB
+    planner policy.
+    """
     monkeypatch.setenv("SEMANTIC_CACHE_ENABLED", "true")
     monkeypatch.setenv("SEMANTIC_CACHE_HNSW_EF_SEARCH", "100")
     get_settings.cache_clear()
@@ -180,6 +198,9 @@ def test_lookup_pins_hnsw_and_custom_plan_for_its_transaction(monkeypatch):
     )
     assert conn.calls[1] == (
         "SELECT set_config('plan_cache_mode', %s, true)", ("force_custom_plan",)
+    )
+    assert conn.calls[2] == (
+        "SELECT set_config('enable_sort', %s, true)", ("off",)
     )
 
 

@@ -859,8 +859,10 @@ def stale_stats_dsn():
     name = unique_db_name("pc_plan_gate_stale")
     dsn = make_response_store_database(name)
     with psycopg.connect(dsn, autocommit=True) as pg:
-        pg.execute(f"ALTER DATABASE {name} SET autovacuum = off")
-    with psycopg.connect(dsn, autocommit=True) as pg:
+        # ``autovacuum`` is postmaster-context on PostgreSQL 16 and cannot be
+        # changed with ALTER DATABASE.  Disable it on the isolated table so
+        # this fixture genuinely holds the intended stale-statistics state.
+        pg.execute("ALTER TABLE semantic_cache_entries SET (autovacuum_enabled = false)")
         pg.execute(
             "INSERT INTO tenants (id, name) VALUES (%s, 'tenant-a'), (%s, 'tenant-b') "
             "ON CONFLICT (id) DO NOTHING",
@@ -898,21 +900,6 @@ def test_plan_gate_holds_at_dba_audit_volume_across_sessions(tier2_dsn, monkeypa
             )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "t_b5ccefc3: with stale statistics (no ANALYZE after an 11,500-row bulk "
-        "insert, autovacuum off) the planner leaves the HNSW index for the "
-        "scope-index scan path at EVERY ef_search including the production "
-        "default — measured 3/3 sessions per ef in the QA probe.  Engine-side "
-        "guard owned by the application-developer card spawned from t_b5ccefc3 "
-        "(partial index on unexpired entries / expires_at estimation / plan "
-        "pin — their call).  When the guard lands, remove this marker and "
-        "hard-require the assertion; if the fix instead guarantees the scan "
-        "path is latency-bounded rather than HNSW-shaped, replace the "
-        "assertion with that guarantee."
-    ),
-    strict=False,
-)
 def test_plan_gate_survives_stale_statistics_at_dba_volume(stale_stats_dsn, monkeypatch):
     """The stale-statistics state — production-reachable during rapid cache
     fill — must not fall off the HNSW index at the production default ef."""
