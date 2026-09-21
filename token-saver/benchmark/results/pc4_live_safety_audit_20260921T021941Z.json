@@ -1,0 +1,84 @@
+{
+  "status": "authoritative_live_safety_audit",
+  "performed_at": "2026-09-21T02:19:41Z",
+  "scope": "Read-only audit of live token_saver plus disposable dump/restore; calibration used a separate database and did not write live tables.",
+  "live_deployment": {
+    "postgres_image": "pgvector/pgvector:0.8.6-pg16-bookworm",
+    "postgres_server": "PostgreSQL 16.15 (Debian 16.15-1.pgdg12+2)",
+    "vector_extension": "0.8.6",
+    "semantic_cache_enabled": false
+  },
+  "rollback_artifact": {
+    "format": "pg_dump custom",
+    "path": "/tmp/t3994978d_token_saver_20260921T021941Z.dump",
+    "sha256": "3e2e34fac60a1ad9b06e3f06b188c8aada676bb6be437df2cf3216550e8dd216",
+    "bytes": 172673,
+    "retained": true
+  },
+  "dump_restore": {
+    "restore_database": "dba_verify_restore_3994978d",
+    "restore_database_dropped_after_verification": true,
+    "source": {
+      "requests": 5875,
+      "input_tokens_before": 1941640,
+      "input_tokens_after": 1652230,
+      "output_tokens": 3413598,
+      "est_cost_before": "9.13040365",
+      "est_cost_after": "9.04358065",
+      "cache_savings": "0.00000000",
+      "semantic_cache_entries": 0,
+      "semantic_cache_responses": 0
+    },
+    "restored": {
+      "requests": 5875,
+      "input_tokens_before": 1941640,
+      "input_tokens_after": 1652230,
+      "output_tokens": 3413598,
+      "est_cost_before": "9.13040365",
+      "est_cost_after": "9.04358065",
+      "cache_savings": "0.00000000",
+      "semantic_cache_entries": 0,
+      "semantic_cache_responses": 0
+    },
+    "independent_count_and_sum_reconciliation": true,
+    "restored_semantic_entry_index_count": 5,
+    "restored_vector_extension": "0.8.6"
+  },
+  "migration_application": {
+    "database": "dba_verify_pc4_real_219",
+    "base_schema": "postgres-schema-v2.sql",
+    "migrations": [
+      "token-saver/migrations/20260918_pc1_pgvector.sql",
+      "token-saver/migrations/20260919_pc2_semantic_responses.sql"
+    ],
+    "applied_successfully": true,
+    "scratch_database_dropped_after_run": true,
+    "vector_extension": "0.8.6",
+    "semantic_cache_entry_index_count": 5
+  },
+  "live_before_after": {
+    "before": {
+      "requests": 5875,
+      "input_tokens_before": 1941640,
+      "input_tokens_after": 1652230,
+      "output_tokens": 3413598,
+      "est_cost_before": "9.13040365",
+      "est_cost_after": "9.04358065",
+      "cache_savings": "0.00000000",
+      "semantic_cache_entries": 0,
+      "semantic_cache_responses": 0
+    },
+    "after": {
+      "requests": 5875,
+      "input_tokens_before": 1941640,
+      "input_tokens_after": 1652230,
+      "output_tokens": 3413598,
+      "est_cost_before": "9.13040365",
+      "est_cost_after": "9.04358065",
+      "cache_savings": "0.00000000",
+      "semantic_cache_entries": 0,
+      "semantic_cache_responses": 0
+    },
+    "unchanged": true
+  }
+}
