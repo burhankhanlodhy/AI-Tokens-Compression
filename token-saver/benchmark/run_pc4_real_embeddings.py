@@ -93,27 +93,32 @@ def corpus_checksum(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def embedding_request(base_url: str, api_key: str, prompts: list[str]) -> tuple[str, list[list[float]]]:
+def embedding_request(base_url: str, api_key: str, prompts: list[str], batch_size: int = 994) -> tuple[str, list[list[float]]]:
     endpoint = base_url.rstrip("/") + "/embeddings"
-    payload = json.dumps({"model": MODEL, "input": prompts}).encode("utf-8")
-    request = urllib.request.Request(
-        endpoint,
-        data=payload,
-        headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=120) as response:
-            raw = json.loads(response.read())
-    except Exception as exc:  # pragma: no cover - network-specific
-        raise RunnerError(f"embedding request failed: {type(exc).__name__}: {exc}") from exc
-    data = raw.get("data")
-    if not isinstance(data, list) or len(data) != len(prompts):
-        raise RunnerError(f"embedding response count mismatch: expected {len(prompts)}")
-    ordered = sorted(data, key=lambda item: int(item["index"]))
-    vectors = [list(map(float, item["embedding"])) for item in ordered]
+    vectors: list[list[float]] = []
+    model_returned = ""
+    for start in range(0, len(prompts), batch_size):
+        chunk = prompts[start:start + batch_size]
+        payload = json.dumps({"model": MODEL, "input": chunk}).encode("utf-8")
+        request = urllib.request.Request(
+            endpoint,
+            data=payload,
+            headers={"Authorization": "Bearer " + api_key, "Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=300) as response:
+                raw = json.loads(response.read())
+        except Exception as exc:  # pragma: no cover - network-specific
+            raise RunnerError(f"embedding request failed: {type(exc).__name__}: {exc}") from exc
+        data = raw.get("data")
+        if not isinstance(data, list) or len(data) != len(chunk):
+            raise RunnerError(f"embedding response count mismatch: expected {len(chunk)}")
+        ordered = sorted(data, key=lambda item: int(item["index"]))
+        vectors.extend(list(map(float, item["embedding"])) for item in ordered)
+        model_returned = str(raw.get("model", MODEL))
     if any(len(v) != DIMS for v in vectors):
         raise RunnerError("embedding response did not use 1536 dimensions")
-    return str(raw.get("model", MODEL)), vectors
+    return model_returned, vectors
 
 
 def db_snapshot(dsn: str) -> dict[str, Any]:
@@ -156,7 +161,26 @@ def apply_schemas(pg: psycopg.Connection, repo_root: Path) -> dict[str, Any]:
     indexes = pg.execute(
         "SELECT indexname FROM pg_indexes WHERE tablename = 'semantic_cache_entries' ORDER BY indexname"
     ).fetchall()
-    return {"vector_extension_version": str(version), "semantic_cache_entry_indexes": [r[0] for r in indexes]}
+    return {
+        "vector_extension_version": str(version),
+        "semantic_cache_entry_indexes": [r[0] for r in indexes],
+    }
+
+
+def rebuild_hnsw_index(dsn: str, ef_construction: int) -> dict[str, Any]:
+    """Calibration-only control, run AFTER seeding (bulk build, like the
+    measured index-quality control). 0 (default) keeps the migration's index
+    untouched."""
+    if not 1 <= ef_construction <= 1000:
+        raise RunnerError("hnsw_ef_construction must be within 1..1000")
+    started = time.perf_counter()
+    with psycopg.connect(dsn, autocommit=True) as pg:
+        pg.execute("DROP INDEX IF EXISTS idx_semantic_cache_embedding_hnsw")
+        pg.execute(
+            f"CREATE INDEX idx_semantic_cache_embedding_hnsw ON semantic_cache_entries "
+            f"USING hnsw (embedding vector_cosine_ops) WITH (ef_construction={int(ef_construction)})"
+        )
+    return {"ef_construction": int(ef_construction), "m": 16, "build_seconds": round(time.perf_counter() - started, 1)}
 
 
 def create_scratch(admin_dsn: str, repo_root: Path) -> tuple[str, str, dict[str, Any]]:
@@ -196,6 +220,7 @@ def seed_database(
     vectors: dict[str, list[float]],
     cases: list[dict[str, Any]],
     target_rows: int,
+    pool_vectors: list[list[float]] | None = None,
 ) -> dict[str, Any]:
     if target_rows < 1000:
         raise RunnerError("traffic-shaped target volume must be at least 1000 rows")
@@ -225,6 +250,19 @@ def seed_database(
                 "INSERT INTO calibration_vectors (slot, embedding) VALUES (%s, %s::vector)",
                 [(i + 1, vector_literal(v)) for i, v in enumerate(stored_vectors)],
             )
+        # Distinct-filler mode: volume rows draw from a pool of distinct real
+        # prompts instead of repeating the corpus vectors.  Same scope
+        # structure, same SQL shape; avoids degenerating the HNSW graph with
+        # thousands of exact copies of 48 vectors.
+        if pool_vectors:
+            pg.execute("CREATE TEMP TABLE pool_vectors_table (slot integer PRIMARY KEY, embedding vector(1536) NOT NULL)")
+            with pg.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO pool_vectors_table (slot, embedding) VALUES (%s, %s::vector)",
+                    [(i + 1, vector_literal(v)) for i, v in enumerate(pool_vectors)],
+                )
+        filler_table = "pool_vectors_table" if pool_vectors else "calibration_vectors"
+        filler_slots = len(pool_vectors) if pool_vectors else len(stored_vectors)
         provider_ids = {
             row[0]: int(row[1])
             for row in pg.execute("SELECT name, id FROM providers").fetchall()
@@ -254,7 +292,7 @@ def seed_database(
         # real prompts; repeating them gives the planner the intended volume
         # without manufacturing a synthetic embedding distribution.
         pg.execute(
-            """
+            f"""
             INSERT INTO semantic_cache_entries
               (tenant_id, provider_id, model, embedding_model, embedding_dimensions,
                embedding_version, quality_version, request_parameters_hash,
@@ -262,19 +300,19 @@ def seed_database(
             SELECT %s::uuid, %s, %s, %s, %s, %s, %s, %s,
                    'traffic-target-' || g, s.embedding, %s, now()+interval '1 hour'
               FROM generate_series(1, %s) AS x(g)
-              JOIN calibration_vectors s ON s.slot = ((x.g - 1) %% %s) + 1
+              JOIN {filler_table} s ON s.slot = ((x.g - 1) %% %s) + 1
             """,
             (
                 TENANT_A, provider_ids["openai"], CASE_SCOPE[0], MODEL, DIMS,
                 EMBEDDING_VERSION, QUALITY_VERSION, PARAMETERS_HASH,
-                "calibration-response-a", filler_target, len(stored_vectors),
+                "calibration-response-a", filler_target, filler_slots,
             ),
         )
         # Selectivity populations: a different tenant, provider/model, and
         # version/parameter scope all carry real vectors but cannot satisfy the
         # target lookup's mandatory filters.
         pg.execute(
-            """
+            f"""
             INSERT INTO semantic_cache_entries
               (tenant_id, provider_id, model, embedding_model, embedding_dimensions,
                embedding_version, quality_version, request_parameters_hash,
@@ -282,25 +320,25 @@ def seed_database(
             SELECT %s::uuid, %s, %s, %s, %s, %s, %s, %s,
                    'traffic-tenant-b-' || g, s.embedding, %s, now()+interval '1 hour'
               FROM generate_series(1, 500) AS x(g)
-              JOIN calibration_vectors s ON s.slot = ((x.g - 1) %% %s) + 1
+              JOIN {filler_table} s ON s.slot = ((x.g - 1) %% %s) + 1
             UNION ALL
             SELECT %s::uuid, %s, 'other/model', %s, %s, %s, %s, %s,
                    'traffic-model-' || g, s.embedding, %s, now()+interval '1 hour'
               FROM generate_series(1, 500) AS x(g)
-              JOIN calibration_vectors s ON s.slot = ((x.g - 1) %% %s) + 1
+              JOIN {filler_table} s ON s.slot = ((x.g - 1) %% %s) + 1
             UNION ALL
             SELECT %s::uuid, %s, %s, %s, %s, 'old:embedding@1536', 'old-quality', 'old-params',
                    'traffic-mismatch-' || g, s.embedding, %s, now()+interval '1 hour'
               FROM generate_series(1, 500) AS x(g)
-              JOIN calibration_vectors s ON s.slot = ((x.g - 1) %% %s) + 1
+              JOIN {filler_table} s ON s.slot = ((x.g - 1) %% %s) + 1
             """,
             (
                 TENANT_B, provider_ids["openai"], CASE_SCOPE[0], MODEL, DIMS,
-                EMBEDDING_VERSION, QUALITY_VERSION, PARAMETERS_HASH, "calibration-response-b", len(stored_vectors),
+                EMBEDDING_VERSION, QUALITY_VERSION, PARAMETERS_HASH, "calibration-response-b", filler_slots,
                 TENANT_A, provider_ids["openrouter"], MODEL, DIMS,
-                EMBEDDING_VERSION, QUALITY_VERSION, PARAMETERS_HASH, "calibration-response-a", len(stored_vectors),
+                EMBEDDING_VERSION, QUALITY_VERSION, PARAMETERS_HASH, "calibration-response-a", filler_slots,
                 TENANT_A, provider_ids["openai"], CASE_SCOPE[0], MODEL, DIMS,
-                "calibration-response-a", len(stored_vectors),
+                "calibration-response-a", filler_slots,
             ),
         )
         pg.execute("ANALYZE semantic_cache_entries")
@@ -558,6 +596,15 @@ def main() -> int:
     parser.add_argument("--target-rows", type=int, default=10000)
     parser.add_argument("--repetitions", type=int, default=5)
     parser.add_argument("--warmups", type=int, default=1)
+    parser.add_argument(
+        "--filler-pool", type=Path, default=None,
+        help="Optional distinct-prompt filler pool (one prompt per line). When set, "
+             "volume rows draw from pool prompts embedded by the same pinned model "
+             "instead of repeating corpus vectors.")
+    parser.add_argument(
+        "--hnsw-ef-construction", type=int, default=0,
+        help="Calibration-only control: rebuild the HNSW index with this ef_construction "
+             "after seeding (bulk build). 0 (default) keeps the migration's index.")
     args = parser.parse_args()
     repo_root = (args.repo_root or Path(__file__).resolve().parents[2]).resolve()
     corpus_path = (args.corpus or repo_root / "token-saver/benchmark/fixtures/pc4_real_prompt_pairs.json").resolve()
@@ -572,16 +619,33 @@ def main() -> int:
         for key in ("stored_prompt", "query_prompt"):
             if case[key] not in prompts:
                 prompts.append(case[key])
+    pool_prompts: list[str] = []
+    if args.filler_pool:
+        pool_prompts = [
+            line.strip() for line in args.filler_pool.read_text(encoding="utf-8").splitlines() if line.strip()
+        ]
+        if len(pool_prompts) != len(set(pool_prompts)):
+            raise RunnerError("filler pool contains duplicate prompts")
+        overlap = set(pool_prompts) & set(prompts)
+        if overlap:
+            raise RunnerError(f"filler pool overlaps corpus prompts: {sorted(overlap)[:3]}")
     live_before = db_snapshot(args.live_dsn)
     started = datetime.now(timezone.utc).isoformat()
     model_returned, embedded = embedding_request(args.embedding_base_url, args.embedding_api_key, prompts)
     vectors = dict(zip(prompts, embedded))
+    pool_vectors: list[list[float]] = []
+    if pool_prompts:
+        _, pool_embedded = embedding_request(args.embedding_base_url, args.embedding_api_key, pool_prompts)
+        pool_vectors = pool_embedded
     db_name = ""
     scratch_dsn = ""
     schema_evidence: dict[str, Any] = {}
     try:
         db_name, scratch_dsn, schema_evidence = create_scratch(args.admin_dsn, repo_root)
-        seed_evidence = seed_database(scratch_dsn, vectors, cases, args.target_rows)
+        seed_evidence = seed_database(scratch_dsn, vectors, cases, args.target_rows, pool_vectors or None)
+        hnsw_rebuild_evidence = (
+            rebuild_hnsw_index(scratch_dsn, args.hnsw_ef_construction) if args.hnsw_ef_construction else None
+        )
         results, probes = calibrate(scratch_dsn, cases, vectors, args.repetitions, args.warmups)
         selected, decision = choose_point(results)
         plan_point = selected or min(results, key=lambda r: (r["false_hit_rate_pct"], r["positive_false_miss_rate_pct"], r["latency_ms"]["p95"]))
@@ -603,9 +667,9 @@ def main() -> int:
             "plan_evidence_point": {"ef_search": plan_point["ef_search"], "threshold": plan_point["threshold"], "case_id": plan_case["id"]},
             "correctness_latency_bar": {"false_hit_rate_pct": 0.0, "exact_ground_truth_negative_hits": 0, "positive_exact_coverage_pct_min": 90.0, "positive_recall_pct_min": 95.0, "p95_latency_ms_max": 100.0},
             "embedding": {"requested_model": MODEL, "response_model": model_returned, "dimensions": DIMS, "embedding_version": EMBEDDING_VERSION, "provider_endpoint": args.embedding_base_url, "prompt_count": len(prompts)},
-            "corpus": {"path": str(corpus_path.relative_to(repo_root)), "sha256": corpus_checksum(corpus_path), "case_count": len(cases), "positive_cases": sum(c["class"] == "positive" for c in cases), "hard_negative_cases": sum(c["class"] == "hard_negative" for c in cases)},
-            "runtime": {"python": sys.version.split()[0], "hostname": os.uname().nodename, "kernel": os.uname().release, "machine": os.uname().machine, "target_rows": args.target_rows, "repetitions": args.repetitions, "warmups_per_case": args.warmups, "thresholds": THRESHOLDS, "ef_search_values": EF_SEARCH_VALUES},
-            "database": {"scratch_database": db_name, "server_version": server_version, "extension_and_schema": schema_evidence, "seed": seed_evidence, "post_seed_entry_count": table_count, "post_seed_response_count": response_count, "indexes": indexes, "plan": plan},
+            "corpus": {"path": str(corpus_path.relative_to(repo_root)), "sha256": corpus_checksum(corpus_path), "case_count": len(cases), "positive_cases": sum(c["class"] == "positive" for c in cases), "hard_negative_cases": sum(c["class"] == "hard_negative" for c in cases), "filler_mode": "distinct_pool" if pool_vectors else "duplicate_corpus", "filler_pool": ({"path": str(args.filler_pool.relative_to(repo_root)), "sha256": corpus_checksum(args.filler_pool), "prompt_count": len(pool_prompts)} if pool_prompts else None)},
+            "runtime": {"python": sys.version.split()[0], "hostname": os.uname().nodename, "kernel": os.uname().release, "machine": os.uname().machine, "target_rows": args.target_rows, "repetitions": args.repetitions, "warmups_per_case": args.warmups, "thresholds": THRESHOLDS, "ef_search_values": EF_SEARCH_VALUES, "hnsw_ef_construction": args.hnsw_ef_construction},
+            "database": {"scratch_database": db_name, "server_version": server_version, "extension_and_schema": schema_evidence, "hnsw_index_rebuilt": hnsw_rebuild_evidence, "seed": seed_evidence, "post_seed_entry_count": table_count, "post_seed_response_count": response_count, "indexes": indexes, "plan": plan},
             "grid": results,
             "probes": {"cross_tenant_hit_count": sum(1 for p in probes["cross_tenant"] if p["leak"]), "cross_tenant_probe_count": len(probes["cross_tenant"]), "cross_tenant": probes["cross_tenant"], "mismatch_return_count": sum(1 for p in probes["mismatches"] if p["returned"]), "mismatch_probe_count": len(probes["mismatches"]), "mismatches": probes["mismatches"], "mandatory_filter_omission_refused_pre_query": application_guard_probe()},
             "live_safety_audit": {"before": live_before, "after": live_after, "unchanged": live_before == live_after, "semantic_cache_enabled": os.environ.get("SEMANTIC_CACHE_ENABLED", "false").lower() == "true"},
