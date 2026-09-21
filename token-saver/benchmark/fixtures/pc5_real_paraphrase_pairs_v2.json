@@ -1,0 +1,296 @@
+{
+  "schema_version": 1,
+  "purpose": "Traffic-shaped semantic-cache calibration corpus of genuine paraphrase pairs and same-topic intent-shifted hard negatives. Positives are natural user rewordings with equivalent intent; hard negatives share the stored prompt but shift the user's intent, so serving the cached response would be wrong.",
+  "embedding_model": "text-embedding-3-small",
+  "embedding_dimensions": 1536,
+  "cases": [
+    {
+      "id": "pos-01",
+      "class": "positive",
+      "stored_prompt": "How do I change my profile picture?",
+      "query_prompt": "How can I change my profile picture on my account?"
+    },
+    {
+      "id": "neg-01",
+      "class": "hard_negative",
+      "stored_prompt": "How do I change my profile picture?",
+      "query_prompt": "Why is my profile picture not updating after I upload it?"
+    },
+    {
+      "id": "pos-02",
+      "class": "positive",
+      "stored_prompt": "How do I enable two-factor authentication?",
+      "query_prompt": "How can I enable two-factor authentication for my account?"
+    },
+    {
+      "id": "neg-02",
+      "class": "hard_negative",
+      "stored_prompt": "How do I enable two-factor authentication?",
+      "query_prompt": "I lost my two-factor device and cannot receive codes."
+    },
+    {
+      "id": "pos-03",
+      "class": "positive",
+      "stored_prompt": "How do I cancel my subscription?",
+      "query_prompt": "How can I cancel my subscription plan?"
+    },
+    {
+      "id": "neg-03",
+      "class": "hard_negative",
+      "stored_prompt": "How do I cancel my subscription?",
+      "query_prompt": "Can I pause my subscription instead of cancelling it?"
+    },
+    {
+      "id": "pos-04",
+      "class": "positive",
+      "stored_prompt": "How do I download my invoices?",
+      "query_prompt": "How can I download copies of my invoices?"
+    },
+    {
+      "id": "neg-04",
+      "class": "hard_negative",
+      "stored_prompt": "How do I download my invoices?",
+      "query_prompt": "The invoice amount on my card statement is wrong."
+    },
+    {
+      "id": "pos-05",
+      "class": "positive",
+      "stored_prompt": "How do I reset my password?",
+      "query_prompt": "How can I reset the password for my account?"
+    },
+    {
+      "id": "neg-05",
+      "class": "hard_negative",
+      "stored_prompt": "How do I reset my password?",
+      "query_prompt": "How do I change my password while I am still signed in?"
+    },
+    {
+      "id": "pos-06",
+      "class": "positive",
+      "stored_prompt": "How do I share a file with my team?",
+      "query_prompt": "How can I share a file with the members of my team?"
+    },
+    {
+      "id": "neg-06",
+      "class": "hard_negative",
+      "stored_prompt": "How do I share a file with my team?",
+      "query_prompt": "How do I stop sharing a file that was already shared?"
+    },
+    {
+      "id": "pos-07",
+      "class": "positive",
+      "stored_prompt": "How do I upgrade my plan?",
+      "query_prompt": "How can I upgrade to a higher plan?"
+    },
+    {
+      "id": "neg-07",
+      "class": "hard_negative",
+      "stored_prompt": "How do I upgrade my plan?",
+      "query_prompt": "Will I be charged immediately after upgrading my plan?"
+    },
+    {
+      "id": "pos-08",
+      "class": "positive",
+      "stored_prompt": "How do I contact customer support?",
+      "query_prompt": "How can I contact your customer support team?"
+    },
+    {
+      "id": "neg-08",
+      "class": "hard_negative",
+      "stored_prompt": "How do I contact customer support?",
+      "query_prompt": "What are your support team's working hours?"
+    },
+    {
+      "id": "pos-09",
+      "class": "positive",
+      "stored_prompt": "How do I delete my account?",
+      "query_prompt": "How can I delete my account permanently?"
+    },
+    {
+      "id": "neg-09",
+      "class": "hard_negative",
+      "stored_prompt": "How do I delete my account?",
+      "query_prompt": "Can I temporarily deactivate my account and come back later?"
+    },
+    {
+      "id": "pos-10",
+      "class": "positive",
+      "stored_prompt": "How do I track my order?",
+      "query_prompt": "How can I track the status of my order?"
+    },
+    {
+      "id": "neg-10",
+      "class": "hard_negative",
+      "stored_prompt": "How do I track my order?",
+      "query_prompt": "How do I change the shipping address for my order?"
+    },
+    {
+      "id": "pos-11",
+      "class": "positive",
+      "stored_prompt": "How do I request a refund?",
+      "query_prompt": "How can I request a refund for my purchase?"
+    },
+    {
+      "id": "neg-11",
+      "class": "hard_negative",
+      "stored_prompt": "How do I request a refund?",
+      "query_prompt": "How long does a refund take to appear on my card?"
+    },
+    {
+      "id": "pos-12",
+      "class": "positive",
+      "stored_prompt": "How do I add a payment method?",
+      "query_prompt": "How can I add a new payment method?"
+    },
+    {
+      "id": "neg-12",
+      "class": "hard_negative",
+      "stored_prompt": "How do I add a payment method?",
+      "query_prompt": "Why was my payment declined with a card I already added?"
+    },
+    {
+      "id": "pos-13",
+      "class": "positive",
+      "stored_prompt": "How do I install the CLI tool?",
+      "query_prompt": "How can I install the CLI tool on my machine?"
+    },
+    {
+      "id": "neg-13",
+      "class": "hard_negative",
+      "stored_prompt": "How do I install the CLI tool?",
+      "query_prompt": "How do I update the CLI tool to the latest version?"
+    },
+    {
+      "id": "pos-14",
+      "class": "positive",
+      "stored_prompt": "How do I create an API key?",
+      "query_prompt": "How can I create a new API key?"
+    },
+    {
+      "id": "neg-14",
+      "class": "hard_negative",
+      "stored_prompt": "How do I create an API key?",
+      "query_prompt": "How do I revoke an API key that leaked?"
+    },
+    {
+      "id": "pos-15",
+      "class": "positive",
+      "stored_prompt": "How do I set up a webhook?",
+      "query_prompt": "How can I set up a webhook for my account?"
+    },
+    {
+      "id": "neg-15",
+      "class": "hard_negative",
+      "stored_prompt": "How do I set up a webhook?",
+      "query_prompt": "Why are my webhook deliveries failing with timeouts?"
+    },
+    {
+      "id": "pos-16",
+      "class": "positive",
+      "stored_prompt": "How do I export my data?",
+      "query_prompt": "How can I export all of my data?"
+    },
+    {
+      "id": "neg-16",
+      "class": "hard_negative",
+      "stored_prompt": "How do I export my data?",
+      "query_prompt": "What formats are supported when importing data?"
+    },
+    {
+      "id": "pos-17",
+      "class": "positive",
+      "stored_prompt": "How do I change my email address?",
+      "query_prompt": "How can I change the email address on my account?"
+    },
+    {
+      "id": "neg-17",
+      "class": "hard_negative",
+      "stored_prompt": "How do I change my email address?",
+      "query_prompt": "Why did I not receive a confirmation email after changing my address?"
+    },
+    {
+      "id": "pos-18",
+      "class": "positive",
+      "stored_prompt": "How do I invite users to my workspace?",
+      "query_prompt": "How can I invite new users to my workspace?"
+    },
+    {
+      "id": "neg-18",
+      "class": "hard_negative",
+      "stored_prompt": "How do I invite users to my workspace?",
+      "query_prompt": "How do I remove a user from my workspace?"
+    },
+    {
+      "id": "pos-19",
+      "class": "positive",
+      "stored_prompt": "What are your business hours?",
+      "query_prompt": "What are your customer service business hours?"
+    },
+    {
+      "id": "neg-19",
+      "class": "hard_negative",
+      "stored_prompt": "What are your business hours?",
+      "query_prompt": "Are you open on public holidays?"
+    },
+    {
+      "id": "pos-20",
+      "class": "positive",
+      "stored_prompt": "How do I enable dark mode?",
+      "query_prompt": "How can I enable dark mode in the app?"
+    },
+    {
+      "id": "neg-20",
+      "class": "hard_negative",
+      "stored_prompt": "How do I enable dark mode?",
+      "query_prompt": "Does dark mode save battery on my phone?"
+    },
+    {
+      "id": "pos-21",
+      "class": "positive",
+      "stored_prompt": "How do I clear my browser cache?",
+      "query_prompt": "How can I clear the cache in my browser?"
+    },
+    {
+      "id": "neg-21",
+      "class": "hard_negative",
+      "stored_prompt": "How do I clear my browser cache?",
+      "query_prompt": "Will clearing my browser cache log me out of websites?"
+    },
+    {
+      "id": "pos-22",
+      "class": "positive",
+      "stored_prompt": "How do I recover a deleted file?",
+      "query_prompt": "How can I recover a file that I deleted?"
+    },
+    {
+      "id": "neg-22",
+      "class": "hard_negative",
+      "stored_prompt": "How do I recover a deleted file?",
+      "query_prompt": "How long are deleted files kept in the trash?"
+    },
+    {
+      "id": "pos-23",
+      "class": "positive",
+      "stored_prompt": "How do I connect a custom domain?",
+      "query_prompt": "How can I connect my own custom domain?"
+    },
+    {
+      "id": "neg-23",
+      "class": "hard_negative",
+      "stored_prompt": "How do I connect a custom domain?",
+      "query_prompt": "How long does DNS propagation take after connecting a domain?"
+    },
+    {
+      "id": "pos-24",
+      "class": "positive",
+      "stored_prompt": "How do I check my remaining credits?",
+      "query_prompt": "How can I check how many credits remain on my account?"
+    },
+    {
+      "id": "neg-24",
+      "class": "hard_negative",
+      "stored_prompt": "How do I check my remaining credits?",
+      "query_prompt": "Do unused credits roll over to the next month?"
+    }
+  ]
+}
