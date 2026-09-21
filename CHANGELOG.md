@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-21
+
+### Added
+
+- **Semantic caching with pgvector** — approximate nearest-neighbor lookup
+  for semantically similar prompts using HNSW indexing (cosine distance).
+  Enabled via `SEMANTIC_CACHE_ENABLED=true` (off by default). The ratified
+  C1 operating point uses threshold=0.18 and ef_search=100.
+- **Request versioning schema** — cache entries track a `version` hash so
+  code/model/config changes can invalidate the cache without dropping the
+  table (migration `20260920_pc5_request_versions.sql`).
+- **Semantic cache dashboard** — KPIs and visualization for semantic hits,
+  query latency, and cache efficiency in the dashboard's semantic tab.
+
+### Changed
+
+- **Performance Calibration (AC-PC1 through AC-PC5 verified)**:
+  - AC-PC1: HNSW index build with ef_construction=200
+  - AC-PC2: Query plan enforcement (ordered HNSW scan, never sequential)
+  - AC-PC3: Traffic-shaped safety audit (no false positives on real prompt pairs)
+  - AC-PC4: Real-traffic calibration verified at 11,500-row scale
+  - AC-PC5: 4/27 grid cells pass frozen accuracy/latency bars; C1 (th=0.18, ef_search=100) ratified as GO
+- **CI test suite floor** — raised to 710 passing tests (includes semantic
+  cache request path, dashboard render, and vertical integration gates).
+
+### Configuration
+
+- `SEMANTIC_CACHE_ENABLED` — defaults to `false`; human-gated production enablement.
+- `SEMANTIC_CACHE_THRESHOLD` — similarity threshold (default: 0.18).
+- `SEMANTIC_CACHE_EF_SEARCH` — HNSW ef_search parameter (default: 100).
+
 ## [1.0.1] - 2026-09-20
 
 ### Fixed
@@ -84,5 +115,6 @@ token/cost savings in a Postgres ledger (SQLite remains the local fallback).
 
 ## Links
 
+[1.1.0]: https://github.com/burhankhanlodhy/AI-Tokens-Compression/compare/v1.0.1...v1.1
 [1.0.1]: https://github.com/burhankhanlodhy/AI-Tokens-Compression/releases/tag/v1.0.1
 [1.0.0]: https://github.com/burhankhanlodhy/AI-Tokens-Compression/releases/tag/v1.0.0
