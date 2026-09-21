@@ -45,7 +45,8 @@ CREATE UNIQUE INDEX idx_semantic_cache_identity
     );
 
 CREATE INDEX idx_semantic_cache_embedding_hnsw
-    ON semantic_cache_entries USING hnsw (embedding vector_cosine_ops);
+    ON semantic_cache_entries USING hnsw (embedding vector_cosine_ops)
+    WITH (m = 16, ef_construction = 200);
 
 CREATE INDEX idx_semantic_cache_scope
     ON semantic_cache_entries (
