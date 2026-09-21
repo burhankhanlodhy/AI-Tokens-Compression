@@ -108,16 +108,24 @@ def test_reads_list_tenants_and_redacted_keys_only(keys_api_env):
     }
 
 
-def test_writes_require_bearer_admin_token(keys_api_env):
+def test_every_key_write_rejects_missing_or_invalid_bearer_token(keys_api_env):
+    """Each C-2 write route fails closed before it can change a key."""
     client, _dsn = keys_api_env
-    body = {"tenant_id": DEFAULT_TENANT}
+    existing = _create(client)
+    expected_rows = client.get("/api/keys", params={"tenant_id": DEFAULT_TENANT}).json()
+    writes = (
+        ("/api/keys", {"tenant_id": DEFAULT_TENANT}),
+        (f"/api/keys/{existing['id']}/rotate", None),
+        (f"/api/keys/{existing['id']}/revoke", None),
+    )
 
-    missing = client.post("/api/keys", json=body)
-    invalid = client.post("/api/keys", json=body, headers={"Authorization": "Bearer wrong"})
+    for path, payload in writes:
+        missing = client.post(path, json=payload)
+        invalid = client.post(path, json=payload, headers={"Authorization": "Bearer wrong"})
 
-    assert missing.status_code == 401 and missing.json() == {"detail": "Unauthorized"}
-    assert invalid.status_code == 401 and invalid.json() == {"detail": "Unauthorized"}
-    assert _create(client)["key"]
+        assert missing.status_code == 401 and missing.json() == {"detail": "Unauthorized"}
+        assert invalid.status_code == 401 and invalid.json() == {"detail": "Unauthorized"}
+        assert client.get("/api/keys", params={"tenant_id": DEFAULT_TENANT}).json() == expected_rows
 
 
 def test_rotate_creates_replacement_and_stamps_old_key_rotated(keys_api_env):
