@@ -10,11 +10,17 @@ import threading
 from typing import Any
 
 from .config import get_settings
+from .tool_protocol import is_tool_protocol_message
 
 logger = logging.getLogger(__name__)
 
 _compressor: Any = None
 _lock = threading.Lock()
+
+# LLMLingua-2's bundled BERT path has a 512-token input window. Never invoke
+# it on a longer block: transformers otherwise emits a warning and may index
+# past the model's positional embeddings, producing corrupted output.
+MAX_LMLINGUA_INPUT_TOKENS = 512
 
 
 def _get_compressor() -> Any:
@@ -34,13 +40,44 @@ def _get_compressor() -> Any:
     return _compressor
 
 
+def _input_token_count(compressor: Any, text: str) -> int | None:
+    """Count tokens without truncation, or return None if unavailable."""
+    tokenizer = getattr(compressor, "tokenizer", None)
+    if tokenizer is None:
+        return None
+    encoded = tokenizer(
+        text,
+        add_special_tokens=True,
+        truncation=False,
+        return_attention_mask=False,
+    )
+    input_ids = encoded.get("input_ids") if hasattr(encoded, "get") else None
+    if input_ids is None:
+        return None
+    # A single string normally returns a flat list; tolerate a one-item batch
+    # from lightweight test doubles and alternate tokenizer implementations.
+    if input_ids and isinstance(input_ids[0], (list, tuple)):
+        input_ids = input_ids[0]
+    return len(input_ids)
+
+
 def compress_text(text: str) -> str:
-    """Compress a single string; returns original on any failure."""
+    """Compress a single string, conservatively skipping unsafe inputs."""
     s = get_settings()
     if len(text) < s.min_chars_to_compress:
         return text
     try:
-        result = _get_compressor().compress_prompt(
+        compressor = _get_compressor()
+        token_count = _input_token_count(compressor, text)
+        if token_count is not None and token_count > MAX_LMLINGUA_INPUT_TOKENS:
+            logger.warning(
+                "Skipping LLMLingua compression: input has %d tokens, "
+                "maximum is %d",
+                token_count,
+                MAX_LMLINGUA_INPUT_TOKENS,
+            )
+            return text
+        result = compressor.compress_prompt(
             [text],
             rate=s.compression_rate,
             force_tokens=list(s.force_tokens),
@@ -86,6 +123,12 @@ def compress_messages(messages: list[dict]) -> list[dict]:
     s = get_settings()
     out: list[dict] = []
     for msg in messages:
+        # Tool results and assistant tool-call envelopes are machine-readable
+        # protocol state. Keep the entire message untouched even if a future
+        # caller invokes this helper outside the request-level hard gate.
+        if is_tool_protocol_message(msg):
+            out.append(msg)
+            continue
         content = msg.get("content")
         if isinstance(content, str):
             eligible = msg.get("role") != "system" or s.compress_system_messages

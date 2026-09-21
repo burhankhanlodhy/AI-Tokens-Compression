@@ -20,8 +20,9 @@ from pg_optional_support import require_pg_dsn  # noqa: E402
 from proxy import stats
 from proxy.classifier import classify
 from proxy.config import get_settings
-from proxy.compression import has_compressible_content
+from proxy.compression import compress_messages, has_compressible_content
 from proxy.counting import count_messages, count_text, inject_conciseness
+from proxy.l1_clean import clean_messages
 
 
 # ---------- classifier ----------
@@ -65,6 +66,28 @@ def test_multimodal_code_part_detected():
     msgs = [{"role": "user", "content": [
         {"type": "text", "text": "explain this:\n" + CODE}]}]
     assert classify(msgs) == "passthrough"
+
+
+def test_compression_never_rewrites_tool_protocol_messages(monkeypatch):
+    monkeypatch.setattr("proxy.compression.compress_text", lambda text: "CORRUPTED")
+    messages = [
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"ok": true}'},
+        {"role": "assistant", "content": "planning", "tool_calls": [{
+            "id": "call_1", "type": "function",
+            "function": {"name": "lookup", "arguments": '{"city": "Paris"}'},
+        }]},
+    ]
+    assert compress_messages(messages) == messages
+
+
+def test_l1_never_rewrites_tool_protocol_messages():
+    messages = [
+        {"role": "tool", "tool_call_id": "call_1",
+         "content": '{"content":"result","score":0.9}'},
+        {"role": "assistant", "content": '{"content":"plan","score":0.9}',
+         "tool_calls": [{"id": "call_1", "function": {"arguments": "{}"}}]},
+    ]
+    assert clean_messages(messages) == messages
 
 
 # ---------- counting ----------
@@ -191,6 +214,7 @@ async def capturing_client(tmp_db):
     captured: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        captured["raw"] = request.content
         captured["body"] = json.loads(request.content)
         return httpx.Response(200, json=UPSTREAM_RESPONSE)
 
@@ -201,6 +225,74 @@ async def capturing_client(tmp_db):
     ) as c:
         yield c, captured
     await app.state.http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_tool_calling_request_skips_content_transforms(
+        capturing_client, monkeypatch):
+    """Agent/tool protocol traffic bypasses compression and L1 cleaning."""
+    c, captured = capturing_client
+    from proxy import l1_clean, main as main_module
+
+    monkeypatch.setattr(
+        main_module, "compress_messages",
+        lambda messages: pytest.fail("tool-calling request reached compression"),
+    )
+    monkeypatch.setattr(
+        l1_clean, "clean_messages",
+        lambda messages: pytest.fail("tool-calling request reached L1"),
+    )
+    payload = {
+        "model": "z-ai/glm-5.3-flash",
+        "messages": [
+            {"role": "system", "content": "You are an agent."},
+            {"role": "user", "content": PROSE * 8},
+            {"role": "assistant", "content": "", "tool_calls": [{
+                "id": "call_1", "type": "function",
+                "function": {"name": "lookup", "arguments": '{"city":"Paris"}'},
+            }]},
+            {"role": "tool", "tool_call_id": "call_1", "content": '{"ok":true}'},
+        ],
+        "tools": [{"type": "function", "function": {
+            "name": "lookup", "parameters": {"type": "object"},
+        }}],
+        "tool_choice": "auto",
+    }
+    response = await c.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-key-123"},
+        json=payload,
+    )
+    assert response.status_code == 200
+    assert captured["body"]["messages"] == payload["messages"]
+    assert captured["body"]["tools"] == payload["tools"]
+    assert captured["body"]["tool_choice"] == payload["tool_choice"]
+    # The P0 gate is limited to content transforms; existing model-family
+    # reasoning policy remains unchanged pending a separate product ruling.
+    assert captured["body"]["reasoning"] == {"enabled": False}
+
+
+@pytest.mark.asyncio
+async def test_existing_reasoning_injection_remains_for_tool_calling_request(
+        capturing_client):
+    """Tool gating does not silently change the independent reasoning policy."""
+    c, captured = capturing_client
+    payload = {
+        "model": "google/gemini-3.5-flash-lite",
+        "messages": [{"role": "user", "content": PROSE}],
+        "tools": [{"type": "function", "function": {
+            "name": "lookup", "parameters": {"type": "object"},
+        }}],
+    }
+    response = await c.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-key-123"},
+        json=payload,
+    )
+    assert response.status_code == 200
+    assert captured["body"]["messages"] == payload["messages"]
+    assert captured["body"]["tools"] == payload["tools"]
+    assert captured["body"]["thinking_level"] == "MINIMAL"
 
 
 @pytest.mark.asyncio

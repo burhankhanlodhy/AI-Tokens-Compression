@@ -25,6 +25,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Str
 
 from . import stats
 from .classifier import classify
+from .classifier import has_tool_calling_state
 from .compression import compress_messages, has_compressible_content
 from .config import estimate_cost, get_settings, load_pricing, reasoning_control_for
 from .counting import (
@@ -144,7 +145,7 @@ async def lifespan(app: FastAPI) -> Iterator[None]:
             await client.aclose()
 
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 app = FastAPI(title="token-saver proxy", version=APP_VERSION, lifespan=lifespan)
 
@@ -518,8 +519,17 @@ async def chat_completions(request: Request):
     # Taxonomy v1.1 §5: L1 is OFF for passthrough routes — a
     # passthrough-classified request reaches upstream byte-identical,
     # independent of L1_ENABLED/COMPRESSION_ENABLED.
+    # Tool-calling is a hard correctness boundary. A prose-heavy agent turn
+    # still carries machine-readable protocol state that neither L1 nor the
+    # lossy compressor may rewrite. Keep this decision on the raw envelope so
+    # normalization cannot hide a partial tool-call marker.
+    tool_calling = has_tool_calling_state(body)
     classify_needed = s.compression_enabled or s.l1_enabled
-    route = classify(messages) if classify_needed else "passthrough"
+    route = (
+        "passthrough"
+        if tool_calling
+        else (classify(messages) if classify_needed else "passthrough")
+    )
 
     # --- B2: L1 lossless structural cleanup (runs BEFORE the PA-4 cache key) ---
     # Taxonomy §1 pipeline ordering: L1 clean first, then the cache key is
@@ -535,7 +545,7 @@ async def chat_completions(request: Request):
 
     l1_tokens_stripped = 0
     l1_applied = False
-    if s.l1_enabled and _l1_eligible(messages, route):
+    if s.l1_enabled and not tool_calling and _l1_eligible(messages, route):
         l1_before = count_messages(messages, model)
         l1_messages = _l1_clean_messages(messages)
         l1_after = count_messages(l1_messages, model)

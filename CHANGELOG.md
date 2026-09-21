@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-20
+
+### Fixed
+
+- **Tool-calling request integrity** — requests that declare tools or tool
+  choice, contain assistant `tool_calls`, or carry `role: tool` results now
+  bypass lossy compression and L1 cleanup. Tool protocol envelopes are
+  preserved so agentic requests reach the upstream provider unchanged in
+  their message content and remain valid for function calling.
+- **LLMLingua 512-token input-window guard** — lossy compression now
+  counts the input's tokens and leaves the text unchanged when it would
+  exceed LLMLingua-2's bundled 512-token BERT input window, instead of
+  invoking the compressor past its positional-embedding limit and risking
+  corrupted output.
+
 ## [1.0.0] - 2026-09-19
 
 Initial release. token-saver is an OpenAI-compatible drop-in proxy that
@@ -69,4 +84,5 @@ token/cost savings in a Postgres ledger (SQLite remains the local fallback).
 
 ## Links
 
+[1.0.1]: https://github.com/burhankhanlodhy/AI-Tokens-Compression/releases/tag/v1.0.1
 [1.0.0]: https://github.com/burhankhanlodhy/AI-Tokens-Compression/releases/tag/v1.0.0
