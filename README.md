@@ -185,13 +185,16 @@ psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \\
 psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \\
   -f migrations/20260919_pc2_semantic_responses.sql
 psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \\
+  -f migrations/20260920_pc5_request_versions.sql
+psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \\
   -f migrations/20260920_ac_pcui_cache_status.sql
 ```
 
 The first migration creates pgvector and `semantic_cache_entries`; the second
 creates the tenant-scoped `semantic_cache_responses` table and its composite
-foreign key; the third replaces the pre-`b4baf47` `chk_cache_status` constraint.
-Do not skip the third step on a volume created before `b4baf47`: the application
+foreign key; the third adds the semantic-hit version namespace columns; the
+fourth replaces the pre-`b4baf47` `chk_cache_status` constraint. Do not skip
+the fourth step on a volume created before `b4baf47`: the application
 must be able to record all four literals, including `semantic_threshold_miss`.
 These migrations are intentionally fire-once and fail loudly if their reviewed
 preconditions are absent or they have already been applied.

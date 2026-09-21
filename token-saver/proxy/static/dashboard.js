@@ -62,6 +62,140 @@
       "</div>";
   }
 
+  /* ------------- v1.1 semantic cache (AC-PC-UI, cache-status-dashboard-spec) -
+   * Every number is a verbatim copy of a /api/kpis `cache` field computed in
+   * SQL (I-1); the decomposition is never summed into the headline (I-2);
+   * `enabled` is a mode, never a measurement (I-4): flag-off renders `off`/—,
+   * never 0/0%. Mode states: off / warming (enabled, no semantic hits in the
+   * window) / live (enabled, ≥1 semantic hit). Legacy backends that predate
+   * the `cache` key fall back to the v1.0 tiles (exact-only, off state) —
+   * the exact cache is unaffected by the semantic flag. */
+  function cacheOf(d) { return d && d.cache ? d.cache : null; }
+
+  function semanticMode(cache) {
+    if (!cache || !cache.enabled) return "off";
+    return cache.semantic_hit_count > 0 ? "live" : "warming";
+  }
+
+  function modeBadge(mode) {
+    var cls = mode === "live" ? "green" : (mode === "warming" ? "gold" : "neutral");
+    return '<span class="badge ' + cls + '">' + mode + "</span>";
+  }
+
+  /* §3.1: primary value = first element (hit_count DESC, server-ordered);
+   * disagreement parenthetical counts non-primary rows exactly when either
+   * array spans >1 version. Array math only — never config, never a scalar. */
+  function versionLine(cache) {
+    var ev = cache.embedding_versions || [];
+    if (!ev.length) return "";
+    var qv = cache.quality_versions || [];
+    var extra = 0, i;
+    for (i = 1; i < ev.length; i++) extra = extra + (ev[i].hit_count || 0);
+    for (i = 1; i < qv.length; i++) extra = extra + (qv[i].hit_count || 0);
+    var qv0 = qv.length ? qv[0].version : "—";
+    var line = "embeddings: " + escapeHtml(ev[0].version) + " / " + escapeHtml(qv0);
+    if (ev.length > 1 || qv.length > 1) {
+      line += " (+" + extra + " rows on other versions)";
+    }
+    return '<div class="muted-note">' + line + "</div>";
+  }
+
+  function exactSubTile(cache, ov) {
+    if (!cache) return cacheSubTile(ov);   // legacy backend: v1.0 tile
+    if (!cache.exact_hit_count) {
+      return '<div class="subtile l1-zero"><span class="zero-dash">—</span> ' +
+        "No exact cache hits this window</div>";
+    }
+    return '<div class="subtile">' +
+      '<div class="lead">Exact cache</div>' +
+      '<div class="subrow"><span>Requests served</span><strong>' +
+      fmt(cache.exact_hit_count) + " requests</strong></div>" +
+      '<div class="subrow"><span>Cost saved</span><strong>' +
+      money(cache.exact_hit_savings) + "</strong></div>" +
+      "</div>";
+  }
+
+  function semanticSubTile(cache) {
+    if (!cache) cache = { enabled: false };   // legacy backend: off by definition
+    var mode = semanticMode(cache);
+    var html = '<div class="subtile">' +
+      '<div class="lead">Semantic cache ' + modeBadge(mode) + "</div>";
+    if (mode === "off") {
+      // I-4: a mode, not a measurement — no rates, no $0.00, no version line
+      // (a window can hold historical semantic rows while the flag is off).
+      return html +
+        '<div class="muted-note">Semantic cache is disabled — no lookups are running.</div>' +
+        "</div>";
+    }
+    if (cache.semantic_hit_count > 0) {
+      html = html +
+        '<div class="subrow"><span>Requests served</span><strong>' +
+        fmt(cache.semantic_hit_count) + " requests</strong></div>" +
+        '<div class="subrow"><span>Cost saved</span><strong>' +
+        money(cache.semantic_hit_savings) + '</strong> <span class="muted-note">portion of total</span></div>';
+    } else {
+      html = html + '<div class="muted-note">No semantic hits yet — cache is warming.</div>';
+    }
+    // §5.2/§7b: the rate renders only when the window has semantic hits;
+    // warming shows `—` (a mode) while the threshold-miss count carries the
+    // measurement pressure.
+    var showRate = cache.semantic_hit_count > 0;
+    var rate = cache.semantic_hit_rate;
+    var rateLine = "hit rate " +
+      (showRate && rate !== null && rate !== undefined ? rate + "%" : "—");
+    if (cache.semantic_threshold_miss_count > 0) {
+      rateLine = rateLine + " · " + fmt(cache.semantic_threshold_miss_count) + " threshold-misses";
+    }
+    html = html + '<div class="muted-note">' + rateLine + "</div>";
+    html = html + versionLine(cache);
+    return html + "</div>";
+  }
+
+  /* §4.2: the only percentage this card may show is semantic_hit_rate — the
+   * combined rate renders nowhere (§3). The numeral renders only in live
+   * mode: off/warming are modes (—, §5.1/§5.2), never 0% presentations of
+   * stale or empty windows. The contract carries no per-bucket semantic
+   * series, so there is no delta line: one would have to be fabricated
+   * client-side (I-1 forbids it). */
+  function semanticHitRateCard(cache) {
+    var mode = semanticMode(cache);
+    var num = "—";
+    if (mode === "live" && cache.semantic_hit_rate !== null &&
+        cache.semantic_hit_rate !== undefined) {
+      num = cache.semantic_hit_rate + "%";
+    }
+    return '<div class="card span3"><h3>Semantic cache hit rate ' + modeBadge(mode) + "</h3>" +
+      '<div class="kpi-num">' + num + "</div></div>";
+  }
+
+  /* §4.3 (as adapted): the /api/kpis contract exposes ledger cache_status as
+   * window-scope counts, not per-request rows, so the Traffic surface renders
+   * one badge per raw ledger status with its verbatim count. Badge text is
+   * the raw status string — no renaming layer, so QA reconciles badge ↔
+   * ledger taxonomy directly. Flag-off: semantic statuses show neutral `off`
+   * (a mode — no count), exact_hit/miss keep counting (unaffected by flag). */
+  function cacheStatusCard(cache) {
+    if (!cache) return "";
+    var badgeCount = function (status, cls, count) {
+      var n = count === null || count === undefined ? "—" : fmt(count);
+      return '<div class="subrow"><span>' + status + '</span>' +
+        '<span class="badge ' + cls + '">' + status + "</span> <strong>" + n + "</strong></div>";
+    };
+    var html = '<div class="card span12"><h3>Cache status (ledger taxonomy)</h3>' +
+      badgeCount("exact_hit", "green", cache.exact_hit_count);
+    if (cache.enabled) {
+      html = html + badgeCount("semantic_hit", "green", cache.semantic_hit_count) +
+        badgeCount("semantic_threshold_miss", "gold", cache.semantic_threshold_miss_count);
+    } else {
+      html = html + '<div class="subrow"><span>semantic_hit</span>' +
+        '<span class="badge neutral">off</span></div>' +
+        '<div class="subrow"><span>semantic_threshold_miss</span>' +
+        '<span class="badge neutral">off</span></div>';
+    }
+    html = html + badgeCount("miss", "neutral", cache.miss_count) + "</div>";
+    return html;
+  }
+
   function lineChart(id, labels, data, label, color) {
     var el = document.getElementById(id);
     if (!el) return;
@@ -113,14 +247,16 @@
       deltaDir = diff >= 0 ? "up" : "down";
       deltaHtml = (diff >= 0 ? "▲ " : "▼ ") + money(Math.abs(diff)) + " vs prior bucket";
     }
+    var cache = cacheOf(d);
     var html = '<div class="grid">' +
       kpiCard("Requests", fmt(ov.requests), null, null, null) +
       kpiCard("Tokens saved", fmt(ov.input_tokens_saved), ov.savings_pct + "% of input", "up", "sp-tokens") +
       kpiCard("Est. cost saved", money(ov.cost_saved), deltaHtml, deltaDir, "sp-cost") +
       kpiCard("Effective savings %", ov.savings_pct + "%", "cache hit " + ov.cache_hit_pct + "%", "up", null) +
+      semanticHitRateCard(cache) +
       '<div class="card span6"><h3>Savings breakdown</h3>' +
-        '<p class="breakdown-note">Headline total is cost saved; the tiles below are labeled portions of it — never added to it.</p>' +
-        l1SubTile(ov) + cacheSubTile(ov) +
+        '<p class="breakdown-note">Savings decomposition: exact, semantic, and L1 are per-request categories — never summed into the headline.</p>' +
+        l1SubTile(ov) + exactSubTile(cache, ov) + semanticSubTile(cache) +
       "</div>" +
       chartCard("Savings over time", "span6", '<div class="chart-wrap"><canvas id="c-savings"></canvas></div>') +
       chartCard("Cost saved per model", "span12", '<div class="chart-wrap"><canvas id="c-models"></canvas></div>') +
@@ -157,6 +293,7 @@
       chartCard("Errors per bucket", "span6", '<div class="chart-wrap"><canvas id="c-err"></canvas></div>') +
       kpiCard("Error rate", errBadge, null, null, null) +
       kpiCard("Cache hit rate", ov.cache_hit_pct + "%", null, null, null) +
+      cacheStatusCard(cacheOf(d)) +
       "</div>";
     content.innerHTML = html;
     lineChart("c-req", labels, d.series.map(function (s) { return s.requests; }), "requests", "#4f8cff");

@@ -27,16 +27,110 @@ PM rulings (ratified 2026-09-19 for the PC5 vertical slice; do not re-litigate):
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 import hashlib
 import json
 import math
-from typing import Sequence
+from typing import Any, Sequence
 from uuid import uuid4
 
 import psycopg
 
 from .config import get_settings
 from .db import get_pg_dsn
+from .version import __version__
+
+
+DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000000"
+
+
+class SemanticLookupKind(str, Enum):
+    HIT = "hit"
+    THRESHOLD_MISS = "threshold_miss"
+    NO_COMPATIBLE_ROW = "no_compatible_row"
+    NOT_ATTEMPTED = "not_attempted"
+
+
+@dataclass(frozen=True)
+class SemanticLookupResult:
+    """Structured outcome used by the request path and KPI attribution."""
+
+    kind: SemanticLookupKind
+    hit: "SemanticCacheHit | None" = None
+    response: "SemanticCacheResponse | None" = None
+
+    @classmethod
+    def hit_result(
+        cls, hit: "SemanticCacheHit", response: "SemanticCacheResponse | None" = None
+    ) -> "SemanticLookupResult":
+        return cls(SemanticLookupKind.HIT, hit, response)
+
+    @classmethod
+    def threshold_miss(cls) -> "SemanticLookupResult":
+        return cls(SemanticLookupKind.THRESHOLD_MISS)
+
+    @classmethod
+    def no_compatible_row(cls) -> "SemanticLookupResult":
+        return cls(SemanticLookupKind.NO_COMPATIBLE_ROW)
+
+    @classmethod
+    def not_attempted(cls) -> "SemanticLookupResult":
+        return cls(SemanticLookupKind.NOT_ATTEMPTED)
+
+
+@dataclass(frozen=True)
+class SemanticCacheResponse:
+    body: bytes
+    sha256: str
+    content_length: int
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def canonical_request(body: dict[str, Any]) -> str:
+    """Return the stable semantic-cache input representation.
+
+    Version fields are never accepted from a request body.  The request path
+    supplies them from process configuration when building the lookup scope.
+    """
+    clean = {
+        key: value
+        for key, value in body.items()
+        if key in {"model", "messages", "tools"}
+    }
+    return _canonical_json(clean)
+
+
+def canonical_prompt_hash(body: dict[str, Any]) -> str:
+    return hashlib.sha256(canonical_request(body).encode("utf-8")).hexdigest()
+
+
+def request_parameters_hash(body: dict[str, Any]) -> str:
+    """Hash model parameters separately from the canonical prompt text."""
+    params = {
+        key: value
+        for key, value in body.items()
+        if key not in {"messages", "model", "embedding_version", "quality_version", "tenant_id"}
+    }
+    return hashlib.sha256(_canonical_json(params).encode("utf-8")).hexdigest()
+
+
+def derive_embedding_version() -> str:
+    settings = get_settings()
+    relay = settings.embedding_relay.strip()
+    model = settings.embedding_model.strip()
+    dimensions = settings.embedding_dimensions
+    if not relay or not model or dimensions != 1536:
+        raise ValueError("semantic embeddings require a non-empty relay/model and 1536 dimensions")
+    return f"{relay}:{model}@{dimensions}"
+
+
+def derive_quality_version() -> str:
+    if not __version__.strip():
+        raise ValueError("application quality version is empty")
+    return __version__
 
 
 @dataclass(frozen=True)
@@ -184,6 +278,168 @@ def lookup(
     )
 
 
+def _candidate(
+    scope: SemanticLookupScope,
+    embedding: Sequence[float],
+) -> tuple[int, str, float] | None:
+    """Return the nearest compatible candidate without applying a threshold."""
+    settings = get_settings()
+    vector = _vector_literal(embedding, scope.embedding_dimensions)
+    if vector is None:
+        return None
+    with _connect() as pg:
+        pg.execute(
+            "SELECT set_config('hnsw.ef_search', %s, true)",
+            (str(settings.semantic_cache_hnsw_ef_search),),
+        )
+        pg.execute(
+            "SELECT set_config('plan_cache_mode', %s, true)",
+            ("force_custom_plan",),
+        )
+        row = pg.execute(
+            """
+            SELECT id, response_ref, embedding <=> %s::vector AS cosine_distance
+              FROM semantic_cache_entries
+             WHERE tenant_id = %s
+               AND provider_id = (SELECT id FROM providers WHERE name = %s)
+               AND model = %s
+               AND embedding_model = %s
+               AND embedding_dimensions = %s
+               AND embedding_version = %s
+               AND quality_version = %s
+               AND request_parameters_hash = %s
+               AND expires_at > now()
+             ORDER BY embedding <=> %s::vector
+             LIMIT 1
+            """,
+            (
+                vector,
+                scope.tenant_id,
+                scope.provider,
+                scope.model,
+                scope.embedding_model,
+                scope.embedding_dimensions,
+                scope.embedding_version,
+                scope.quality_version,
+                scope.request_parameters_hash,
+                vector,
+            ),
+        ).fetchone()
+    if row is None:
+        return None
+    return int(row[0]), str(row[1]), float(row[2])
+
+
+def _cleanup_candidate(scope: SemanticLookupScope, entry_id: int, response_ref: str) -> None:
+    """Best-effort lazy cleanup; cleanup errors remain cache misses."""
+    try:
+        with _connect() as pg:
+            with pg.transaction():
+                pg.execute(
+                    "DELETE FROM semantic_cache_entries WHERE id = %s AND tenant_id = %s",
+                    (entry_id, scope.tenant_id),
+                )
+                pg.execute(
+                    "DELETE FROM semantic_cache_responses WHERE tenant_id = %s AND response_ref = %s",
+                    (scope.tenant_id, response_ref),
+                )
+    except (psycopg.Error, RuntimeError):
+        return
+
+
+def _read_response(scope: SemanticLookupScope, entry_id: int, response_ref: str) -> SemanticCacheResponse | None:
+    """Read and verify the tenant-scoped exact bytes behind a hit."""
+    try:
+        with _connect() as pg:
+            row = pg.execute(
+                """
+                SELECT payload_bytes, sha256, content_length
+                  FROM semantic_cache_responses
+                 WHERE tenant_id = %s
+                   AND response_ref = %s
+                   AND expires_at > now()
+                """,
+                (scope.tenant_id, response_ref),
+            ).fetchone()
+            if row is None:
+                _cleanup_candidate(scope, entry_id, response_ref)
+                return None
+            body = bytes(row[0])
+            sha256 = str(row[1])
+            content_length = int(row[2])
+            if (
+                len(body) != content_length
+                or hashlib.sha256(body).hexdigest() != sha256
+            ):
+                _cleanup_candidate(scope, entry_id, response_ref)
+                return None
+            return SemanticCacheResponse(body, sha256, content_length)
+    except (psycopg.Error, RuntimeError, TypeError, ValueError):
+        _cleanup_candidate(scope, entry_id, response_ref)
+        return None
+
+
+def lookup_result(
+    scope: SemanticLookupScope,
+    embedding: Sequence[float],
+    *,
+    max_cosine_distance: float | None,
+) -> SemanticLookupResult:
+    """Classify the nearest compatible row before applying the threshold.
+
+    ``lookup`` remains the legacy hit-only seam for the AC-PC3 gates; the
+    request path uses this structured method so threshold pressure and a true
+    empty compatibility window remain distinct ledger outcomes.
+    """
+    settings = get_settings()
+    if not settings.semantic_cache_enabled:
+        return SemanticLookupResult.not_attempted()
+    if not scope.complete():
+        raise ValueError("mandatory semantic lookup filters are required")
+    if scope.embedding_dimensions != 1536:
+        return SemanticLookupResult.not_attempted()
+    if not _valid_threshold(max_cosine_distance):
+        return SemanticLookupResult.not_attempted()
+    if _vector_literal(embedding, scope.embedding_dimensions) is None:
+        return SemanticLookupResult.not_attempted()
+    try:
+        candidate = _candidate(scope, embedding)
+    except (psycopg.Error, RuntimeError):
+        return SemanticLookupResult.not_attempted()
+    if candidate is None:
+        return SemanticLookupResult.no_compatible_row()
+    threshold = max_cosine_distance if max_cosine_distance is not None else -1.0
+    entry_id, response_ref, distance = candidate
+    if distance > threshold:
+        return SemanticLookupResult.threshold_miss()
+    response = _read_response(scope, entry_id, response_ref)
+    if response is None:
+        return SemanticLookupResult.not_attempted()
+    try:
+        with _connect() as pg:
+            pg.execute(
+                "UPDATE semantic_cache_entries SET hit_count = hit_count + 1, last_hit_at = now() WHERE id = %s AND tenant_id = %s",
+                (entry_id, scope.tenant_id),
+            )
+    except (psycopg.Error, RuntimeError):
+        # A hit remains safe to serve when metadata accounting is unavailable.
+        pass
+    return SemanticLookupResult.hit_result(
+        SemanticCacheHit(entry_id, response_ref, distance), response
+    )
+
+
+def read_response(scope: SemanticLookupScope, hit: SemanticCacheHit) -> SemanticCacheResponse | None:
+    """Public integrity-checked replay seam for a previously classified hit."""
+    return _read_response(scope, hit.entry_id, hit.response_ref)
+
+
+# Explicit aliases make the structured seam discoverable without changing the
+# legacy hit-only ``lookup`` contract used by the PC1/PC4 gate fixtures.
+structured_lookup = lookup_result
+semantic_lookup = lookup_result
+
+
 def store_response(
     scope: SemanticLookupScope,
     canonical_prompt_hash: str,
@@ -200,7 +456,11 @@ def store_response(
     deliberately normalizes the representation needed for exact replay.
     """
     settings = get_settings()
-    if not settings.semantic_cache_enabled or not scope.complete():
+    if (
+        not settings.semantic_cache_enabled
+        or not scope.complete()
+        or scope.embedding_dimensions != 1536
+    ):
         return None
     if not isinstance(response_body, bytes) or len(response_body) > settings.semantic_cache_max_response_bytes:
         return None
