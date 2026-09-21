@@ -21,7 +21,6 @@ import pytest_asyncio
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from pg_optional_support import require_pg_dsn
 from proxy.config import get_settings
 
 RAG = json.dumps({"content": "TTL default is 3600 seconds.",
@@ -43,11 +42,6 @@ def l1_env(tmp_path, monkeypatch):
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
-
-
-@pytest.fixture
-def postgres_stats():
-    return require_pg_dsn()
 
 
 def _app(transport_handler):
@@ -98,19 +92,25 @@ async def test_upstream_receives_clean_messages(capturing):
 
 
 @pytest.mark.asyncio
-async def test_ledger_records_l1_tokens(postgres_stats, capturing, monkeypatch):
-    # Keep this historically PG-sensitive path loud when its production DSN
-    # is absent or unreachable, then use the isolated SQLite fixture for the
-    # actual L1-column assertion.
+async def test_ledger_records_l1_tokens_and_decomposes_cost(capturing, monkeypatch):
+    """AC-P1f: a non-cache L1 row is a cost_saved portion, never an addend.
+
+    The fixture's JSON/RAG request is classified passthrough, exercising the
+    v1.2 independent L1 gate and the local fallback ledger that developers
+    actually run without a Postgres DSN.
+    """
     monkeypatch.delenv("TOKEN_SAVER_PG_DSN", raising=False)
     from proxy import stats
+    prompt = _pinned_production_case("rag-001", "rag")
+    assert prompt["messages"] != [{"role": "user", "content": RAG}]
+    from proxy.classifier import classify
+    assert classify(prompt["messages"]) == "passthrough"
     stats.init_db()  # test_proxy's tmp_db fixture does this; standalone here
     c, captured = capturing
     await c.post(
         "/v1/chat/completions",
         headers={"Authorization": "Bearer test-key-123"},
-        json={"model": "gpt-4o-mini",
-              "messages": [{"role": "user", "content": RAG}]},
+        json={"model": "gpt-4o", "messages": prompt["messages"]},
     )
     data = stats.aggregate_stats()
     assert data["totals"]["input_tokens_saved"] > 0
@@ -118,12 +118,21 @@ async def test_ledger_records_l1_tokens(postgres_stats, capturing, monkeypatch):
     # by the compression path alone and can never catch a dropped l1_* value.
     with stats.get_conn() as conn:
         row = conn.execute(
-            "SELECT l1_tokens_stripped, l1_savings FROM requests "
+            "SELECT route, input_tokens_before, input_tokens_after, "
+            "est_cost_before, est_cost_after, l1_tokens_stripped, l1_savings "
+            "FROM requests "
             "ORDER BY id DESC LIMIT 1"
         ).fetchone()
     assert row is not None, "no ledger row persisted"
+    assert row["route"] == "passthrough"
     assert row["l1_tokens_stripped"] > 0
     assert row["l1_savings"] > 0
+    assert row["l1_tokens_stripped"] <= (
+        row["input_tokens_before"] - row["input_tokens_after"]
+    )
+    assert 0 < row["l1_savings"] <= (
+        row["est_cost_before"] - row["est_cost_after"] + 1e-12
+    )
 
 
 @pytest.mark.asyncio

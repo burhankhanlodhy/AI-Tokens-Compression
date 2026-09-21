@@ -1,7 +1,7 @@
 # B1 — L1 Lossless Structural-Cleanup: Frozen Strip Taxonomy
 
 Author: @product-manager · Phase: **B** · Gates: B2 (Dev), B3 (DBA), B4 (QA), B5 (UI/UX data contract)
-Source of truth: `product-spec-v2.md` **AC-P1e / AC-P1f** (§88–92). This file **freezes** what "lossless L1 structural cleanup" means such that B2 can be implemented without re-litigating scope, B3 can attribute savings, and B4 can test round-trip equivalence against a pinned contract.
+Source of truth: `product-spec-v2.md` **AC-P1e / AC-P1f** (§88–92). This file **freezes** what "lossless L1 structural cleanup" means such that B2 can be implemented without re-litigating scope, B3 can attribute savings, and B4 can test round-trip equivalence against a pinned contract. The v1.2 amendment in the product spec supersedes this document's former passthrough exclusion.
 
 ---
 
@@ -11,17 +11,17 @@ The proxy pipeline for a cache-enabled, compressible request **must** be:
 
 ```
 raw request body
-  └─> L1 clean (pure deterministic transform, §4)
+  └─> classify(raw) -> l1_eligible(messages, route) -> L1 clean (pure deterministic transform, §4)
         └─> compute PA-4 cache key on the CLEAN body   <- NOT on the original body
               ├─ hit  -> serve cached completion; attribute ONLY cache savings
               └─ miss -> send clean body upstream;   attribute L1 savings
 ```
 
 Consequences (frozen):
-- **Cache key = clean bytes** (AC-P1f). Today `main.py:327-328` keys the cache on the *pre-compression original* body — **this must be reordered** so L1 runs first and the key is computed on the cleaned body, otherwise an L1-stripped request can never share a cache entry with an identical clean prompt.
+- **Cache key = clean bytes** (AC-P1f). L1 runs before the cache key is computed, so an L1-stripped request can share a cache entry with an identical clean prompt.
 - A request that is L1-stripped **and** cache-hit reports **only cache savings** for that call — the two are never summed on one request (UI/UX B3 note states this visibly; DB B3 must reconcile to it).
 - `raw -> clean` must be a reproducible pure function (same bytes in ⟹ byte-identical clean bytes out) so a cache hit can serve an identical clean prompt.
-- L1 is **off** for `passthrough` requests and never touches tool definitions, image parts, or the answer path.
+- **v1.2:** L1 has its own `l1_eligible(messages, route)` gate and may run on passthrough-classified JSON/RAG. The lossy compression route gate remains independent. L1 never touches tool definitions, image parts, or the answer path.
 
 ## 2. Success bar (from AC-P1e — not renegotiated here)
 
@@ -74,7 +74,7 @@ Within an eligible JSON object, **drop by exact field name** any of these (prese
 - Key *order* changes to user-visible JSON configs (this could alter model-followed semantics in adversarial cases); order is preserved at all times.
 - Any field inside a non-eligible (non-RAG-shaped) JSON document, even if its name appears in the C3 table. **C3 is shape-gated, not name-only.**
 - Truncation, summarization, dedup of *non-adjacent* system blocks, removal of the *last* system message.
-- Anything under a `passthrough` route.
+- Anything under a `passthrough` route **for lossy compression**. This does not exclude eligible L1 JSON/RAG cleaning under the v1.2 independent eligibility gate.
 
 ## 6. Determinism contract (for B2/B4)
 

@@ -110,8 +110,14 @@ All settings are env vars (see `.env.example` and `proxy/config.py`):
 - `COMPRESSION_ENABLED` / `OUTPUT_CONCISENESS_ENABLED` / `DISABLE_REASONING_BY_DEFAULT` — feature flags
 - `L1_ENABLED` — lossless L1 structural cleanup, **on by default** (since
   B-26): whitespace-compacts JSON, removes duplicate/empty system blocks and
-  dead RAG metadata. Other content classes are intended to reach upstream
-  byte-identical; the l1-taxonomy §6 contract tests pin that on the
+  dead RAG metadata. On the passthrough path, disabling L1 keeps the input
+  byte-identical; the separate lossy compressor may rewrite eligible
+  compress-route content. With L1 enabled, the checksum-pinned standalone
+  CODE fixture remains byte-identical, while eligible JSON/RAG is deliberately
+  cleaned and instead has the checksum-pinned
+  structural round-trip guarantee:
+  deterministic, idempotent raw-to-clean bytes with the cache keyed on clean
+  bytes. The l1-taxonomy §6 contract tests pin these classes on the
   checksum-pinned corpus, whose 13 control fixtures cover code fences,
   user-authored YAML, `tool_calls` turns, multimodal parts arrays, markdown
   tables, mixed prose+JSON, and JSON inside a fence — classes beyond those
