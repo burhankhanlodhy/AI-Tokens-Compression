@@ -137,6 +137,41 @@ def _import_block_occurrences(messages: list[dict]) -> list[tuple[str, ...]]:
     return occurrences
 
 
+def _extract_import_lines(messages: list[dict]) -> list[str]:
+    """Extract individual import lines from fenced code blocks for per-line dedup.
+
+    Only fenced code counts: the replacement pass also only edits fences, so
+    counting unfenced lines would inflate frequencies (a fenced line would be
+    counted once here and once again by the fence scan).
+    """
+    import_lines = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            import_lines.extend(_extract_imports_from_text(content))
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and isinstance(part.get("text"), str):
+                    import_lines.extend(_extract_imports_from_text(part["text"]))
+    return import_lines
+
+
+def _extract_imports_from_text(text: str) -> list[str]:
+    """Extract import lines from code fences in text."""
+    import_lines = []
+    for match in _CODE_FENCE.finditer(text):
+        if not _is_code_fence(match, text):
+            continue
+        lines = match.group("body").splitlines()
+        for line in lines:
+            line = line.strip()
+            if line and _IMPORT_LINE.match(line):
+                import_lines.append(line)
+    return import_lines
+
+
 def _replace_repeated_import_blocks(content: str, repeated: Counter[tuple[str, ...]], seen: Counter[tuple[str, ...]]) -> str:
     """Keep first import block; replace later matching blocks with one marker."""
     fence_index = 0
@@ -168,16 +203,50 @@ def _replace_repeated_import_blocks(content: str, repeated: Counter[tuple[str, .
     return _CODE_FENCE.sub(replace_fence, content)
 
 
+def _replace_repeated_import_lines(content: str, repeated: Counter[str], seen: Counter[str]) -> str:
+    """Replace repeated import lines with a marker, keeping first occurrence per line."""
+    
+    def replace_fence(match: re.Match[str]) -> str:
+        if not _is_code_fence(match, content):
+            return match.group(0)
+        lines = match.group("body").splitlines()
+        replacement_lines: list[str] = []
+        
+        for line in lines:
+            stripped = line.strip()
+            if stripped and _IMPORT_LINE.match(stripped):
+                seen[stripped] += 1
+                if repeated[stripped] > 3 and seen[stripped] > 1:
+                    # Replace with marker comment
+                    indent_match = re.match(r"\s*", line)
+                    indent = indent_match.group(0) if indent_match else ""
+                    replacement_lines.append(
+                        f"{indent}# [... import repeated {repeated[stripped]} times ...]"
+                    )
+                else:
+                    replacement_lines.append(line)
+            else:
+                replacement_lines.append(line)
+        
+        body = "\n".join(replacement_lines)
+        return match.group(0).replace(match.group("body"), body, 1)
+
+    return _CODE_FENCE.sub(replace_fence, content)
+
+
 def deduplicate_imports(messages: list[dict]) -> list[dict]:
-    """Replace repeated (more than three) fenced import blocks after the first."""
+    """Replace repeated import lines after the first (per-line dedup)."""
     copies = _copy_messages(messages)
-    occurrences = _import_block_occurrences(copies)
-    repeated: Counter[tuple[str, ...]] = Counter(occurrences)
+    import_lines = _extract_import_lines(copies)
+    repeated: Counter[str] = Counter(import_lines)
+    
+    # If no import line appears more than 3 times, no dedup needed
     if not any(count > 3 for count in repeated.values()):
         return copies
-    seen: Counter[tuple[str, ...]] = Counter()
+    
+    seen: Counter[str] = Counter()
     return _map_text_content(
-        copies, lambda content: _replace_repeated_import_blocks(content, repeated, seen)
+        copies, lambda content: _replace_repeated_import_lines(content, repeated, seen)
     )
 
 

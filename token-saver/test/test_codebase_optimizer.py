@@ -65,7 +65,7 @@ def test_deduplicate_import_blocks_after_first_of_four_fenced_files():
     assert "import os" in optimized[0]["content"]
     assert "from pathlib import Path" in optimized[0]["content"]
     for message in optimized[1:]:
-        assert "[... import block repeated 4 times ...]" in message["content"]
+        assert "# [... import repeated 4 times ...]" in message["content"]
         assert "import os" not in message["content"]
         assert "from pathlib import Path" not in message["content"]
         assert "print(Path.cwd())" in message["content"]
@@ -83,10 +83,58 @@ def test_deduplicate_import_blocks_in_openai_text_parts_after_first_of_four():
     assert "import os" in optimized[0]["content"][0]["text"]
     for message in optimized[1:]:
         text = message["content"][0]["text"]
-        assert "[... import block repeated 4 times ...]" in text
+        assert "# [... import repeated 4 times ...]" in text
         assert "import os" not in text
         assert "from pathlib import Path" not in text
         assert "print(Path.cwd())" in text
+
+
+def test_deduplicate_marks_repeated_lines_and_preserves_unique_lines_in_interleaved_blocks():
+    """BUG-2 regression: unique imports interleaved with repeated ones must not
+    block dedup. Repeated import lines are marked after the first occurrence
+    while unique imports in the same block are preserved."""
+    messages = [
+        {
+            "role": "user",
+            "content": _fenced(
+                ["import os", "import sys", "import json", f"import unique_{index}"]
+            ),
+        }
+        for index in range(10)
+    ]
+
+    optimized = deduplicate_imports(messages)
+
+    # First message keeps every import line
+    assert "import os" in optimized[0]["content"]
+    assert "import sys" in optimized[0]["content"]
+    assert "import json" in optimized[0]["content"]
+    assert "import unique_0" in optimized[0]["content"]
+    assert "# [... import repeated" not in optimized[0]["content"]
+
+    # Later messages mark the repeated lines but keep their unique import
+    for index, message in enumerate(optimized[1:], start=1):
+        content = message["content"]
+        assert content.count("# [... import repeated 10 times ...]") == 3
+        assert "import os" not in content
+        assert "import sys" not in content
+        assert "import json" not in content
+        assert f"import unique_{index}" in content
+
+
+def test_deduplicate_leaves_messages_with_few_repeated_lines_untouched():
+    """Import lines repeated 3 times or fewer must never be marked."""
+    messages = [
+        {"role": "user", "content": _fenced(["import os", f"import unique_{index}"])}
+        for index in range(3)
+    ]
+
+    optimized = deduplicate_imports(messages)
+
+    for index, message in enumerate(optimized):
+        assert "import os" in message["content"]
+        assert f"import unique_{index}" in message["content"]
+        assert "# [... import repeated" not in message["content"]
 
 
 def test_filter_shell_output_removes_noise_and_keeps_critical_lines():
@@ -136,6 +184,7 @@ ValueError: invalid email format"""
     # Specifically check that we have all 4 lines
     lines = optimized.splitlines()
     assert len(lines) == 4, f"Expected 4 lines, got {len(lines)}: {lines}"
+
 
 def test_optimizer_can_disable_dedupe_without_disabling_shell_filter(monkeypatch):
     monkeypatch.setenv("CODEBASE_DEDUPE_IMPORTS", "false")
