@@ -141,6 +141,17 @@ All settings are env vars (see `.env.example` and `proxy/config.py`):
   whose *entire* content is pretty-printed JSON with no surrounding prose
   gets whitespace-compacted — if you send "reformat this" as bare JSON, set
   `L1_ENABLED=false`.
+- `TOOL_RESULT_COMPRESSION_ENABLED` — lossless cleanup of tool-result content
+  (`role=tool` messages), **on by default** (v1.2.1): whitespace-compacts
+  JSON tool results after validating them, preserving every value lexeme
+  (numbers, escapes) byte-for-byte. The message envelope (`tool_call_id`,
+  `name`) and assistant `tool_calls`/`tool_choice` are never rewritten. Set
+  `false` to restore the pre-v1.2.1 conservative bypass.
+- `TOOL_SCHEMA_COMPRESSION_ENABLED` — wire-level minification of the `tools`
+  schema array, **on by default** (v1.2.1): re-serializes only the validated
+  `tools` value with compact JSON separators on every provider path (legacy
+  and routed). The decoded schema is semantically identical. Set `false` to
+  send the schema with the standard spacing.
 - `SEMANTIC_CACHE_ENABLED` — pgvector semantic lookup of semantically
   similar prompts, **off by default** (ratified GO as of v1.1 — the C1
   operating point below passed the calibration, tenant-isolation,

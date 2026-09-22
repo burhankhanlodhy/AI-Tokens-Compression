@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS requests (
     dose_tier TEXT,                     -- AC-P6f: resolved tier ('none'|'bounded'|'full'); NULL = discriminator never ran
     grounded_risk TEXT,                 -- AC-P6f: discriminator risk ('none'|'bounded'|'fidelity_critical'); NULL = never ran
     envelope_shape INTEGER,             -- AC-P6f: AC-P6j scanner hit on the raw request (1/0); NULL = no content logged
-    measurement_tag TEXT                -- AC-P6f: stamp from a measurement deployment (TOKEN_SAVER_MEASUREMENT_TAG); tripwire excludes tagged rows
+    measurement_tag TEXT,               -- AC-P6f: stamp from a measurement deployment (TOKEN_SAVER_MEASUREMENT_TAG); tripwire excludes tagged rows
+    tool_compression_saved INTEGER NOT NULL DEFAULT 0 -- lossless tool-result/schema savings; attribution subset, never additive with L1 totals
 );
 CREATE INDEX IF NOT EXISTS idx_requests_ts ON requests(ts);
 """
@@ -53,6 +54,7 @@ _MIGRATIONS = (
     # harness) deployment are stamped and excluded from the tripwire window —
     # the drift rule must never compare the band against its own source rows.
     "ALTER TABLE requests ADD COLUMN measurement_tag TEXT",
+    "ALTER TABLE requests ADD COLUMN tool_compression_saved INTEGER NOT NULL DEFAULT 0",
 )
 
 
@@ -115,6 +117,7 @@ def log_request(
     measurement_tag: str | None = None,
     embedding_version: str | None = None,
     quality_version: str | None = None,
+    tool_compression_saved: int = 0,
 ) -> None:
     """Append to the request ledger.
 
@@ -151,6 +154,7 @@ def log_request(
             measurement_tag=measurement_tag,
             embedding_version=embedding_version,
             quality_version=quality_version,
+            tool_compression_saved=tool_compression_saved,
         )
         return
     with _lock, get_conn() as conn:
@@ -158,8 +162,8 @@ def log_request(
             "INSERT INTO requests (ts, model, route, input_tokens_before, "
             "input_tokens_after, output_tokens, est_cost_before, est_cost_after, "
             "latency_ms, compressed, status, l1_tokens_stripped, l1_savings, "
-            "dose_tier, grounded_risk, envelope_shape, measurement_tag) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "dose_tier, grounded_risk, envelope_shape, measurement_tag, "
+            "tool_compression_saved) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 time.time(),
                 model,
@@ -178,6 +182,7 @@ def log_request(
                 grounded_risk,
                 envelope_shape,
                 measurement_tag,
+                tool_compression_saved,
             ),
         )
 
@@ -189,6 +194,7 @@ def _log_postgres(
     provider=None,
     dose_tier=None, grounded_risk=None, envelope_shape=None,
     measurement_tag=None, embedding_version=None, quality_version=None,
+    tool_compression_saved=0,
 ) -> None:
     import psycopg
 
@@ -218,6 +224,7 @@ def _log_postgres(
             l1_tokens_stripped, str(l1_savings),
             latency_ms, compressed, status,
             dose_tier, grounded_risk, envelope_shape, measurement_tag,
+            tool_compression_saved,
             *((embedding_version, quality_version) if version_columns else ()),
         )
         conn.execute(
@@ -227,14 +234,15 @@ def _log_postgres(
                 est_cost_before, est_cost_after, cache_status, cache_savings,
                 l1_tokens_stripped, l1_savings,
                 latency_ms, compressed, status,
-                dose_tier, grounded_risk, envelope_shape, measurement_tag
+                dose_tier, grounded_risk, envelope_shape, measurement_tag,
+                tool_compression_saved
                 {version_columns})
             SELECT '00000000-0000-0000-0000-000000000000',
                    COALESCE((SELECT id FROM providers WHERE name = %s),
                             (SELECT id FROM providers WHERE name = 'legacy')),
                    %s, %s, %s, %s, %s, %s::numeric, %s::numeric, %s,
                    %s::numeric, %s::numeric, %s, %s::numeric, %s, %s,
-                   %s, %s, %s, %s{version_values}
+                   %s, %s, %s, %s, %s{version_values}
             """,
             values,
         )

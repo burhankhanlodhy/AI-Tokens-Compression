@@ -104,6 +104,96 @@ def test_auth_style_smoke(routed, model, provider, expect_header, base_contains)
     assert req.url.path.endswith("/chat/completions")
 
 
+@pytest.mark.parametrize("model,provider", [
+    ("openai/gpt-4o", "openai"),
+    ("anthropic/claude-sonnet-5", "anthropic"),
+    ("openrouter/openai/gpt-4o", "openrouter"),
+    ("xai/grok-4", "xai"),
+    ("google/gemini-2.5-flash", "google"),
+    ("vllm/qwen-72b", "vllm"),
+])
+@pytest.mark.parametrize("schema_compression_enabled", [True, False])
+def test_tool_schema_compression_flag_controls_every_provider_wire(
+        routed, monkeypatch, model, provider, schema_compression_enabled):
+    """T1 AC-T4: every routed provider honors the schema wire-byte setting.
+
+    The decoded tool schema and protocol fields must remain semantically
+    identical; only whitespace surrounding the translated ``tools`` value may
+    change. This specifically protects against the old ``json=wire.json_body``
+    route, which ignored the configuration for every adapter.
+    """
+    monkeypatch.setenv(
+        "TOOL_SCHEMA_COMPRESSION_ENABLED",
+        "true" if schema_compression_enabled else "false",
+    )
+    get_settings.cache_clear()
+    main_mod = routed
+    cap = _CaptureTransport()
+    main_mod._client_factory = lambda b, t: httpx.AsyncClient(
+        base_url=b, timeout=t, transport=cap)
+
+    tools = [{
+        "type": "function",
+        "function": {
+            "name": "lookup_weather",
+            "description": "Look up weather for a city.",
+            "parameters": {
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+            },
+        },
+    }]
+    assistant_call = {
+        "id": "call_1",
+        "type": "function",
+        "function": {"name": "lookup_weather", "arguments": '{ "city": "Paris" }'},
+    }
+    with TestClient(main_mod.app) as c:
+        main_mod.app.state.http_clients = {}
+        response = c.post(
+            "/v1/chat/completions",
+            headers={"Authorization": "Bearer tool-test"},
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "assistant", "content": "", "tool_calls": [assistant_call]},
+                    {"role": "tool", "tool_call_id": "call_1",
+                     "content": '{\n  "forecast": "sunny"\n}'},
+                ],
+                "tools": tools,
+                "tool_choice": "auto",
+            },
+        )
+    assert response.status_code == 200, (provider, response.text[:200])
+    assert len(cap.requests) == 1
+    raw = cap.requests[0].content
+    wire = json.loads(raw)
+    assert wire["tool_choice"] == "auto"
+    assert wire["tools"]
+    if provider == "anthropic":
+        assert wire["tools"][0]["name"] == "lookup_weather"
+        assert wire["messages"][0]["content"][0]["id"] == "call_1"
+    else:
+        assert wire["tools"] == tools
+        assert wire["messages"][0]["tool_calls"] == [assistant_call]
+
+    # Only the tools member changes lexical representation.  The enabled
+    # branch has no whitespace after a tools comma/colon; disabled uses the
+    # standard preserving serializer that leaves schema delimiters spaced.
+    # Anthropic's wire schema uses name/input_schema members (no "function"
+    # nesting), so assert on its translated key instead.
+    schema_key = b'"input_schema":{' if provider == "anthropic" else b'"function":{'
+    schema_key_spaced = (
+        b'"input_schema": {' if provider == "anthropic" else b'"function": {'
+    )
+    if schema_compression_enabled:
+        assert b'"tools":[' in raw
+        assert schema_key in raw
+    else:
+        assert b'"tools": [' in raw
+        assert schema_key_spaced in raw
+
+
 # ------------------------------------- (2) multimodal through the live route
 
 def test_multimodal_live_route(routed):

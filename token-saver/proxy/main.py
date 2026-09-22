@@ -309,6 +309,7 @@ async def _forward_via_adapter(
     adapter: ProviderAdapter,
     base_url: str,
     stream: bool,
+    minify_tools: bool,
 ) -> httpx.Response:
     """PA-1 live path: translate the (already-processed) OpenAI-shaped body to
     the provider's wire shape, send it to that provider's base URL, and return
@@ -329,9 +330,15 @@ async def _forward_via_adapter(
         path = path[3:]
     elif base.endswith("/v1") and path == "v1":
         path = ""
+    # ``httpx(..., json=...)`` always applies its own compact encoder, which
+    # would make TOOL_SCHEMA_COMPRESSION_ENABLED ineffective on routed
+    # providers. Serialize the translated wire body ourselves so only the
+    # validated tools value is compacted when the feature is enabled.
+    headers.setdefault("content-type", "application/json")
     req = client.build_request(
         "POST", f"{base}/{path}".rstrip("/") if path else base,
-        json=wire.json_body, headers=headers
+        content=_serialize_request_payload(wire.json_body, minify_tools=minify_tools),
+        headers=headers,
     )
     resp = await client.send(req, stream=stream)
     return resp
@@ -473,7 +480,7 @@ async def _forward(request: Request, body: bytes, path: str):
 
 
 async def _forward_routed(request: Request, model: str, payload: bytes,
-                          stream: bool) -> tuple[httpx.Response, str]:
+                          stream: bool, *, minify_tools: bool = False) -> tuple[httpx.Response, str]:
     """PA-1 live-path dispatch: adapter + provider base URL for a model.
 
     Returns (response, provider_name). Falls back to legacy single-upstream
@@ -506,7 +513,7 @@ async def _forward_routed(request: Request, model: str, payload: bytes,
                 or registry.base_url_for(adapter.name)
                 or s.upstream_base_url)
     resp = await _forward_via_adapter(request, model, payload, adapter,
-                                      base_url, stream)
+                                      base_url, stream, minify_tools)
     return resp, adapter.name
 
 
@@ -590,13 +597,10 @@ async def chat_completions(request: Request):
     # JSON/RAG-shaped prompts from passthrough to compress — cleaning
     # requests the taxonomy protects and manufacturing compress routes.
     # Classification is computed before any transform.
-    # Taxonomy v1.1 §5: L1 is OFF for passthrough routes — a
-    # passthrough-classified request reaches upstream byte-identical,
-    # independent of L1_ENABLED/COMPRESSION_ENABLED.
-    # Tool-calling is a hard correctness boundary. A prose-heavy agent turn
-    # still carries machine-readable protocol state that neither L1 nor the
-    # lossy compressor may rewrite. Keep this decision on the raw envelope so
-    # normalization cannot hide a partial tool-call marker.
+    # Tool-calling is a hard correctness boundary for lossy compression. Keep
+    # this decision on the raw envelope so normalization cannot hide a partial
+    # tool-call marker. The L1 path below is more granular: it may clean only
+    # eligible tool-result content while preserving every protocol envelope.
     tool_calling = has_tool_calling_state(body)
     classify_needed = s.compression_enabled or s.l1_enabled
     route = (
@@ -604,6 +608,7 @@ async def chat_completions(request: Request):
         if tool_calling
         else (classify(messages) if classify_needed else "passthrough")
     )
+    tool_messages_before = messages
 
     # --- V1.2.1: deterministic codebase-context optimization ---
     # Run before L1, while deliberately retaining the raw tool-protocol hard
@@ -631,15 +636,66 @@ async def chat_completions(request: Request):
 
     l1_tokens_stripped = 0
     l1_applied = False
-    if s.l1_enabled and not tool_calling and _l1_eligible(messages, route):
+    if s.l1_enabled and _l1_eligible(messages, route):
         l1_before = count_messages(messages, model)
-        l1_messages = _l1_clean_messages(messages)
+        l1_messages = _l1_clean_messages(
+            messages,
+            tool_result_compression_enabled=s.tool_result_compression_enabled,
+            tool_calling=tool_calling,
+        )
         l1_after = count_messages(l1_messages, model)
         if l1_messages != messages:
             messages = l1_messages
             body = {**body, "messages": l1_messages}
             l1_applied = True
         l1_tokens_stripped = max(0, l1_before - l1_after)
+
+    # Tool attribution is a subset of L1's message delta plus the lossless
+    # schema-serialization delta. It is deliberately separate from the L1
+    # total so dashboards can report savings from tool-heavy traffic without
+    # adding it to l1_tokens_stripped a second time.
+    from .tool_protocol import (
+        is_tool_result_compressible,
+        is_tool_schema_compressible,
+    )
+
+    def count_tool_result_content(tool_messages: list[dict]) -> int:
+        total = 0
+        for message in tool_messages:
+            if not is_tool_result_compressible(message):
+                continue
+            content = message.get("content")
+            if isinstance(content, str):
+                total += count_text(content, model)
+            elif isinstance(content, list):
+                total += sum(
+                    count_text(part["text"], model)
+                    for part in content
+                    if isinstance(part, dict)
+                    and part.get("type") == "text"
+                    and isinstance(part.get("text"), str)
+                )
+        return total
+
+    tool_result_before = count_tool_result_content(tool_messages_before)
+    tool_result_after = count_tool_result_content(messages)
+    tool_result_saved = (
+        max(0, tool_result_before - tool_result_after)
+        if s.tool_result_compression_enabled else 0
+    )
+    tools = body.get("tools")
+    tool_schema_minified = (
+        s.tool_schema_compression_enabled
+        and is_tool_schema_compressible(tools)
+    )
+    tool_schema_saved = 0
+    if tool_schema_minified:
+        tool_schema_saved = max(
+            0,
+            count_text(json.dumps(tools), model)
+            - count_text(json.dumps(tools, separators=(",", ":")), model),
+        )
+    tool_compression_saved = tool_result_saved + tool_schema_saved
 
     # --- PA-4: exact-prefix cache detection ---
     # Cache key = CLEAN body (AC-P1f / taxonomy §1). L1 runs above; the key
@@ -837,18 +893,22 @@ async def chat_completions(request: Request):
         )
 
     in_after = count_messages(body.get("messages") or [], model)
-    payload = json.dumps(body).encode()
+    payload = _serialize_request_payload(body, minify_tools=tool_schema_minified)
 
     # --- C7: upstream transport failures surface as normalized errors ---
     # AC-A9: transport failures and relayed provider errors share ONE
     # normalizer (_normalized_error) so every client-facing failure has the
     # same envelope shape regardless of where it originated.
     try:
-        resp, provider = await _forward_routed(request, model, payload, stream=True)
+        resp, provider = await _forward_routed(
+            request, model, payload, stream=True,
+            minify_tools=tool_schema_minified,
+        )
     except UnknownProviderError as exc:
         _log(model, route or "passthrough", in_before, in_after, 0,
              (time.perf_counter() - started) * 1000, compressed, 400,
              cache_status=cache_status,
+             tool_compression_saved=tool_compression_saved,
              provider=provider if s.provider_routing else "legacy",
              dose_tier=dose_tier_ctx, grounded_risk=grounded_risk_ctx,
              envelope_shape=envelope_shape)
@@ -861,6 +921,7 @@ async def chat_completions(request: Request):
         _log(model, route or "passthrough", in_before, in_after, 0,
              (time.perf_counter() - started) * 1000, compressed, 504,
              cache_status=cache_status,
+             tool_compression_saved=tool_compression_saved,
              provider=provider if s.provider_routing else "legacy",
              dose_tier=dose_tier_ctx, grounded_risk=grounded_risk_ctx,
              envelope_shape=envelope_shape)
@@ -873,6 +934,7 @@ async def chat_completions(request: Request):
         _log(model, route or "passthrough", in_before, in_after, 0,
              (time.perf_counter() - started) * 1000, compressed, 502,
              cache_status=cache_status,
+             tool_compression_saved=tool_compression_saved,
              provider=provider if s.provider_routing else "legacy",
              dose_tier=dose_tier_ctx, grounded_risk=grounded_risk_ctx,
              envelope_shape=envelope_shape)
@@ -901,8 +963,14 @@ async def chat_completions(request: Request):
             retry_body = {k: v for k, v in body.items()
                           if k not in injected_keys}
             in_after = count_messages(retry_body.get("messages") or [], model)
-            resp = await _forward(
-                request, json.dumps(retry_body).encode(), "chat/completions"
+            resp, provider = await _forward_routed(
+                request,
+                model,
+                _serialize_request_payload(
+                    retry_body, minify_tools=tool_schema_minified
+                ),
+                stream=True,
+                minify_tools=tool_schema_minified,
             )
         else:
             # Not the mandatory-reasoning error: relay the 400 raw, but the
@@ -918,6 +986,7 @@ async def chat_completions(request: Request):
         resp, started, model=model, route=route, in_before=in_before,
         in_after=in_after, compressed=compressed, streaming=streaming,
         cache_status=cache_status, l1_tokens_stripped=l1_tokens_stripped,
+        tool_compression_saved=tool_compression_saved,
         # B-24/AC-A12: attribute the ledger to the row the request actually
         # served under. Routing off = legacy single-upstream: attribute to the
         # seeded 'legacy' providers row, NOT the prefix table — the prefix
@@ -933,6 +1002,23 @@ async def chat_completions(request: Request):
         semantic_embedding=semantic_embedding,
         semantic_prompt_hash=semantic_prompt_hash,
     )
+
+
+def _serialize_request_payload(body: dict, *, minify_tools: bool) -> bytes:
+    """Serialize only a validated tools array compactly, preserving all else."""
+    if not minify_tools:
+        return json.dumps(body).encode()
+    serialized_fields = []
+    for key, value in body.items():
+        serialized_value = (
+            json.dumps(value, separators=(",", ":"))
+            if key == "tools" else json.dumps(value)
+        )
+        # The compacted tools member must also drop the space after the
+        # member colon, or the setting saves nothing on the wire.
+        separator = ":" if key == "tools" else ": "
+        serialized_fields.append(f"{json.dumps(key)}{separator}{serialized_value}")
+    return ("{" + ", ".join(serialized_fields) + "}").encode()
 
 
 def _normalized_error(status: int, message: str, *,
@@ -978,6 +1064,7 @@ async def _relay(
     streaming: bool = False,
     cache_status: str = "miss",
     l1_tokens_stripped: int = 0,
+    tool_compression_saved: int = 0,
     provider: str | None = None,
     extra_headers: dict[str, str] | None = None,
     dose_tier: str | None = None,
@@ -1045,6 +1132,7 @@ async def _relay(
                      cache_status=cache_status,
                      l1_tokens_stripped=l1_tokens_stripped,
                      l1_savings=l1_savings,
+                     tool_compression_saved=tool_compression_saved,
                      provider=provider,
                      dose_tier=dose_tier, grounded_risk=grounded_risk,
                      envelope_shape=envelope_shape)
@@ -1159,6 +1247,7 @@ async def _relay(
                      cache_status=cache_status,
                      l1_tokens_stripped=l1_tokens_stripped,
                      l1_savings=l1_savings,
+                     tool_compression_saved=tool_compression_saved,
                      provider=provider,
                      dose_tier=dose_tier, grounded_risk=grounded_risk,
                      envelope_shape=envelope_shape)
@@ -1203,6 +1292,7 @@ async def _relay(
             _log(model, route, in_before, in_after, 0, latency_ms,
                  compressed, resp.status_code, cache_status=cache_status,
                  l1_tokens_stripped=l1_tokens_stripped, l1_savings=l1_savings,
+                 tool_compression_saved=tool_compression_saved,
                  provider=provider,
                  dose_tier=dose_tier, grounded_risk=grounded_risk,
                  envelope_shape=envelope_shape)
@@ -1252,6 +1342,7 @@ async def _relay(
          cache_status=cache_status,
          l1_tokens_stripped=l1_tokens_stripped,
          l1_savings=l1_savings,
+         tool_compression_saved=tool_compression_saved,
          provider=provider,
          dose_tier=dose_tier, grounded_risk=grounded_risk,
          envelope_shape=envelope_shape)
@@ -1297,6 +1388,7 @@ LEDGER_WRITE_FAILURES = 0
 def _log(model, route, in_before, in_after, output_tokens,
          latency_ms, compressed, status, cache_status="miss",
          cache_savings=0.0, l1_tokens_stripped=0, l1_savings=0.0,
+         tool_compression_saved=0,
          provider=None, dose_tier=None, grounded_risk=None,
          envelope_shape=None, embedding_version=None, quality_version=None):
     global LEDGER_WRITE_FAILURES
@@ -1311,6 +1403,7 @@ def _log(model, route, in_before, in_after, output_tokens,
             cache_status=cache_status, cache_savings=cache_savings,
             l1_tokens_stripped=l1_tokens_stripped,
             l1_savings=l1_savings,
+            tool_compression_saved=tool_compression_saved,
             provider=provider,
             dose_tier=dose_tier, grounded_risk=grounded_risk,
             envelope_shape=envelope_shape,

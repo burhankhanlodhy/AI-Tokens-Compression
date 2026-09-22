@@ -456,7 +456,7 @@ async def test_ac_p1d_cache_hit_survives_conciseness_toggle(
     upstream_bodies: list[dict] = []
     cache_keys: list[str] = []
 
-    async def fake_forward(request, model, payload, stream):
+    async def fake_forward(request, model, payload, stream, minify_tools=False):
         upstream_bodies.append(json.loads(payload))
         return httpx.Response(200, json={
             "id": "p1d", "model": model,

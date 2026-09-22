@@ -107,6 +107,11 @@ class Settings(BaseSettings):
     # whose ENTIRE content is pretty-printed JSON (no surrounding prose)
     # gets whitespace-compacted — see the README flag note.
     l1_enabled: bool = True
+    # Tool protocol is selectively eligible for lossless transforms. These
+    # switches never permit rewriting assistant tool_calls, arguments,
+    # tool_choice, or message envelopes.
+    tool_result_compression_enabled: bool = True
+    tool_schema_compression_enabled: bool = True
 
     # --- PA-1: multi-provider routing ---
     # "off" (default): legacy single-upstream behavior — everything goes to

@@ -25,10 +25,20 @@ configures it in `.env`) and are run from `token-saver/`.
    pre-`b4baf47` `chk_cache_status` constraint. Do **not** skip on a legacy
    volume: the app must record all four literals including
    `semantic_threshold_miss`.
+5. **`migrations/20260922_t1_tool_compression_ledger.sql`** — adds
+   `requests.tool_compression_saved` (INTEGER NOT NULL DEFAULT 0), the
+   additive v1.2.1 attribution column for selective tool-protocol
+   compression savings. Unlike 1-4 this one is deliberately idempotent
+   (`ADD COLUMN IF NOT EXISTS`) because the canonical fresh-volume schema
+   already declares the final column and Compose initdb executes this
+   migration after it — both sequences must be valid. Savings are an
+   attribution subset: dashboards must never add them to
+   `l1_tokens_stripped`.
 
 Every migration is fire-once and idempotent-hostile by design: they fail
-loudly rather than silently repairing a partially-applied state. Apply each
-with:
+loudly rather than silently repairing a partially-applied state — **except
+migration 5**, which is intentionally idempotent for the reason above. Apply
+each with:
 
 ```bash
 psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \
