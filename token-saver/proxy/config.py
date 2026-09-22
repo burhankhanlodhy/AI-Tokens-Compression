@@ -65,6 +65,11 @@ class Settings(BaseSettings):
 
     # --- PA-4: exact-prefix cache detection ---
     cache_enabled: bool = True
+    # v1.2.1 tool schemas are expensive repeated prompt context. Minification
+    # is independently switchable; schema-cache use is additionally gated by
+    # CACHE_ENABLED so one switch disables all in-process cache behavior.
+    tool_schema_minify: bool = True
+    tool_schema_cache_enabled: bool = True
     # AC-PC5: semantic cache stays off until the PC4 calibration, isolation,
     # invalidation, and filtered-HNSW release gate are green. This is a
     # deployment-only switch; no request header can enable it.
