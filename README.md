@@ -124,6 +124,11 @@ All settings are env vars (see `.env.example` and `proxy/config.py`):
 - `UPSTREAM_BASE_URL` — any OpenAI-compatible provider (default: OpenRouter)
 - `COMPRESSION_ENABLED` / `OUTPUT_CONCISENESS_ENABLED` /
   `DISABLE_REASONING_BY_DEFAULT` — feature flags
+- `TOOL_RESULT_OPTIMIZATION` — bounds completed `role=tool` content before
+  upstream forwarding, without rewriting tool calls or schemas (default:
+  `true`). `TOOL_RESULT_MAX_TOKENS` defaults to `5000`; exact-result caching
+  and file/log filtering default on through `TOOL_RESULT_CACHE_ENABLED` and
+  `TOOL_RESULT_FILTERING`.
 - `L1_ENABLED` — lossless L1 structural cleanup, **on by default** (since
   B-26): whitespace-compacts JSON, removes duplicate/empty system blocks and
   dead RAG metadata. On the passthrough path, disabling L1 keeps the input

@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     # the Output conciseness section below was a dead trap (removed B2-c).
     output_conciseness_enabled: bool = False
 
+    # --- Tool-result optimization (output-side, Phase 4) ---
+    # Tool call schemas remain byte-for-byte protocol data.  Only completed
+    # role=tool content is filtered/truncated before upstream forwarding.
+    tool_result_optimization: bool = True
+    tool_result_max_tokens: int = Field(default=5000, ge=32)
+    tool_result_cache_enabled: bool = True
+    tool_result_filtering: bool = True
+
     # Reasoning control (PM v4 ruling): the proxy injects a model-family-
     # specific control by default. The old `{"enabled": false}` suppress
     # control was rejected outright by reasoning-mandatory endpoints (OpenRouter
