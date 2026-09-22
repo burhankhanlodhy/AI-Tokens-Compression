@@ -42,7 +42,7 @@ _SHELL_NOISE = re.compile(
     r"git\s+(?:trace|verbose)\b|"
     r"remote:\s+(?:enumerating|counting|compressing)\b|"
     r"(?:enumerating|counting|compressing|receiving|resolving)\s+objects:|"
-    r"file\s+\".*\",\s+line\s+\d+|at\s+.+\(.+:\d+(?::\d+)?\)"
+    r"at\s+.+\(.+:\d+(?::\d+)?\)"
     r")",
     re.IGNORECASE,
 )
@@ -182,15 +182,41 @@ def deduplicate_imports(messages: list[dict]) -> list[dict]:
 
 
 def _filter_plain_shell_text(content: str) -> str:
+    """Remove recognizable shell noise, retaining errors, warnings and results.
+    Preserves Python traceback frames as they are error content.
+    """
     kept: list[str] = []
-    for line in content.splitlines(keepends=True):
+    lines = content.splitlines(keepends=True)
+    
+    in_traceback = False
+    
+    for line in lines:
         stripped = line.rstrip("\r\n")
+        
+        # Check if this line starts a Python traceback
+        if stripped == "Traceback (most recent call last):":
+            in_traceback = True
+            kept.append(line)
+            continue
+            
+        # If we're in a traceback, check if this line is part of it
+        if in_traceback:
+            # Traceback frame lines match the pattern: whitespace + File "...", line N
+            if re.match(r"^\s+File \".*\", line \d+", stripped):
+                kept.append(line)  # Keep traceback frame lines
+                continue
+            # If it doesn't match the frame pattern, we're done with traceback
+            elif not stripped.startswith(" "):
+                in_traceback = False
+        
+        # Apply existing filters
         if _CRITICAL.search(stripped):
             kept.append(line)
         elif _TIMESTAMP.search(stripped) or _SHELL_NOISE.search(stripped) or _PYTEST_PASS.search(stripped):
-            continue
+            continue  # Filter out noise
         else:
             kept.append(line)
+            
     return "".join(kept)
 
 

@@ -116,6 +116,27 @@ def test_filter_shell_output_removes_noise_and_keeps_critical_lines():
     assert "Process exited with code 1" in optimized
 
 
+def test_filter_shell_output_preserves_python_traceback_frames():
+    """Regression test for bug: Shell filter was deleting Python traceback frames.
+    Traceback frames are error content and must be preserved per AC-C3-QA3.
+    """
+    traceback_input = """Traceback (most recent call last):
+  File "app/models/user.py", line 42, in validate_email
+  File "app/utils/validators.py", line 17, in check
+ValueError: invalid email format"""
+
+    optimized = filter_shell_output(traceback_input)
+
+    # All lines should be preserved
+    assert "Traceback (most recent call last):" in optimized
+    assert 'File "app/models/user.py", line 42, in validate_email' in optimized
+    assert 'File "app/utils/validators.py", line 17, in check' in optimized
+    assert "ValueError: invalid email format" in optimized
+    
+    # Specifically check that we have all 4 lines
+    lines = optimized.splitlines()
+    assert len(lines) == 4, f"Expected 4 lines, got {len(lines)}: {lines}"
+
 def test_optimizer_can_disable_dedupe_without_disabling_shell_filter(monkeypatch):
     monkeypatch.setenv("CODEBASE_DEDUPE_IMPORTS", "false")
     monkeypatch.setenv("SHELL_OUTPUT_FILTERING", "true")
