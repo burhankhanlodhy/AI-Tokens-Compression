@@ -35,7 +35,7 @@ def test_versions_are_server_derived_and_dimensions_are_pinned(monkeypatch):
     monkeypatch.setenv("EMBEDDING_MODEL", "text-embedding-3-small")
     monkeypatch.setenv("EMBEDDING_DIMENSIONS", "1536")
     assert semantic_cache.derive_embedding_version() == "openai:text-embedding-3-small@1536"
-    assert semantic_cache.derive_quality_version() == "1.0.1"
+    assert semantic_cache.derive_quality_version() == "1.2.0"
 
 
 def test_lookup_result_kinds_are_explicit():
