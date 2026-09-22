@@ -155,6 +155,25 @@ case "$CACHE_STATUS_CONSTRAINT" in
 esac
 printf 'C-5: fresh-volume chk_cache_status accepts all four frozen literals\n'
 
+# T1 fresh-volume regression: the base schema has the final ledger field and
+# Compose also executes the additive upgrade migration.  This query proves the
+# complete initdb sequence reaches a running database rather than failing on a
+# duplicate ADD COLUMN, while preserving the default required by the writer.
+TOOL_COMPRESSION_COLUMN=$(compose exec -T postgres psql -U postgres -d token_saver -Atqc \
+  "SELECT concat_ws('|',
+      (SELECT data_type FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'requests'
+         AND column_name = 'tool_compression_saved'),
+      (SELECT column_default FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'requests'
+         AND column_name = 'tool_compression_saved'));")
+TOOL_COMPRESSION_COLUMN=${TOOL_COMPRESSION_COLUMN//$'\r'/}
+if [[ "$TOOL_COMPRESSION_COLUMN" != 'integer|0' ]]; then
+  printf 'C-5 FAIL: tool_compression_saved fresh-volume column was %q (expected integer|0)\n' "$TOOL_COMPRESSION_COLUMN" >&2
+  exit 1
+fi
+printf 'C-5: fresh-volume tool_compression_saved migration sequence verified\n'
+
 # The request must reach the real configured upstream.  No provider account is
 # needed: the deliberately invalid credential is expected to be rejected.
 REQUEST_BODY='{"model":"openai/gpt-4o-mini","messages":[{"role":"user","content":"C5 acceptance smoke: reply with one word."}]}'

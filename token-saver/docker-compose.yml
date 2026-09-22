@@ -29,6 +29,8 @@ services:
       # run its fresh-volume bridge below; legacy volumes use the same SQL file.
       - ./migrations/20260920_ac_pcui_cache_status.sql:/opt/token-saver-migrations/20260920_ac_pcui_cache_status.sql:ro
       - ./migrations/20260920_ac_pcui_cache_status_init.sh:/docker-entrypoint-initdb.d/40-pcui-cache-status.sh:ro
+      # T1 ledger field used by the selective tool-compression writer.
+      - ./migrations/20260922_t1_tool_compression_ledger.sql:/docker-entrypoint-initdb.d/45-t1-tool-compression-ledger.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d token_saver"]
       interval: 5s

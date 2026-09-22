@@ -23,6 +23,10 @@ from proxy.config import get_settings
 from proxy.compression import compress_messages, has_compressible_content
 from proxy.counting import count_messages, count_text, inject_conciseness
 from proxy.l1_clean import clean_messages
+from proxy.tool_protocol import (
+    is_tool_result_compressible,
+    is_tool_schema_compressible,
+)
 
 
 # ---------- classifier ----------
@@ -80,14 +84,64 @@ def test_compression_never_rewrites_tool_protocol_messages(monkeypatch):
     assert compress_messages(messages) == messages
 
 
-def test_l1_never_rewrites_tool_protocol_messages():
+def test_tool_compression_eligibility_distinguishes_results_from_call_envelopes():
+    tool_result = {"role": "tool", "tool_call_id": "call_1", "content": "{}"}
+    tool_call = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"id": "call_1", "function": {"arguments": "{}"}}],
+    }
+
+    assert is_tool_result_compressible(tool_result) is True
+    assert is_tool_result_compressible(tool_call) is False
+    assert is_tool_result_compressible({"role": "user", "content": "{}"}) is False
+    assert is_tool_schema_compressible([{"type": "function", "function": {}}]) is True
+    assert is_tool_schema_compressible([]) is False
+    assert is_tool_schema_compressible(["not-a-schema"]) is False
+
+
+def test_l1_cleans_tool_result_but_never_rewrites_tool_call_envelope():
     messages = [
         {"role": "tool", "tool_call_id": "call_1",
-         "content": '{"content":"result","score":0.9}'},
+         "content": '{\n  "content": "result",\n  "score": 0.9\n}'},
         {"role": "assistant", "content": '{"content":"plan","score":0.9}',
          "tool_calls": [{"id": "call_1", "function": {"arguments": "{}"}}]},
     ]
-    assert clean_messages(messages) == messages
+    cleaned = clean_messages(messages)
+    assert cleaned[0]["content"] == '{"content":"result","score":0.9}'
+    assert cleaned[0]["tool_call_id"] == "call_1"
+    assert cleaned[1] == messages[1]
+
+
+def test_tool_result_compaction_preserves_json_number_and_escape_lexemes():
+    content = (
+        '{ "amount": 123456789012345678901234567890.12345678901234567890, '
+        '"negative_zero": -0, "escaped": "\\u00e9" }'
+    )
+    cleaned = clean_messages([
+        {"role": "tool", "tool_call_id": "call_1", "content": content}
+    ])
+    assert cleaned[0]["content"] == (
+        '{"amount":123456789012345678901234567890.12345678901234567890,'
+        '"negative_zero":-0,"escaped":"\\u00e9"}'
+    )
+
+
+def test_tool_calling_l1_only_cleans_safe_tool_result_and_system_content():
+    messages = [
+        {"role": "system", "content": '{\n  "instruction": "use tools"\n}'},
+        {"role": "system", "content": '{\n  "instruction": "use tools"\n}'},
+        {"role": "user", "content": '{\n  "query": "unchanged"\n}'},
+        {"role": "tool", "tool_call_id": "call_1", "content": '{\n  "ok": true\n}'},
+        {"role": "assistant", "tool_calls": [{"id": "call_1"}], "content": ""},
+    ]
+    assert clean_messages(messages, tool_calling=True) == [
+        {"role": "system", "content": '{"instruction":"use tools"}'},
+        {"role": "system", "content": '{"instruction":"use tools"}'},
+        messages[2],
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"ok":true}'},
+        messages[4],
+    ]
 
 
 # ---------- counting ----------
@@ -167,6 +221,20 @@ def test_stats_roundtrip(postgres_stats, tmp_db):
     assert data["by_route"][0]["route"] == "compress"
 
 
+def test_stats_persists_tool_compression_attribution(tmp_db):
+    stats.log_request(
+        model="gpt-4o-mini", route="passthrough",
+        input_tokens_before=120, input_tokens_after=100, output_tokens=0,
+        est_cost_before=0.00006, est_cost_after=0.00005, latency_ms=1.0,
+        compressed=False, status=200, tool_compression_saved=20,
+    )
+    with stats.get_conn() as conn:
+        row = conn.execute(
+            "SELECT tool_compression_saved FROM requests ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert row["tool_compression_saved"] == 20
+
+
 # ---------- proxy passthrough (mocked upstream) ----------
 
 UPSTREAM_RESPONSE = {
@@ -228,19 +296,20 @@ async def capturing_client(tmp_db):
 
 
 @pytest.mark.asyncio
-async def test_tool_calling_request_skips_content_transforms(
+async def test_tool_calling_request_selectively_cleans_safe_fields(
         capturing_client, monkeypatch):
-    """Agent/tool protocol traffic bypasses compression and L1 cleaning."""
+    """Tool calls stay exact while safe result/schema bytes are compacted."""
     c, captured = capturing_client
-    from proxy import l1_clean, main as main_module
+    from proxy import main as main_module
+
+    monkeypatch.setenv("L1_ENABLED", "true")
+    monkeypatch.setenv("TOOL_RESULT_COMPRESSION_ENABLED", "true")
+    monkeypatch.setenv("TOOL_SCHEMA_COMPRESSION_ENABLED", "true")
+    get_settings.cache_clear()
 
     monkeypatch.setattr(
         main_module, "compress_messages",
         lambda messages: pytest.fail("tool-calling request reached compression"),
-    )
-    monkeypatch.setattr(
-        l1_clean, "clean_messages",
-        lambda messages: pytest.fail("tool-calling request reached L1"),
     )
     payload = {
         "model": "z-ai/glm-5.3-flash",
@@ -251,7 +320,7 @@ async def test_tool_calling_request_skips_content_transforms(
                 "id": "call_1", "type": "function",
                 "function": {"name": "lookup", "arguments": '{"city":"Paris"}'},
             }]},
-            {"role": "tool", "tool_call_id": "call_1", "content": '{"ok":true}'},
+            {"role": "tool", "tool_call_id": "call_1", "content": '{\n  "ok": true,\n  "nested": {"value": 1}\n}'},
         ],
         "tools": [{"type": "function", "function": {
             "name": "lookup", "parameters": {"type": "object"},
@@ -264,12 +333,92 @@ async def test_tool_calling_request_skips_content_transforms(
         json=payload,
     )
     assert response.status_code == 200
-    assert captured["body"]["messages"] == payload["messages"]
+    assert captured["body"]["messages"][0] == payload["messages"][0]
+    assert captured["body"]["messages"][1] == payload["messages"][1]
+    assert captured["body"]["messages"][2] == payload["messages"][2]
+    assert captured["body"]["messages"][3]["tool_call_id"] == "call_1"
+    assert captured["body"]["messages"][3]["content"] == '{"ok":true,"nested":{"value":1}}'
     assert captured["body"]["tools"] == payload["tools"]
     assert captured["body"]["tool_choice"] == payload["tool_choice"]
+    assert b'"tools":[{"type":"function"' in captured["raw"]
+    assert b'"tool_choice": "auto"' in captured["raw"]
+    assert b'"tool_calls": [{' in captured["raw"]
+    with stats.get_conn() as conn:
+        row = conn.execute(
+            "SELECT tool_compression_saved FROM requests ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert row["tool_compression_saved"] > 0
     # The P0 gate is limited to content transforms; existing model-family
     # reasoning policy remains unchanged pending a separate product ruling.
     assert captured["body"]["reasoning"] == {"enabled": False}
+
+
+@pytest.mark.asyncio
+async def test_tool_result_content_parts_are_l1_cleaned_and_attributed(
+        capturing_client, monkeypatch):
+    c, captured = capturing_client
+    monkeypatch.setenv("L1_ENABLED", "true")
+    monkeypatch.setenv("TOOL_RESULT_COMPRESSION_ENABLED", "true")
+    monkeypatch.setenv("TOOL_SCHEMA_COMPRESSION_ENABLED", "false")
+    get_settings.cache_clear()
+
+    response = await c.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-key-123"},
+        json={
+            "model": "gpt-4o-mini",
+            "messages": [
+                {"role": "tool", "tool_call_id": "call_1", "content": [{
+                    "type": "text", "text": '{\n  "ok": true\n}'
+                }]},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["body"]["messages"][0]["content"][0]["text"] == '{"ok":true}'
+    with stats.get_conn() as conn:
+        row = conn.execute(
+            "SELECT tool_compression_saved FROM requests ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert row["tool_compression_saved"] > 0
+
+
+@pytest.mark.asyncio
+async def test_tool_result_compression_disabled_leaves_content_untouched(
+        capturing_client, monkeypatch):
+    """AC-T5: TOOL_RESULT_COMPRESSION_ENABLED=false bypasses the transform.
+
+    The old conservative behavior must remain recoverable: the tool result
+    content reaches upstream byte-identical and no tool savings are claimed.
+    """
+    c, captured = capturing_client
+    monkeypatch.setenv("L1_ENABLED", "true")
+    monkeypatch.setenv("TOOL_RESULT_COMPRESSION_ENABLED", "false")
+    monkeypatch.setenv("TOOL_SCHEMA_COMPRESSION_ENABLED", "false")
+    get_settings.cache_clear()
+
+    raw_tool_content = '{\n  "ok": true,\n  "nested": {"value": 1}\n}'
+    response = await c.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-key-123"},
+        json={
+            "model": "gpt-4o-mini",
+            "messages": [
+                {"role": "tool", "tool_call_id": "call_1",
+                 "content": raw_tool_content},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["body"]["messages"][0]["content"] == raw_tool_content
+    assert captured["raw"].count(b"\\n") >= 1  # pretty-printing preserved
+    with stats.get_conn() as conn:
+        row = conn.execute(
+            "SELECT tool_compression_saved FROM requests ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert row["tool_compression_saved"] == 0
 
 
 @pytest.mark.asyncio

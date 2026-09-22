@@ -32,7 +32,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .tool_protocol import is_tool_protocol_message
+from .tool_protocol import is_tool_protocol_message, is_tool_result_compressible
 
 # Reserved answer-bearing keys (taxonomy §4) — never dropped, never recursed.
 RESERVED_KEYS = {"content", "text", "answer", "passage", "doc", "query"}
@@ -284,12 +284,66 @@ def _clean_content(content: Any, c1: bool, c3: bool, embedded: bool) -> Any:
     return content
 
 
+def _compact_json_whitespace(text: str) -> str | None:
+    """Validate and compact a JSON value without changing its token lexemes."""
+    candidate = text.strip()
+    if not (candidate.startswith(("{", "[")) and candidate.endswith(("}", "]"))):
+        return None
+    try:
+        json.loads(candidate)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    out: list[str] = []
+    in_string = False
+    escaped = False
+    for char in candidate:
+        if in_string:
+            out.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            out.append(char)
+            in_string = True
+        elif not char.isspace():
+            out.append(char)
+    return "".join(out)
+
+
+def _clean_protocol_content(content: Any, c1: bool) -> Any:
+    """C1-only content cleanup for protocol-adjacent data.
+
+    Decoding and re-encoding JSON can rewrite numeric precision, negative zero,
+    and escape spelling. This scanner removes only structural whitespace after
+    JSON validation, preserving every value lexeme byte-for-byte.
+    """
+    if not c1:
+        return content
+    if isinstance(content, str):
+        compact = _compact_json_whitespace(content)
+        return compact if compact is not None else content
+    if isinstance(content, list):
+        return [
+            ({**part, "text": _clean_protocol_content(part["text"], c1)}
+             if isinstance(part, dict) and part.get("type") == "text"
+             and isinstance(part.get("text"), str)
+             else part)
+            for part in content
+        ]
+    return content
+
+
 def clean_messages(
     messages: list[dict],
     c1: bool = True,
     c2: bool = True,
     c3: bool = True,
     embedded: bool = False,
+    tool_result_compression_enabled: bool = True,
+    tool_calling: bool = False,
 ) -> list[dict]:
     """L1-clean a message list. Pure: same input -> byte-identical output.
 
@@ -308,14 +362,34 @@ def clean_messages(
     """
     out: list[dict] = []
     for msg in messages:
-        # Never parse or rewrite protocol envelopes. In particular, tool
-        # results may contain source code and function arguments must retain
-        # their exact JSON spelling for the next model turn.
+        # Assistant tool-call envelopes are protocol-critical. A tool result
+        # retains its envelope and tool_call_id, but its content is eligible
+        # for the same lossless JSON cleanup as ordinary message content.
         if is_tool_protocol_message(msg):
-            out.append(msg)
+            if (
+                tool_result_compression_enabled
+                and is_tool_result_compressible(msg)
+            ):
+                cleaned = _clean_protocol_content(msg.get("content"), c1)
+                out.append(
+                    {**msg, "content": cleaned}
+                    if cleaned is not msg.get("content") else msg
+                )
+            else:
+                out.append(msg)
             continue
         role = msg.get("role")
         content = msg.get("content")
+        if tool_calling:
+            # A tool-bearing request may clean non-protocol system content,
+            # but never removes/reorders messages or rewrites user content.
+            # C2/C3 are intentionally excluded to preserve its envelope.
+            cleaned = (
+                _clean_protocol_content(content, c1)
+                if role == "system" else content
+            )
+            out.append({**msg, "content": cleaned} if cleaned is not content else msg)
+            continue
         if c2 and role == "system" and isinstance(content, str):
             if content.strip() == "":
                 continue  # empty/whitespace-only system block
