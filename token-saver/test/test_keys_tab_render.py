@@ -357,6 +357,71 @@ def test_c6_mid_session_401_clears_token_and_reprompts(tmp_path):
     assert "stale_token" not in out["html"]
 
 
+def test_c6_401_reprompt_preserves_pending_confirm_state(tmp_path):
+    # §4.5.4 / gate 6: a 401 striking a confirmed rotate/revoke must NOT cost
+    # the confirm state — while the token form is up the row still reads
+    # "Confirm revoke?" and the operator re-enters the token once, not the
+    # whole flow.
+    fx = _routes()
+    fx["_routes"]["POST /api/keys/k1/revoke"] = [
+        {"status": 401, "body": {"detail": "unauthorized"}},
+        {"body": {"id": "k1", "status": "revoked",
+                  "revoked_at": "2026-09-19T00:00:00Z"}},
+    ]
+    out = _run(tmp_path, fx, script=[
+        {"click": "rev-k1"},          # arm the two-step confirm (§4.3)
+        {"wait": 20},
+        {"click": "rev-k1"},          # confirm → POST → 401 → token prompt
+        {"wait": 40},
+    ])
+    html = out["html"]
+    # the refused write carried no header; the masked prompt rendered
+    assert [w["headers"].get("Authorization") for w in out["writes"]] == [None]
+    assert "Admin token" in html
+    assert '<input id="token-input" type="password"' in html
+    # the pending action's confirm state survived the 401 re-render
+    assert "Confirm revoke?" in html
+    assert "Revoked keys stop authenticating immediately." in html
+
+    # entering the token replays the SAME pending action — no re-arm needed —
+    # and the revoke completes (row flips to revoked on the refresh)
+    out2 = _run(tmp_path, fx, script=[
+        {"click": "rev-k1"}, {"wait": 20},
+        {"click": "rev-k1"}, {"wait": 40},
+        {"set": ["token-input", "tok_abc123"]},
+        {"click": "token-save"}, {"wait": 40},
+    ])
+    writes = out2["writes"]
+    assert [w["headers"].get("Authorization") for w in writes] == \
+        [None, "Bearer tok_abc123"]
+    assert writes[-1]["url"] == "/api/keys/k1/revoke"
+    assert '<span class="badge red">revoked</span>' in out2["html"]
+    assert "tok_abc123" not in out2["html"]
+
+
+def test_c6_mid_session_401_on_confirm_keeps_row_confirm_visible(tmp_path):
+    # §4.5.3+§4.5.4 combined: proxy restart (second, fresh 401) while a
+    # revoke is pending — token cleared, restart message shown, confirm state
+    # still preserved so one token re-entry finishes the action.
+    fx = _routes()
+    fx["_routes"]["POST /api/keys/k1/revoke"] = [
+        {"status": 401, "body": {"detail": "unauthorized"}},
+        {"status": 401, "body": {"detail": "unauthorized"}},
+    ]
+    out = _run(tmp_path, fx, script=[
+        {"click": "rev-k1"}, {"wait": 20},
+        {"click": "rev-k1"}, {"wait": 40},          # 401 #1 → prompt
+        {"set": ["token-input", "stale_token"]},
+        {"click": "token-save"}, {"wait": 40},      # 401 #2 → restart re-prompt
+    ])
+    html = out["html"]
+    assert "Token rejected — the proxy may have restarted." in html
+    assert "Enter the current startup-log token." in html
+    assert "Confirm revoke?" in html   # confirm state survived BOTH 401s
+    assert [w["headers"].get("Authorization") for w in out["writes"]] == \
+        [None, "Bearer stale_token"]
+    assert "stale_token" not in html
+
 def test_c6_key_drawer_renders_scoped_kpis_1to1(tmp_path):
     # §2.4: one fetch per open — /api/kpis?api_key_id=k1 — cards verbatim
     out = _run(tmp_path, _routes(), script=[
