@@ -100,6 +100,24 @@ def test_tool_compression_eligibility_distinguishes_results_from_call_envelopes(
     assert is_tool_schema_compressible(["not-a-schema"]) is False
 
 
+def test_eligibility_excludes_malformed_envelopes_and_tool_choice():
+    """AC-T5: malformed envelopes and tool-choice directives fail closed."""
+    # An empty/partial tool_calls value is still protocol state — never
+    # eligible, even though the list itself is empty.
+    assert is_tool_result_compressible({"role": "tool", "tool_calls": []}) is False
+    assert is_tool_result_compressible(
+        {"role": "assistant", "content": "", "tool_calls": []}
+    ) is False
+    # A tool-choice directive is not a schema: any non-empty-array of
+    # mappings is the only compressible shape for the tools slot.
+    assert is_tool_schema_compressible({"tool_choice": "auto"}) is False
+    assert is_tool_schema_compressible("auto") is False
+    assert is_tool_schema_compressible(None) is False
+    assert is_tool_schema_compressible(
+        [{"type": "function"}, "not-a-schema"]
+    ) is False
+
+
 def test_l1_cleans_tool_result_but_never_rewrites_tool_call_envelope():
     messages = [
         {"role": "tool", "tool_call_id": "call_1",
@@ -142,6 +160,64 @@ def test_tool_calling_l1_only_cleans_safe_tool_result_and_system_content():
         {"role": "tool", "tool_call_id": "call_1", "content": '{"ok":true}'},
         messages[4],
     ]
+
+
+def test_tool_schema_minification_preserves_function_calling_round_trip():
+    """AC-T3: minified tools stay semantically identical for function calling."""
+    from proxy.main import _serialize_request_payload
+
+    tools = [{
+        "type": "function",
+        "function": {
+            "name": "lookup_weather",
+            "description": "Look up weather for a city.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"},
+                    "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]},
+                },
+                "required": ["city"],
+            },
+        },
+    }]
+    body = {
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "user", "content": "weather in Paris?"}],
+        "tools": tools,
+        "tool_choice": {"type": "function", "function": {"name": "lookup_weather"}},
+    }
+
+    raw = _serialize_request_payload(body, minify_tools=True)
+    wire = json.loads(raw)
+
+    # The tools member is serialized compactly on the wire.
+    assert b'"tools":[' in raw
+    # The round-trip preserves every function-calling field exactly.
+    assert wire["tools"] == tools
+    assert wire["tool_choice"] == body["tool_choice"]
+    # Only the tools member is compacted; the rest of the body keeps the
+    # default (space-after-colon) serialization.
+    assert b'"model": "gpt-4o-mini"' in raw
+    assert b'"tool_choice": {' in raw
+    # Schema minification is whitespace-only: parsed values are identical.
+    assert wire["tools"][0]["function"]["parameters"]["required"] == ["city"]
+    assert wire["tools"][0]["function"]["name"] == "lookup_weather"
+
+
+def test_tool_schema_compression_disabled_keeps_default_serialization():
+    """AC-T5: TOOL_SCHEMA_COMPRESSION_ENABLED=false bypasses schema minify."""
+    from proxy.main import _serialize_request_payload
+
+    body = {
+        "model": "gpt-4o-mini",
+        "messages": [{"role": "user", "content": "hi"}],
+        "tools": [{"type": "function", "function": {"name": "lookup"}}],
+    }
+    raw = _serialize_request_payload(body, minify_tools=False)
+    assert b'"tools": [' in raw
+    # A flag-off request must be byte-identical to the plain serialization.
+    assert raw == json.dumps(body).encode()
 
 
 # ---------- counting ----------
