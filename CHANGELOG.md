@@ -47,9 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (default `text-embedding-3-small` @ 1536); changes bump
   `embedding_version` and quarantine existing entries until expiry.
 
-## [Unreleased]
+## [1.2.0] - 2026-09-21
 
-### Added (planned for v1.2.0)
+### Added
 
 - **L1 cleanup productionization** — the lossless structural cleanup moves
   from benchmark-hardened to production-hardened: eligibility gate shared
@@ -58,6 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   content class (passthrough-identical for lossy-on-all and L1-on-CODE;
   round-trip reversible for L1-on-JSON/RAG), and ledger attribution kept
   decomposition-safe (`l1_cost_saved` ⊆ `cost_saved`, never an addend).
+  Published production savings: 29.9% conservative (C1-only), 70.4% e2e with
+  production-default config (per-item range 18.7-80.6%, median 55.7%).
 - **Keys/Tenants auth hardening** — `ADMIN_TOKEN`-gated write endpoints
   (`POST /api/keys`, rotate, revoke) with boot-printed fallback token; the
   Keys & Tenants dashboard tab graduates with it. Read endpoints remain
@@ -66,10 +68,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   v1.1/v1.2: README configuration matrix (all `SEMANTIC_CACHE_*` env vars
   with real names and defaults), MIGRATIONS.md pgvector cutover runbook,
   and TUNING.md performance guide.
+- **UI fix** — confirm-state preservation across 401 re-prompts (§4.5.4),
+  preventing stale action resubmission after re-authentication.
 
-### Changed (planned for v1.2.0)
+### Changed
 
-- HNSW index build parameters ratified at `ef_construction=200` in the
+- **CI test suite floor** — raised to 710 passing tests (ratcheted in
+  .github/workflows/ci.yml; includes auth regression coverage for rotate/revoke).
+- **HNSW index build parameters** — ratified at `ef_construction=200` in the
   pc1 migration (the C1 operating point is conditional on it; the pre-v1.1
   default of 64 does not meet the frozen bar).
 
