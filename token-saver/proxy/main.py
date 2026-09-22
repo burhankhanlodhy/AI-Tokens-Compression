@@ -28,6 +28,7 @@ from .classifier import classify
 from .classifier import has_tool_calling_state
 from .compression import compress_messages, has_compressible_content
 from .config import estimate_cost, get_settings, load_pricing, reasoning_control_for
+from .tool_result_optimizer import optimize_tool_result
 from .counting import (
     count_messages,
     count_output,
@@ -547,6 +548,40 @@ def _normalize_messages(value: object) -> list[dict]:
     return normalized
 
 
+def _tool_call_arguments(messages: list[dict]) -> dict[str, dict]:
+    """Map OpenAI tool-call IDs to their decoded argument objects.
+
+    Tool-result optimization caches by call arguments rather than ephemeral
+    call IDs, so repeated agent-loop calls can reuse a previously processed
+    result while assistant tool-call envelopes remain byte-for-byte untouched.
+    Malformed or non-object arguments are deliberately ignored.
+    """
+    arguments_by_id: dict[str, dict] = {}
+    for message in messages:
+        calls = message.get("tool_calls")
+        if not isinstance(calls, list):
+            continue
+        for call in calls:
+            if not isinstance(call, dict) or not isinstance(call.get("id"), str):
+                continue
+            function = call.get("function")
+            if not isinstance(function, dict):
+                continue
+            raw_args = function.get("arguments")
+            if not isinstance(raw_args, str):
+                continue
+            try:
+                decoded = json.loads(raw_args)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(decoded, dict):
+                arguments_by_id[call["id"]] = {
+                    "tool_name": function.get("name"),
+                    "arguments": decoded,
+                }
+    return arguments_by_id
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
     started = time.perf_counter()
@@ -573,6 +608,25 @@ async def chat_completions(request: Request):
     # any transform, so compression AND L1 deltas are both visible in the
     # in_before -> in_after accounting (B2/B3).
     in_before = count_messages(messages, model)
+
+    # --- Phase 4: output-side tool-result optimization ---
+    # Assistant tool-call schemas remain protocol data and preserve their
+    # original object/argument bytes.  A completed role=tool result is user
+    # content, however, and is bounded before upstream forwarding.  This runs
+    # after recording the raw baseline and before the hard tool-protocol gate,
+    # which must continue to protect every other request transform.
+    if s.tool_result_optimization:
+        call_arguments = _tool_call_arguments(messages)
+        messages = [
+            optimize_tool_result(
+                message,
+                tool_call_args=call_arguments.get(message["tool_call_id"])
+                if isinstance(message.get("tool_call_id"), str) else None,
+            )
+            if message.get("role") == "tool" else message
+            for message in messages
+        ]
+        body = {**body, "messages": messages}
 
     # --- AC-P6f live observation channel: envelope-shape flag on the RAW
     # request content (pre-L1, pre-compression — the content as received).
