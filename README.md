@@ -8,6 +8,14 @@ instruction, suppresses hidden reasoning tokens by default, and records
 token/cost savings in a Postgres ledger (SQLite remains the local fallback —
 see [Storage notes](#storage-notes)).
 
+**What it saves:** the honest, headline claim is **lossless L1 structural
+cleanup** — 29.9%–70.4% input-token reduction depending on payload shape
+(~80% on RAG context, ~79% on duplicated system blocks, ~19% on log/trace,
+~32% on JSON docs, 0% on prose, which is left untouched). Neither number is
+a per-request floor. On top of that, an **exact-prefix cache** (on by
+default) and an opt-in **pgvector semantic cache** (off by default, see
+[Tuning](TUNING.md)) serve verbatim replayed responses for repeated prompts.
+
 BYOK: the client's own `Authorization` header is forwarded per-request —
 the proxy never stores API keys.
 
@@ -38,7 +46,8 @@ export OPENAI_BASE_URL="http://localhost:8000/v1"
 curl http://localhost:8000/v1/chat/completions \
   -H "Authorization: Bearer $OPENROUTER_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"z-ai/glm-5.3-flash","messages":[{"role":"user","content":"<long prompt>"}]}'
+  -d '{"model":"z-ai/glm-5.3-flash",
+  "messages":[{"role":"user","content":"<long prompt>"}]}'
 ```
 
 > **First build:** pulls the Python base image and downloads the
@@ -56,7 +65,7 @@ and/or `"5434:5432"`).
 cd token-saver
 python -m venv .venv && source .venv/bin/activate
 pip install -r proxy/requirements.txt
-cp .env.example .env             # local runs may leave POSTGRES_PASSWORD empty —
+cp .env.example .env             # local runs may leave POSTGRES_PASSWORD empty;
                                  # SQLite is used unless TOKEN_SAVER_PG_DSN is set
 uvicorn proxy.main:app --port 8000
 ```
@@ -64,13 +73,17 @@ uvicorn proxy.main:app --port 8000
 ## Endpoints
 
 | Endpoint | Purpose |
-|---|---|
-| `POST /v1/chat/completions` | Main proxy path: classify → compress → forward (streaming supported) |
+| --- | --- |
+| `POST /v1/chat/completions` | Main proxy path: classify → compress → forward |
 | `POST /v1/embeddings` | Passthrough to upstream `/embeddings` |
 | `GET /v1/models` | Passthrough to upstream model list |
-| `GET /stats[?format=text]` | Aggregate token/cost savings from the **SQLite** stats DB (JSON or text; see Storage notes) |
-| `GET /dashboard` | Four-tab metrics dashboard (server-rendered shell + Chart.js; data loaded from `/api/kpis`) |
-| `GET /api/kpis[?bucket=minute\|hour\|day&from=&to=&tenant_id=&api_key_id=]` | Time-bucketed KPI aggregation over the **Postgres ledger** — the dashboard's data source |
+| `GET /stats[?format=text]` | Savings aggregates from the **SQLite** stats DB |
+| `GET /dashboard` | Four-tab dashboard; data sourced from `/api/kpis` |
+| `GET /api/kpis[?bucket=…&tenant_id=…]` | Time-bucketed ledger KPIs |
+| `GET /api/tenants` | List tenants known to the ledger (Keys & Tenants tab) |
+| `GET /api/keys` | List API keys; unauthenticated reads (see `ADMIN_TOKEN`) |
+| `POST /api/keys`, `…/rotate`, `…/revoke` | Key writes; require `ADMIN_TOKEN` |
+| `GET /api/tripwire` | Dose-drift / missed-grounding tripwire status |
 | `GET /metrics` | Prometheus text format (`format=json` for a JSON summary) |
 | `GET /health` | Liveness check |
 
@@ -98,7 +111,9 @@ uvicorn proxy.main:app --port 8000
   - `token_saver_tokens_saved` — input tokens removed by compression
   - `token_saver_cost_saved` — estimated USD saved
   - `token_saver_latency_ms` — average upstream latency
-  - `token_saver_requests_by_model{model=...}` / `token_saver_requests_by_provider{provider=...}` / `token_saver_requests_by_day{day=...}` — breakdowns
+  - `token_saver_requests_by_model{model=...}` /
+    `token_saver_requests_by_provider{provider=...}` /
+    `token_saver_requests_by_day{day=...}` — breakdowns
   - `token_saver_ledger_write_failures` — ledger writes that failed and were
     swallowed (must stay 0; nonzero means telemetry is being lost)
 
@@ -107,7 +122,8 @@ uvicorn proxy.main:app --port 8000
 All settings are env vars (see `.env.example` and `proxy/config.py`):
 
 - `UPSTREAM_BASE_URL` — any OpenAI-compatible provider (default: OpenRouter)
-- `COMPRESSION_ENABLED` / `OUTPUT_CONCISENESS_ENABLED` / `DISABLE_REASONING_BY_DEFAULT` — feature flags
+- `COMPRESSION_ENABLED` / `OUTPUT_CONCISENESS_ENABLED` /
+  `DISABLE_REASONING_BY_DEFAULT` — feature flags
 - `L1_ENABLED` — lossless L1 structural cleanup, **on by default** (since
   B-26): whitespace-compacts JSON, removes duplicate/empty system blocks and
   dead RAG metadata. On the passthrough path, disabling L1 keeps the input
@@ -125,10 +141,43 @@ All settings are env vars (see `.env.example` and `proxy/config.py`):
   whose *entire* content is pretty-printed JSON with no surrounding prose
   gets whitespace-compacted — if you send "reformat this" as bare JSON, set
   `L1_ENABLED=false`.
-- `SEMANTIC_CACHE_ENABLED` — Phase C pgvector semantic lookup, **off by
-  default**. Do not enable until AC-PC4 has passed the tenant-isolation,
-  calibration, deterministic-invalidation, and filtered-HNSW plan/latency
-  gates; no client header can enable it.
+- `SEMANTIC_CACHE_ENABLED` — pgvector semantic lookup of semantically
+  similar prompts, **off by default** (ratified GO as of v1.1 — the C1
+  operating point below passed the calibration, tenant-isolation,
+  deterministic-invalidation, and filtered-HNSW plan/latency gates — but
+  enablement stays a deliberate deployment choice; no client header can
+  enable it). Requires the pgvector Postgres image and migrations (see
+  [Storage notes](#storage-notes)).
+- `SEMANTIC_CACHE_MAX_COSINE_DISTANCE` — the similarity threshold, expressed
+  as **cosine distance** (a hit must be at least this close). **Default:
+  unset, which fails closed — every lookup is a clean miss.** The ratified
+  production operating point is **0.18** (C1 ruling, PC5 recalibration:
+  100% coverage, 95.83% recall, 0 false hits, p95 4.74 ms at 11,500-row
+  traffic shape). Set `SEMANTIC_CACHE_MAX_COSINE_DISTANCE=0.18` when you
+  enable the cache.
+- `SEMANTIC_CACHE_HNSW_EF_SEARCH` — HNSW `ef_search` for semantic lookups
+  (default **100**, the ratified value; keep ≤ 300 — ef=1000 failed the
+  100 ms p95 latency bar at 10k+ rows). Applied per-lookup via
+  `set_config('hnsw.ef_search', ...)`, never globally. Query-time knobs
+  never invalidate cache entries (version-namespace policy in
+  `proxy/semantic_cache.py`).
+- `SEMANTIC_CACHE_TTL_SECONDS` — lifetime of a semantic entry **and** its
+  paired response payload, which expire as one unit (default **300**,
+  range 1–86400). Deliberately not request-configurable.
+- `SEMANTIC_CACHE_MAX_RESPONSE_BYTES` — responses larger than this are
+  clean semantic-cache misses and are never truncated (default **1048576**
+  = 1 MiB); cache replay preserves the provider's bytes exactly.
+- `EMBEDDING_MODEL` / `EMBEDDING_DIMENSIONS` — semantic-embedding namespace
+  (defaults `text-embedding-3-small` @ **1536**; other dimensions are
+  refused — embedding acquisition is best-effort and returns nothing rather
+  than failing the request). Changing the model or dimensions bumps the
+  `embedding_version` cache namespace and quarantines old entries until
+  they expire; reverting restores them with zero migration.
+- `ADMIN_TOKEN` — bearer token required by the dashboard key-management
+  **write** endpoints (`POST /api/keys`, rotate, revoke). When blank or
+  unset, a token is generated once at boot and printed once to the proxy's
+  startup log (never persisted, never re-printed). Read endpoints stay
+  unauthenticated under the self-host trust model.
 - `LLMLINGUA_MODEL` / `COMPRESSION_RATE` — compression tuning
 - `DATABASE_PATH` — SQLite location (default `<repo>/data/stats.db`; leave unset)
 - `POSTGRES_PASSWORD` — **your own** Postgres credential; required before
@@ -142,9 +191,18 @@ All settings are env vars (see `.env.example` and `proxy/config.py`):
 - `TOKEN_SAVER_PG_BASE` — base DSN used only by the Postgres acceptance
   tests (`pytest` skips those tests when it is unavailable); not needed to
   run the proxy.
+- `ALLOW_DOSE_PIN` — benchmark/calibration **only** (default `false`):
+  when false, the `x-token-saver-dose-pin` control header is silently
+  ignored, so no client can raise its own conciseness dose tier. Leave
+  false in every standing deployment.
+- `TOKEN_SAVER_MEASUREMENT_TAG` — benchmark-instance stamp: tags every
+  ledger row the deployment writes and excludes tagged rows from the
+  `/api/tripwire` live population. Leave unset in production (untagged =
+  organic traffic).
 
-Cost estimates use the `model_prices_per_m` table in `proxy/config.py`
-(USD per 1M tokens); unknown models fall back to `default_*_price_per_m`.
+Cost estimates use `pricing.json` (loaded at startup; USD per 1M tokens,
+seeded from live OpenRouter rates); unknown models fall back to the
+`default_*_price_per_m` values in `proxy/config.py`.
 
 ## Storage notes
 
@@ -183,16 +241,18 @@ apply the same SQL explicitly as described below.
 
 For an existing `postgres-data` volume, take a backup, complete the libc-safe
 cutover below, then apply the one-shot upgrades in order with
-`psql -v ON_ERROR_STOP=1`:
+`psql -v ON_ERROR_STOP=1`. The full cutover runbook — including rollback
+procedures and verification queries — lives in
+[MIGRATIONS.md](MIGRATIONS.md); the short form:
 
 ```bash
-psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \\
+psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \
   -f migrations/20260918_pc1_pgvector.sql
-psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \\
+psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \
   -f migrations/20260919_pc2_semantic_responses.sql
-psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \\
+psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \
   -f migrations/20260920_pc5_request_versions.sql
-psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \\
+psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \
   -f migrations/20260920_ac_pcui_cache_status.sql
 ```
 
@@ -243,8 +303,10 @@ make a cross-libc data-directory transition safe. Use this sequence instead:
    the old volume and dump until post-cutover checks pass; never delete the
    rollback copy as part of the restart.
 
-Semantic caching remains disabled until AC-PC4 passes; the deployment flag
-cannot be enabled by a client request.
+Semantic caching is ratified for production use (C1 operating point,
+v1.1) but ships **disabled by default** — enablement is a deployment
+decision made by the operator; the deployment flag cannot be enabled by a
+client request. See [TUNING.md](TUNING.md) before enabling.
 
 ## Tests
 
@@ -265,5 +327,8 @@ public issue.
 
 - `token-saver/proxy/` — the FastAPI proxy application
 - `token-saver/test/` — unit tests + demo/compare clients
+- `token-saver/migrations/` — one-shot Postgres migrations (see [MIGRATIONS.md](MIGRATIONS.md))
+- `MIGRATIONS.md` — pgvector cutover runbook for existing deployments
+- `TUNING.md` — semantic-cache and L1 performance tuning guide
 - `ai-token-compression-proxy-plan.md` — original plan document
-- `product-spec.md` — current product spec
+- `product-spec-v2.md` — current product spec (supersedes `product-spec.md`)
