@@ -617,8 +617,13 @@
 
   /* Every write goes through here: bearer attached only when a token has been
    * entered (§4.5); 401 clears the token and prompts, preserving the pending
-   * action; any other failure surfaces inline WITHOUT re-rendering (§4.4). */
-  function doWrite(url, body, errId, ok, onFail) {
+   * action; any other failure surfaces inline WITHOUT re-rendering (§4.4).
+   * §4.5.4: a 401 must not cost the user their confirm state — the action's
+   * confirm (rotate/revoke) is restored on the prompt render so the row still
+   * reads "Confirm rotate/revoke?" while the token form is up; the operator
+   * re-enters the token once, not the whole flow. createKey's inline form is
+   * preserved separately (keyFormOpen stays true across the 401 re-render). */
+  function doWrite(url, body, errId, ok, onFail, confirm) {
     var headers = { "Content-Type": "application/json" };
     if (adminToken) headers["Authorization"] = "Bearer " + adminToken;
     return fetch(url, { method: "POST", headers: headers, body: JSON.stringify(body || {}) })
@@ -628,11 +633,12 @@
             var rejected = !!adminToken;
             adminToken = null;   // §4.5.3: any 401 clears the stored token
             tokenPrompt = {
-              retry: function () { doWrite(url, body, errId, ok, onFail); },
+              retry: function () { doWrite(url, body, errId, ok, onFail, confirm); },
               msg: rejected
                 ? "Token rejected — the proxy may have restarted. Enter the current startup-log token."
                 : null,
             };
+            if (confirm) pendingConfirm = confirm;   // §4.5.4: confirm survives the re-prompt
             renderKeysUI();
             return null;
           }
@@ -684,9 +690,13 @@
       restore);
   }
 
+  /* §4.5.4: the confirm is cleared only for the in-flight request — if the
+   * write 401s, doWrite restores it so the pending action survives the
+   * token re-prompt; non-401 failures keep the plain row (§4.4 inline error). */
   function executeRevoke(k) {
     clearConfirm();
-    doWrite("/api/keys/" + k.id + "/revoke", {}, "keyerr-" + k.id, function () { loadKeys(); });
+    doWrite("/api/keys/" + k.id + "/revoke", {}, "keyerr-" + k.id,
+      function () { loadKeys(); }, null, { type: "revoke", keyId: String(k.id) });
   }
 
   function executeRotate(k) {
@@ -695,7 +705,7 @@
       revealData = { key: b.key, last4: b.key_last4, mode: "rotate" };
       renderKeysUI();
       return b;
-    });
+    }, null, { type: "rotate", keyId: String(k.id) });
   }
 
   function saveAdminToken() {
