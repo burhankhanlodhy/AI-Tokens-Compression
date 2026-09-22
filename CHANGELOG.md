@@ -5,8 +5,6 @@ All notable changes to **token-saver** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
 ## [1.1.0] - 2026-09-21
 
 ### Added
@@ -28,15 +26,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - AC-PC2: Query plan enforcement (ordered HNSW scan, never sequential)
   - AC-PC3: Traffic-shaped safety audit (no false positives on real prompt pairs)
   - AC-PC4: Real-traffic calibration verified at 11,500-row scale
-  - AC-PC5: 4/27 grid cells pass frozen accuracy/latency bars; C1 (th=0.18, ef_search=100) ratified as GO
+  - AC-PC5: 4/27 grid cells pass frozen accuracy/latency bars; C1
+    (th=0.18, ef_search=100) ratified as GO
 - **CI test suite floor** — raised to 710 passing tests (includes semantic
   cache request path, dashboard render, and vertical integration gates).
 
 ### Configuration
 
 - `SEMANTIC_CACHE_ENABLED` — defaults to `false`; human-gated production enablement.
-- `SEMANTIC_CACHE_THRESHOLD` — similarity threshold (default: 0.18).
-- `SEMANTIC_CACHE_EF_SEARCH` — HNSW ef_search parameter (default: 100).
+- `SEMANTIC_CACHE_MAX_COSINE_DISTANCE` — similarity threshold as cosine
+  distance (ratified operating point: **0.18**; unset by default — an
+  absent threshold fails closed to clean misses).
+- `SEMANTIC_CACHE_HNSW_EF_SEARCH` — HNSW `ef_search` per lookup
+  (default: **100**; keep ≤ 300).
+- `SEMANTIC_CACHE_TTL_SECONDS` — entry + response-payload lifetime as one
+  expiring pair (default: 300).
+- `SEMANTIC_CACHE_MAX_RESPONSE_BYTES` — larger responses are clean misses,
+  never truncated (default: 1 MiB).
+- `EMBEDDING_MODEL` / `EMBEDDING_DIMENSIONS` — embedding namespace
+  (default `text-embedding-3-small` @ 1536); changes bump
+  `embedding_version` and quarantine existing entries until expiry.
+
+## [Unreleased]
+
+### Added (planned for v1.2.0)
+
+- **L1 cleanup productionization** — the lossless structural cleanup moves
+  from benchmark-hardened to production-hardened: eligibility gate shared
+  between the production path and the benchmark harness
+  (`l1_eligible(messages, route)`), byte-identity guarantee scoped by
+  content class (passthrough-identical for lossy-on-all and L1-on-CODE;
+  round-trip reversible for L1-on-JSON/RAG), and ledger attribution kept
+  decomposition-safe (`l1_cost_saved` ⊆ `cost_saved`, never an addend).
+- **Keys/Tenants auth hardening** — `ADMIN_TOKEN`-gated write endpoints
+  (`POST /api/keys`, rotate, revoke) with boot-printed fallback token; the
+  Keys & Tenants dashboard tab graduates with it. Read endpoints remain
+  unauthenticated under the self-host trust model.
+- **Documentation** — this release completes the user-facing docs for
+  v1.1/v1.2: README configuration matrix (all `SEMANTIC_CACHE_*` env vars
+  with real names and defaults), MIGRATIONS.md pgvector cutover runbook,
+  and TUNING.md performance guide.
+
+### Changed (planned for v1.2.0)
+
+- HNSW index build parameters ratified at `ef_construction=200` in the
+  pc1 migration (the C1 operating point is conditional on it; the pre-v1.1
+  default of 64 does not meet the frozen bar).
 
 ## [1.0.1] - 2026-09-20
 
@@ -60,7 +95,7 @@ compresses prompts before they hit the upstream LLM, injects a conciseness
 instruction, suppresses hidden reasoning tokens by default, and records
 token/cost savings in a Postgres ledger (SQLite remains the local fallback).
 
-### Added
+### Added (v1.0.0)
 
 - **L1 lossless structural cleanup** — on by default. Whitespace-compacts
   pretty-printed JSON, removes duplicate/empty system blocks and dead RAG
