@@ -605,6 +605,18 @@ async def chat_completions(request: Request):
         else (classify(messages) if classify_needed else "passthrough")
     )
 
+    # --- V1.2.1: deterministic codebase-context optimization ---
+    # Run before L1, while deliberately retaining the raw tool-protocol hard
+    # boundary. The codebase optimizer only transforms text-bearing content;
+    # tool calls and results remain fully byte-preserved.
+    if s.codebase_optimization_enabled and not tool_calling:
+        from .codebase_optimizer import optimize_codebase_content
+
+        optimized_messages = optimize_codebase_content(messages)
+        if optimized_messages != messages:
+            messages = optimized_messages
+            body = {**body, "messages": optimized_messages}
+
     # --- B2: L1 lossless structural cleanup (runs BEFORE the PA-4 cache key) ---
     # Taxonomy §1 pipeline ordering: L1 clean first, then the cache key is
     # computed on the CLEAN body, so an L1-stripped request can share a cache

@@ -38,6 +38,13 @@ class Settings(BaseSettings):
 
     # --- Feature flags ---
     compression_enabled: bool = True
+    # Deterministic cleanup for coding-agent contexts. This runs before L1 so
+    # its conservative file trimming, repeated-import elision, and shell-log
+    # filtering reduce the text seen by every later pipeline stage.
+    codebase_optimization_enabled: bool = True
+    codebase_max_file_lines: int = Field(default=200, ge=2)
+    codebase_dedupe_imports: bool = True
+    shell_output_filtering: bool = True
     # P1-1 (PM decision): conciseness OFF by default — benchmarks showed no
     # reliable savings. Declared ONCE, here; the duplicate declaration near
     # the Output conciseness section below was a dead trap (removed B2-c).
