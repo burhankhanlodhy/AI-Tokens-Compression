@@ -206,6 +206,23 @@ def truncate_large_result(content: str, max_tokens: int) -> str:
     return _truncate_json(content, parsed, max_tokens)
 
 
+def _noisy_path_components(normalized_line: str) -> set[str]:
+    """Extract path-like components from a listing line for noise matching.
+
+    Real-world listings rarely emit bare paths: ``ls -l``, ``find -ls`` and
+    tree-style output prefix each path with metadata that whitespace would
+    otherwise glue onto the first path segment (e.g. the ``ls -l`` token
+    ``-rw-r--r-- 1 user group 2459 Sep 21 2026 node_modules`` never equals
+    ``node_modules``). Splitting on whitespace as well as ``/`` isolates
+    path-like components while exact component equality keeps filenames that
+    merely contain a noise word (``src/node_modules_compat.py``) safe.
+    """
+    components: set[str] = set()
+    for token in normalized_line.split():
+        components.update(segment for segment in token.split("/") if segment)
+    return components
+
+
 def filter_result_by_type(content: str, result_type: str) -> str:
     """Apply conservative domain filters without changing unknown result types."""
     if not isinstance(content, str):
@@ -216,7 +233,7 @@ def filter_result_by_type(content: str, result_type: str) -> str:
         removed = 0
         for line in content.splitlines():
             normalized = line.replace("\\", "/")
-            segments = {segment for segment in normalized.split("/") if segment}
+            segments = _noisy_path_components(normalized)
             if segments.intersection(_NOISY_FILE_SEGMENTS):
                 removed += 1
             else:

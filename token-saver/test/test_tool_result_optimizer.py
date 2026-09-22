@@ -95,6 +95,76 @@ def test_file_listing_filter_removes_noise_and_keeps_relevant_entries():
     assert "irrelevant file entries filtered" in filtered
 
 
+def test_file_listing_filter_handles_ls_l_style_lines():
+    listing = "\n".join(
+        [
+            "total 120",
+            "-rw-r--r-- 1 user group 2459 Sep 21 2026 node_modules/pkg_9/lib/index.js",
+            "drwxr-xr-x 4 user group 4096 Sep 21 2026 .git/objects",
+            "-rw-r--r-- 1 user group  117 Sep 20 2026 src/main.py",
+            "lrwxrwxrwx 1 user group   44 Sep 21 2026 latest -> .venv/lib/python3.13/site-packages/pkg",
+            "-rw-r--r-- 1 user group  512 Sep 20 2026 tests/test_main.py",
+        ]
+    )
+
+    filtered = filter_result_by_type(listing, "file_listing")
+
+    assert "src/main.py" in filtered
+    assert "tests/test_main.py" in filtered
+    assert "node_modules" not in filtered
+    assert ".git" not in filtered
+    assert ".venv" not in filtered
+    marker = re.search(r"\[\.\.\. (\d+) irrelevant file entries filtered \.\.\.\]", filtered)
+    assert marker is not None
+    assert int(marker.group(1)) == 3
+
+
+def test_file_listing_filter_handles_find_ls_and_tree_style_lines():
+    listing = "\n".join(
+        [
+            "12345   12 drwxr-xr-x   3 user     group         4096 Sep 21 10:00 ./node_modules",
+            "12346    4 -rw-r--r--   1 user     group          512 Sep 21 10:01 ./.git/config",
+            "12347    8 -rw-r--r--   1 user     group         1024 Sep 21 10:02 ./src/app.py",
+            "src",
+            "├── __pycache__",
+            "│   └── app.cpython-313.pyc",
+            "└── app.py",
+            "dist/bundle.js",
+            "build/output.txt",
+            ".pytest_cache/v/cache/lastfailed",
+            "README.md",
+        ]
+    )
+
+    filtered = filter_result_by_type(listing, "file_listing")
+
+    assert "./src/app.py" in filtered
+    assert "app.py" in filtered
+    assert "README.md" in filtered
+    for noise in ("node_modules", ".git", "__pycache__", "dist/", "build/", ".pytest_cache"):
+        assert noise not in filtered
+    marker = re.search(r"\[\.\.\. (\d+) irrelevant file entries filtered \.\.\.\]", filtered)
+    assert marker is not None
+    assert int(marker.group(1)) == 6
+
+
+def test_file_listing_filter_does_not_filter_filenames_containing_noise_words():
+    listing = "\n".join(
+        [
+            "src/node_modules_compat.py",
+            "docs/.github_workflow.md",
+            "tools/venv_manager.sh",
+            "src/build_system.md",
+            "assets/dist_logo.png",
+            "notes/build_notes.txt",
+        ]
+    )
+
+    filtered = filter_result_by_type(listing, "file_listing")
+
+    assert filtered == listing
+
+
 def test_log_filter_keeps_errors_and_warnings_while_dropping_debug_noise():
     log = "\n".join(
         ["DEBUG connecting", "INFO request started", "WARNING retrying", "ERROR upstream failed", "INFO done"]
