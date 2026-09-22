@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS requests (
     latency_ms REAL NOT NULL DEFAULT 0,
     compressed INTEGER NOT NULL DEFAULT 0,
     status INTEGER NOT NULL DEFAULT 0,
+    schema_cache_hit INTEGER NOT NULL DEFAULT 0,
+    schema_bytes_saved INTEGER NOT NULL DEFAULT 0,
     dose_tier TEXT,                     -- AC-P6f: resolved tier ('none'|'bounded'|'full'); NULL = discriminator never ran
     grounded_risk TEXT,                 -- AC-P6f: discriminator risk ('none'|'bounded'|'fidelity_critical'); NULL = never ran
     envelope_shape INTEGER,             -- AC-P6f: AC-P6j scanner hit on the raw request (1/0); NULL = no content logged
@@ -44,6 +46,11 @@ CREATE INDEX IF NOT EXISTS idx_requests_ts ON requests(ts);
 _MIGRATIONS = (
     "ALTER TABLE requests ADD COLUMN l1_tokens_stripped INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE requests ADD COLUMN l1_savings REAL NOT NULL DEFAULT 0",
+    # v1.2.1 schema optimization attribution. These are request-level facts:
+    # cache hit is 1 only when an already-minified schema was reused; bytes
+    # saved is the compact raw-schema delta, never token-estimated savings.
+    "ALTER TABLE requests ADD COLUMN schema_cache_hit INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE requests ADD COLUMN schema_bytes_saved INTEGER NOT NULL DEFAULT 0",
     # AC-P6f: live tripwire columns. NULLable — NULL means "the discriminator
     # never ran on this request" (conciseness off / passthrough), which is
     # itself a signal the missed-grounding rule consumes.
@@ -108,6 +115,8 @@ def log_request(
     status: int,
     cache_status: str = "miss",
     cache_savings: float = 0.0,
+    schema_cache_hit: bool = False,
+    schema_bytes_saved: int = 0,
     l1_tokens_stripped: int = 0,
     l1_savings: float = 0.0,
     provider: str | None = None,
@@ -129,6 +138,8 @@ def log_request(
     This keeps the two ledgers deterministic for tests and deployment.
     B3 attribution: l1_tokens_stripped / l1_savings are separate columns,
     never summed with cache_savings on a single request (taxonomy §1).
+    schema_cache_hit / schema_bytes_saved separately attribute tool-schema
+    minification without claiming a provider-side token or cost reduction.
     AC-P6f: dose_tier / grounded_risk / envelope_shape feed the live
     tripwire loop; NULLs mean the discriminator never ran on the request.
     measurement_tag: explicit value wins; otherwise the deployment-level
@@ -147,6 +158,8 @@ def log_request(
             est_cost_before=est_cost_before, est_cost_after=est_cost_after,
             latency_ms=latency_ms, compressed=compressed, status=status,
             cache_status=cache_status, cache_savings=cache_savings,
+            schema_cache_hit=schema_cache_hit,
+            schema_bytes_saved=schema_bytes_saved,
             l1_tokens_stripped=l1_tokens_stripped, l1_savings=l1_savings,
             provider=provider,
             dose_tier=dose_tier, grounded_risk=grounded_risk,
@@ -162,8 +175,9 @@ def log_request(
             "INSERT INTO requests (ts, model, route, input_tokens_before, "
             "input_tokens_after, output_tokens, est_cost_before, est_cost_after, "
             "latency_ms, compressed, status, l1_tokens_stripped, l1_savings, "
-            "dose_tier, grounded_risk, envelope_shape, measurement_tag, "
-            "tool_compression_saved) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "schema_cache_hit, schema_bytes_saved, dose_tier, grounded_risk, "
+            "envelope_shape, measurement_tag, tool_compression_saved) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 time.time(),
                 model,
@@ -178,6 +192,8 @@ def log_request(
                 status,
                 l1_tokens_stripped,
                 l1_savings,
+                int(schema_cache_hit),
+                schema_bytes_saved,
                 dose_tier,
                 grounded_risk,
                 envelope_shape,
@@ -190,7 +206,8 @@ def log_request(
 def _log_postgres(
     *, model, route, input_tokens_before, input_tokens_after, output_tokens,
     est_cost_before, est_cost_after, latency_ms, compressed, status,
-    cache_status, cache_savings, l1_tokens_stripped=0, l1_savings=0.0,
+    cache_status, cache_savings, schema_cache_hit=False, schema_bytes_saved=0,
+    l1_tokens_stripped=0, l1_savings=0.0,
     provider=None,
     dose_tier=None, grounded_risk=None, envelope_shape=None,
     measurement_tag=None, embedding_version=None, quality_version=None,
@@ -221,7 +238,7 @@ def _log_postgres(
             input_tokens_before, input_tokens_after, output_tokens,
             str(est_cost_before), str(est_cost_after),
             cache_status, str(cache_savings),
-            l1_tokens_stripped, str(l1_savings),
+            l1_tokens_stripped, str(l1_savings), schema_cache_hit, schema_bytes_saved,
             latency_ms, compressed, status,
             dose_tier, grounded_risk, envelope_shape, measurement_tag,
             tool_compression_saved,
@@ -232,7 +249,7 @@ def _log_postgres(
             INSERT INTO requests (tenant_id, provider_id, model, route,
                 input_tokens_before, input_tokens_after, output_tokens,
                 est_cost_before, est_cost_after, cache_status, cache_savings,
-                l1_tokens_stripped, l1_savings,
+                l1_tokens_stripped, l1_savings, schema_cache_hit, schema_bytes_saved,
                 latency_ms, compressed, status,
                 dose_tier, grounded_risk, envelope_shape, measurement_tag,
                 tool_compression_saved
@@ -241,7 +258,7 @@ def _log_postgres(
                    COALESCE((SELECT id FROM providers WHERE name = %s),
                             (SELECT id FROM providers WHERE name = 'legacy')),
                    %s, %s, %s, %s, %s, %s::numeric, %s::numeric, %s,
-                   %s::numeric, %s::numeric, %s, %s::numeric, %s, %s,
+                   %s::numeric, %s, %s::numeric, %s, %s, %s::numeric, %s, %s,
                    %s, %s, %s, %s, %s{version_values}
             """,
             values,

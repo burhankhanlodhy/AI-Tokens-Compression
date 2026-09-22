@@ -45,6 +45,7 @@ from .tripwire import tripwire_endpoint
 from . import caching
 from . import semantic_cache
 from .semantic_cache import DEFAULT_TENANT_ID, SemanticLookupKind, SemanticLookupScope
+from .tool_protocol import SchemaCache, compact_schema_bytes
 from .version import __version__
 from .providers.model import ProviderError
 from .providers.anthropic import AnthropicAdapter
@@ -95,6 +96,7 @@ HOP_BY_HOP = {
 # model lands here we stop injecting the override for it, so we don't pay a
 # failed-request round trip on every subsequent call.
 _reasoning_mandatory_models: set[str] = set()
+schema_cache = SchemaCache()
 
 
 def _ensure_cache_seed_rows() -> None:
@@ -576,6 +578,30 @@ async def chat_completions(request: Request):
     body = {**body, "messages": messages}
     streaming = bool(body.get("stream"))
 
+    # v1.2.1: tool definitions are protocol data, but their redundant
+    # parameter descriptions are safe prompt overhead to remove. Work on a
+    # deep-copied cache result so a caller's parsed request and subsequent
+    # cache entries cannot be mutated by downstream request handling.
+    schema_cache_hit = False
+    schema_bytes_saved = 0
+    tools = body.get("tools")
+    if s.tool_schema_minify and isinstance(tools, list) and all(
+        isinstance(tool, dict) for tool in tools
+    ):
+        try:
+            minified_tools, schema_cache_hit = schema_cache.get_or_compress(
+                tools,
+                use_cache=s.cache_enabled and s.tool_schema_cache_enabled,
+            )
+            schema_bytes_saved = max(
+                0, compact_schema_bytes(tools) - compact_schema_bytes(minified_tools)
+            )
+            body = {**body, "tools": minified_tools}
+        except (TypeError, ValueError):
+            # Invalid vendor extension/schema fragments remain verbatim rather
+            # than making an optional optimization alter proxy correctness.
+            logger.warning("tool schema minification skipped for invalid schema")
+
     # Ledger baseline: input_tokens_before = RAW original, counted before
     # any transform, so compression AND L1 deltas are both visible in the
     # in_before -> in_after accounting (B2/B3).
@@ -776,6 +802,8 @@ async def chat_completions(request: Request):
                             (time.perf_counter() - started) * 1000, False, 200,
                             cache_status="semantic_hit",
                             cache_savings=estimate_cost(str(model), in_before, cached_output),
+                            schema_cache_hit=schema_cache_hit,
+                            schema_bytes_saved=schema_bytes_saved,
                             provider=provider if s.provider_routing else "legacy",
                             embedding_version=embedding_version,
                             quality_version=quality_version,
@@ -893,6 +921,9 @@ async def chat_completions(request: Request):
         )
 
     in_after = count_messages(body.get("messages") or [], model)
+    # Union of T1 + T3: serialize the entire forwarded envelope compactly
+    # after schema minification — whitespace is not JSON semantics and tool
+    # definitions can account for many kilobytes of prompt context.
     payload = _serialize_request_payload(body, minify_tools=tool_schema_minified)
 
     # --- C7: upstream transport failures surface as normalized errors ---
@@ -909,6 +940,8 @@ async def chat_completions(request: Request):
              (time.perf_counter() - started) * 1000, compressed, 400,
              cache_status=cache_status,
              tool_compression_saved=tool_compression_saved,
+             schema_cache_hit=schema_cache_hit,
+             schema_bytes_saved=schema_bytes_saved,
              provider=provider if s.provider_routing else "legacy",
              dose_tier=dose_tier_ctx, grounded_risk=grounded_risk_ctx,
              envelope_shape=envelope_shape)
@@ -922,6 +955,8 @@ async def chat_completions(request: Request):
              (time.perf_counter() - started) * 1000, compressed, 504,
              cache_status=cache_status,
              tool_compression_saved=tool_compression_saved,
+             schema_cache_hit=schema_cache_hit,
+             schema_bytes_saved=schema_bytes_saved,
              provider=provider if s.provider_routing else "legacy",
              dose_tier=dose_tier_ctx, grounded_risk=grounded_risk_ctx,
              envelope_shape=envelope_shape)
@@ -935,6 +970,8 @@ async def chat_completions(request: Request):
              (time.perf_counter() - started) * 1000, compressed, 502,
              cache_status=cache_status,
              tool_compression_saved=tool_compression_saved,
+             schema_cache_hit=schema_cache_hit,
+             schema_bytes_saved=schema_bytes_saved,
              provider=provider if s.provider_routing else "legacy",
              dose_tier=dose_tier_ctx, grounded_risk=grounded_risk_ctx,
              envelope_shape=envelope_shape)
@@ -987,6 +1024,8 @@ async def chat_completions(request: Request):
         in_after=in_after, compressed=compressed, streaming=streaming,
         cache_status=cache_status, l1_tokens_stripped=l1_tokens_stripped,
         tool_compression_saved=tool_compression_saved,
+        schema_cache_hit=schema_cache_hit,
+        schema_bytes_saved=schema_bytes_saved,
         # B-24/AC-A12: attribute the ledger to the row the request actually
         # served under. Routing off = legacy single-upstream: attribute to the
         # seeded 'legacy' providers row, NOT the prefix table — the prefix
@@ -1065,6 +1104,8 @@ async def _relay(
     cache_status: str = "miss",
     l1_tokens_stripped: int = 0,
     tool_compression_saved: int = 0,
+    schema_cache_hit: bool = False,
+    schema_bytes_saved: int = 0,
     provider: str | None = None,
     extra_headers: dict[str, str] | None = None,
     dose_tier: str | None = None,
@@ -1130,6 +1171,8 @@ async def _relay(
                 _log(model, route, in_before, in_after, output_tokens,
                      latency_ms, compressed, resp.status_code,
                      cache_status=cache_status,
+                     schema_cache_hit=schema_cache_hit,
+                     schema_bytes_saved=schema_bytes_saved,
                      l1_tokens_stripped=l1_tokens_stripped,
                      l1_savings=l1_savings,
                      tool_compression_saved=tool_compression_saved,
@@ -1245,6 +1288,8 @@ async def _relay(
                 _log(model, route, in_before, in_after, output_tokens,
                      latency_ms, compressed, resp.status_code,
                      cache_status=cache_status,
+                     schema_cache_hit=schema_cache_hit,
+                     schema_bytes_saved=schema_bytes_saved,
                      l1_tokens_stripped=l1_tokens_stripped,
                      l1_savings=l1_savings,
                      tool_compression_saved=tool_compression_saved,
@@ -1291,6 +1336,8 @@ async def _relay(
         if json_error:
             _log(model, route, in_before, in_after, 0, latency_ms,
                  compressed, resp.status_code, cache_status=cache_status,
+                 schema_cache_hit=schema_cache_hit,
+                 schema_bytes_saved=schema_bytes_saved,
                  l1_tokens_stripped=l1_tokens_stripped, l1_savings=l1_savings,
                  tool_compression_saved=tool_compression_saved,
                  provider=provider,
@@ -1340,6 +1387,8 @@ async def _relay(
     _log(model, route, in_before, in_after, output_tokens,
          latency_ms, compressed, resp.status_code,
          cache_status=cache_status,
+         schema_cache_hit=schema_cache_hit,
+         schema_bytes_saved=schema_bytes_saved,
          l1_tokens_stripped=l1_tokens_stripped,
          l1_savings=l1_savings,
          tool_compression_saved=tool_compression_saved,
@@ -1389,6 +1438,7 @@ def _log(model, route, in_before, in_after, output_tokens,
          latency_ms, compressed, status, cache_status="miss",
          cache_savings=0.0, l1_tokens_stripped=0, l1_savings=0.0,
          tool_compression_saved=0,
+         schema_cache_hit=False, schema_bytes_saved=0,
          provider=None, dose_tier=None, grounded_risk=None,
          envelope_shape=None, embedding_version=None, quality_version=None):
     global LEDGER_WRITE_FAILURES
@@ -1401,6 +1451,8 @@ def _log(model, route, in_before, in_after, output_tokens,
             est_cost_before=cost_before, est_cost_after=cost_after,
             latency_ms=latency_ms, compressed=compressed, status=status,
             cache_status=cache_status, cache_savings=cache_savings,
+            schema_cache_hit=schema_cache_hit,
+            schema_bytes_saved=schema_bytes_saved,
             l1_tokens_stripped=l1_tokens_stripped,
             l1_savings=l1_savings,
             tool_compression_saved=tool_compression_saved,

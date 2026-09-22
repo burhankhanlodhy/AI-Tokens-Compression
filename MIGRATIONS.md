@@ -1,7 +1,8 @@
 # Migrations — Postgres ledger and semantic cache
 
 Runbook for bringing an existing token-saver Postgres deployment up to the
-v1.1 schema (pgvector + semantic cache + cache-status taxonomy). A **fresh**
+v1.2.1 schema (pgvector + semantic cache + cache-status taxonomy + tool-schema
+ledger attribution). A **fresh**
 Docker Compose volume needs none of this: the schema, extension, and entry
 tables are created at container init (see
 [README — Storage notes](README.md#storage-notes)).
@@ -25,15 +26,16 @@ configures it in `.env`) and are run from `token-saver/`.
    pre-`b4baf47` `chk_cache_status` constraint. Do **not** skip on a legacy
    volume: the app must record all four literals including
    `semantic_threshold_miss`.
-5. **`migrations/20260922_t1_tool_compression_ledger.sql`** — adds
+5. **`migrations/20260922_v121_tool_schema_ledger.sql`** — adds
+   `requests.schema_cache_hit` and `requests.schema_bytes_saved`. Apply before
+   a v1.2.1 proxy writes tool-schema telemetry; otherwise its fail-open ledger
+   guard would drop the entire request row on an existing volume.
+6. **`migrations/20260922_t1_tool_compression_ledger.sql`** — adds
    `requests.tool_compression_saved` (INTEGER NOT NULL DEFAULT 0), the
    additive v1.2.1 attribution column for selective tool-protocol
-   compression savings. Unlike 1-4 this one is deliberately idempotent
-   (`ADD COLUMN IF NOT EXISTS`) because the canonical fresh-volume schema
-   already declares the final column and Compose initdb executes this
-   migration after it — both sequences must be valid. Savings are an
-   attribution subset: dashboards must never add them to
-   `l1_tokens_stripped`.
+   compression savings. Idempotent (`ADD COLUMN IF NOT EXISTS`) for the same
+   fresh-volume reason as migration 5. Savings are an attribution subset:
+   dashboards must never add them to `l1_tokens_stripped`.
 
 Every migration is fire-once and idempotent-hostile by design: they fail
 loudly rather than silently repairing a partially-applied state — **except
@@ -102,6 +104,15 @@ psql "$TOKEN_SAVER_PG_DSN" -Atc \
     WHERE conrelid = 'requests'::regclass AND conname = 'chk_cache_status';"
 # Expected: a CHECK containing miss, exact_hit, semantic_hit,
 # semantic_threshold_miss.
+```
+
+```bash
+psql "$TOKEN_SAVER_PG_DSN" -Atc \
+  "SELECT column_name FROM information_schema.columns
+    WHERE table_name = 'requests'
+      AND column_name IN ('schema_cache_hit', 'schema_bytes_saved')
+    ORDER BY column_name;"
+# Expected: schema_bytes_saved, schema_cache_hit
 ```
 
 Extension and indexes:

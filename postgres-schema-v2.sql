@@ -89,6 +89,8 @@ CREATE TABLE requests (
     est_cost_before         NUMERIC(14,8) NOT NULL DEFAULT 0,   -- NUMERIC not REAL: no float drift (AC-A11/A12)
     est_cost_after          NUMERIC(14,8) NOT NULL DEFAULT 0,
     cache_savings           NUMERIC(14,8) NOT NULL DEFAULT 0,   -- reported separately from compression savings (AC-A6)
+    schema_cache_hit        BOOLEAN NOT NULL DEFAULT false,      -- v1.2.1: minified tool schema reused from the in-process cache
+    schema_bytes_saved      INTEGER NOT NULL DEFAULT 0,          -- v1.2.1: compact raw-schema byte delta (not a token estimate)
     l1_tokens_stripped      INTEGER NOT NULL DEFAULT 0,          -- B3: L1 structural-clean savings, separate from cache/compression
     l1_savings              NUMERIC(14,8) NOT NULL DEFAULT 0,    -- B3: est. USD of stripped tokens; 0 on cache-hit rows (never summed with cache_savings)
     tool_compression_saved  INTEGER NOT NULL DEFAULT 0,           -- T1: tool-result/schema lossless savings; attribution subset, never additive with L1 totals
