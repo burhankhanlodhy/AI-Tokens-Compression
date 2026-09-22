@@ -1,9 +1,9 @@
 {
-  "schema": "l1_b2_v1",
+  "schema": "l1_b2_v2",
   "fixture_sha256": "ba42b4fa22a432f5c1c65195d7ad7e4f651b9ee0f8fd1e2993e4ed669e27943c",
   "counting_model": "gpt-4o",
   "tokenizer": "tiktoken (proxy.counting), not len//4",
-  "taxonomy_version": "1.0 + PM provenance amendment (negative list)",
+  "taxonomy_version": "1.2",
   "decomposition": {
     "c1_only": {
       "strippable4": {
@@ -163,12 +163,17 @@
     }
   },
   "production_path": {
-    "ordering": "classify(raw) -> route gate -> clean_messages",
+    "ordering": "classify(raw) -> l1_eligible(messages, route) -> clean_messages",
     "strippable4": {
       "before": 44483,
       "after": 13184,
       "reduction_pct": 70.4,
-      "routed_compress": 0
+      "routed_compress": 0,
+      "item_reduction_range_pct": {
+        "min_pct": 18.7,
+        "median_pct": 55.7,
+        "max_pct": 80.6
+      }
     },
     "control": {
       "before": 487,
@@ -205,6 +210,71 @@
         "after": 3249,
         "reduction_pct": 78.9,
         "routed_compress": 0
+      }
+    }
+  },
+  "published_savings": {
+    "production_default": {
+      "variant": "C1+C2+C3",
+      "scope": "RAG/JSON-heavy strippable-4 corpus",
+      "reduction_pct": 70.4,
+      "item_reduction_range_pct": {
+        "min_pct": 18.7,
+        "median_pct": 55.7,
+        "max_pct": 80.6
+      },
+      "per_content_class": {
+        "rag": {
+          "before": 22050,
+          "after": 4415,
+          "reduction_pct": 80.0,
+          "routed_compress": 0
+        },
+        "json_doc": {
+          "before": 1682,
+          "after": 1166,
+          "reduction_pct": 30.7,
+          "routed_compress": 0
+        },
+        "system_dup": {
+          "before": 15389,
+          "after": 3249,
+          "reduction_pct": 78.9,
+          "routed_compress": 0
+        },
+        "log_trace": {
+          "before": 5362,
+          "after": 4354,
+          "reduction_pct": 18.8,
+          "routed_compress": 0
+        }
+      }
+    },
+    "conservative_c1_only": {
+      "variant": "C1",
+      "scope": "RAG/JSON-heavy strippable-4 corpus",
+      "reduction_pct": 29.9,
+      "per_content_class": {
+        "rag": {
+          "before": 22050,
+          "after": 14987,
+          "reduction_pct": 32.0
+        },
+        "json_doc": {
+          "before": 1682,
+          "after": 1166,
+          "reduction_pct": 30.7
+        },
+        "system_dup": {
+          "before": 15389,
+          "after": 10681,
+          "reduction_pct": 30.6
+        },
+        "log_trace": {
+          "before": 5362,
+          "after": 4354,
+          "reduction_pct": 18.8
+        }
       }
     }
   },

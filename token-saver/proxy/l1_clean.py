@@ -1,8 +1,8 @@
 """L1 lossless structural cleanup (Phase B, B2).
 
-Pure deterministic transform per l1-taxonomy.md **v1.1** (B1, commits
-c0b3565 + 105a832). Implements the v1.1 §4 dead list and §5 negative list
-exactly:
+Pure deterministic transform per l1-taxonomy.md **v1.1**, amended by the
+product-spec v1.2 independent eligibility gate. Implements the v1.1 §4 dead
+list and §5 negative list exactly:
 
 - C1: JSON whitespace compaction — eligible blocks (whole content parses as
   JSON object/array, or every non-empty line is a JSON object = JSON-lines)
@@ -14,8 +14,8 @@ exactly:
   Dead list (v1.1): scoring math, embedding/float-arrays >32, char/token
   locators, harness/query-log plumbing, and empty containers.
 
-Negative list (§5, v1.1 — L1 MUST NOT strip): prose, tool defs, images,
-key order, non-adjacent systems, passthrough routes, fields inside
+- Negative list (§5, v1.1 — L1 MUST NOT strip): prose, tool defs, images,
+key order, non-adjacent systems, fields inside
 non-RAG-shaped JSON, the user's literal `query` field, timestamps
 (created_at/updated_at/modified_at/expires_at/retrieved_at — a question may
 ask which is newest), provenance/citation fields (source/title/url/path/

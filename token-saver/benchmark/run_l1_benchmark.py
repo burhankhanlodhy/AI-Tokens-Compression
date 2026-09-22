@@ -16,8 +16,10 @@ Usage: .venv/bin/python benchmark/run_l1_benchmark.py [--out results/]
 Exits non-zero on any contract violation or checksum mismatch.
 
 --production-path additionally measures the REAL production ordering:
-classify(raw) -> route gate -> clean_messages, exactly as main.py runs it.
-The results JSON then carries both transform-level and end-to-end columns,
+classify(raw) -> l1_eligible(messages, route) -> clean_messages, exactly as
+main.py runs it. The shared L1 gate deliberately remains independent of the
+lossy compression route gate. The results JSON then carries both transform-level
+and end-to-end columns,
 and the run FAILS if the two diverge beyond tolerance — production yield
 returning to zero while the transform-level number stays ~30% is exactly
 the silent divergence this mode exists to catch (B2 P1, PM board task).
@@ -27,6 +29,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import statistics
 import sys
 from pathlib import Path
 
@@ -80,6 +83,7 @@ def measure_production_path(prompts: list[dict]) -> dict:
 
     per_cat: dict[str, list[int]] = {}
     routed: dict[str, int] = {}
+    per_item_reduction: dict[str, list[float]] = {}
     for p in prompts:
         route = classify(p["messages"])
         b = count_messages(p["messages"], MODEL)
@@ -90,9 +94,14 @@ def measure_production_path(prompts: list[dict]) -> dict:
         per_cat.setdefault(p["category"], [0, 0])
         per_cat[p["category"]][0] += b
         per_cat[p["category"]][1] += a
+        per_item_reduction.setdefault(p["category"], []).append(reduction(b, a))
         routed[p["category"]] = routed.get(p["category"], 0) + \
             (1 if route == "compress" else 0)
-    return {"per_cat": per_cat, "routed_compress": routed}
+    return {
+        "per_cat": per_cat,
+        "routed_compress": routed,
+        "per_item_reduction": per_item_reduction,
+    }
 
 
 def main() -> int:
@@ -100,7 +109,7 @@ def main() -> int:
     ap.add_argument("--out", default=str(ROOT / "results"))
     ap.add_argument("--production-path", action="store_true",
                     help="also measure the end-to-end production ordering "
-                         "(classify -> route gate -> clean) and fail if the "
+                         "(classify -> shared L1 eligibility -> clean) and fail if the "
                          "transform-level and end-to-end numbers diverge")
     args = ap.parse_args()
 
@@ -211,18 +220,29 @@ def main() -> int:
         sa = sum(per_cat[c][1] for c in STRIPTABLE_CATS)
         cb, ca = per_cat.get(CONTROL_CAT, [0, 0])
         pp_red = round(reduction(sb, sa), 1)
-        print(f"\nproduction path (classify -> route gate -> clean):")
+        item_reductions = [
+            pct
+            for category in STRIPTABLE_CATS
+            for pct in pp["per_item_reduction"].get(category, [])
+        ]
+        item_range = {
+            "min_pct": round(min(item_reductions), 1),
+            "median_pct": round(statistics.median(item_reductions), 1),
+            "max_pct": round(max(item_reductions), 1),
+        }
+        print("\nproduction path (classify -> shared L1 eligibility -> clean):")
         for c in sorted(per_cat):
             b, a = per_cat[c]
             print(f"  {c:<12} {b:>7} -> {a:<7} "
                   f"{reduction(b, a):>6.1f}%  routed_compress={routed.get(c, 0)}")
         print(f"  strippable-4 END-TO-END reduction: {pp_red}%")
         production = {
-            "ordering": "classify(raw) -> route gate -> clean_messages",
+            "ordering": "classify(raw) -> l1_eligible(messages, route) -> clean_messages",
             "strippable4": {"before": sb, "after": sa,
                             "reduction_pct": pp_red,
                             "routed_compress": sum(routed.get(c, 0)
-                                                   for c in STRIPTABLE_CATS)},
+                                                   for c in STRIPTABLE_CATS),
+                            "item_reduction_range_pct": item_range},
             "control": {"before": cb, "after": ca,
                         "reduction_pct": round(reduction(cb, ca), 1)},
             "per_category": {
@@ -253,13 +273,38 @@ def main() -> int:
         violations.append("negative-list FAIL: control category not byte-identical")
 
     result = {
-        "schema": "l1_b2_v1",
+        "schema": "l1_b2_v2",
         "fixture_sha256": hashlib.sha256(FIXTURES.read_bytes()).hexdigest(),
         "counting_model": MODEL,
         "tokenizer": "tiktoken (proxy.counting), not len//4",
-        "taxonomy_version": "1.0 + PM provenance amendment (negative list)",
+        "taxonomy_version": "1.2",
         "decomposition": results,
         "production_path": production,
+        "published_savings": (
+            {
+                "production_default": {
+                    "variant": "C1+C2+C3",
+                    "scope": "RAG/JSON-heavy strippable-4 corpus",
+                    "reduction_pct": production["strippable4"]["reduction_pct"],
+                    "item_reduction_range_pct": production["strippable4"]["item_reduction_range_pct"],
+                    "per_content_class": {
+                        category: production["per_category"][category]
+                        for category in STRIPTABLE_CATS
+                    },
+                },
+                "conservative_c1_only": {
+                    "variant": "C1",
+                    "scope": "RAG/JSON-heavy strippable-4 corpus",
+                    "reduction_pct": results["c1_only"]["strippable4"]["reduction_pct"],
+                    "per_content_class": {
+                        category: results["c1_only"]["per_category"][category]
+                        for category in STRIPTABLE_CATS
+                    },
+                },
+            }
+            if production is not None
+            else None
+        ),
         "customer_facing_claim": {
             "conservative": f"C1 JSON-whitespace compaction only: {c1_only}% input-token reduction on RAG/JSON-heavy categories",
             "upside": f"full cleaner (C1+C2+C3): {full}%; C3 dead-metadata drop is the dominant driver and is stated separately, not blended into the published claim",

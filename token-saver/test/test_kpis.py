@@ -177,16 +177,21 @@ def test_l1_savings_never_exceed_cost_saved(kpi_env):
         assert 0 <= row["l1_cost_saved"] <= row["cost_saved"]
 
 
-def test_l1_attribution_absent_on_passthrough_rows(kpi_env):
-    """Passthrough routes must carry zero L1 attribution (taxonomy v1.1 §5:
-    L1 is off for passthrough) — guards the P0 pipeline gate at the KPI level."""
+def test_l1_fixture_attribution_reconciles_by_route(kpi_env):
+    """The synthetic ledger fixture's stated per-route amounts reconcile.
+
+    This fixture deliberately puts all L1 savings on its compress rows to
+    isolate the aggregation arithmetic. It is not an L1 eligibility rule:
+    v1.2 permits L1 cleaning on eligible passthrough JSON/RAG, which the live
+    pipeline regression covers separately.
+    """
     kpis = kpi_env
     passthrough_rows = [r for r in ROWS if r[3] == "passthrough"]
     assert passthrough_rows, "fixture must contain passthrough rows"
     expected_l1 = sum(Decimal(str(r[15])) for r in passthrough_rows)
     assert expected_l1 == 0  # fixture itself honors the contract
-    # decompose: l1_savings over rows whose route is passthrough must be 0,
-    # so overview l1_cost_saved equals the compress-route contribution alone.
+    # This fixture's passthrough rows intentionally have no L1 values, so the
+    # overview equals its compress-route contribution alone.
     compress_only = sum(Decimal(str(r[15])) for r in ROWS if r[3] == "compress")
     ov = kpis._fetch_kpis("hour", None, None)["overview"]
     assert ov["l1_cost_saved"] == pytest.approx(float(compress_only), abs=1e-12)
