@@ -967,6 +967,12 @@ async def chat_completions(request: Request):
         and "reasoning" not in body
         and "thinking_level" not in body
         and model not in _reasoning_mandatory_models
+        # Direct Google routing uses its OpenAI-compatible endpoint, whose
+        # support for Gemini's `thinking_level` extension is not guaranteed.
+        # Avoid an unverified injection rather than causing a 400 and retrying
+        # after silently changing provider semantics; legacy routing remains
+        # unchanged, and explicit client-supplied controls still pass through.
+        and not (s.provider_routing and _provider_for_model(model) == "google")
     ):
         control = reasoning_control_for(model)
         body = {**body, **control}
