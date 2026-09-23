@@ -168,7 +168,8 @@ def test_tool_schema_compression_flag_controls_every_provider_wire(
     assert len(cap.requests) == 1
     raw = cap.requests[0].content
     wire = json.loads(raw)
-    assert wire["tool_choice"] == "auto"
+    expected_tool_choice = {"type": "auto"} if provider == "anthropic" else "auto"
+    assert wire["tool_choice"] == expected_tool_choice
     assert wire["tools"]
     if provider == "anthropic":
         assert wire["tools"][0]["name"] == "lookup_weather"

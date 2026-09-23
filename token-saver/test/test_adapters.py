@@ -183,6 +183,46 @@ def test_anthropic_default_max_tokens_when_none():
     assert w.json_body["max_tokens"] == 4096
 
 
+def test_anthropic_tool_call_arguments_are_object():
+    req = _norm()
+    req.messages = [Message(
+        role="assistant",
+        content="",
+        tool_calls=[{
+            "id": "call_weather",
+            "type": "function",
+            "function": {
+                "name": "get_weather",
+                "arguments": '{"city":"Paris","units":"celsius"}',
+            },
+        }],
+    )]
+
+    wire = AnthropicAdapter().translate_request(req)
+
+    tool_use = wire.json_body["messages"][0]["content"][0]
+    assert tool_use["type"] == "tool_use"
+    assert tool_use["input"] == {"city": "Paris", "units": "celsius"}
+    assert isinstance(tool_use["input"], dict)
+
+
+def test_anthropic_tool_call_malformed_arguments_fall_back_to_empty_object():
+    req = _norm()
+    req.messages = [Message(
+        role="assistant",
+        content="",
+        tool_calls=[{
+            "id": "call_weather",
+            "type": "function",
+            "function": {"name": "get_weather", "arguments": "not-json"},
+        }],
+    )]
+
+    wire = AnthropicAdapter().translate_request(req)
+
+    assert wire.json_body["messages"][0]["content"][0]["input"] == {}
+
+
 def test_anthropic_tool_translation():
     a = AnthropicAdapter()
     tools = [{"type": "function", "function": {

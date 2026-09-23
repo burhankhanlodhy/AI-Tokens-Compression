@@ -463,9 +463,7 @@ def _to_normalized(model: str, payload: bytes):
                     norm = ContentPart(type="text", text=p.get("text"))
                 content.append(norm)
         else:
-            content = content_src
-        if content is None and m.get("role") == "assistant" and m.get("tool_calls"):
-            content = ""
+            content = "" if content_src is None else content_src
         messages.append(Message(role=m.get("role", "user"), content=content,
                                 tool_calls=m.get("tool_calls"),
                                 tool_call_id=m.get("tool_call_id"),
@@ -1015,7 +1013,7 @@ async def chat_completions(request: Request):
              tool_compression_saved=tool_compression_saved,
              schema_cache_hit=schema_cache_hit,
              schema_bytes_saved=schema_bytes_saved,
-             provider=provider if s.provider_routing else "legacy",
+             provider=None,
              dose_tier=dose_tier_ctx, grounded_risk=grounded_risk_ctx,
              envelope_shape=envelope_shape)
         return JSONResponse(
@@ -1083,11 +1081,21 @@ async def chat_completions(request: Request):
                 minify_tools=tool_schema_minified,
             )
         else:
-            # Not the mandatory-reasoning error: relay the 400 raw, but the
+            # Not the mandatory-reasoning error: relay a normalized 400, but the
             # evidence header must never read "injected" on a failed request
             # — record the rejection explicitly.
+            _log(model, route or "passthrough", in_before, in_after, 0,
+                 (time.perf_counter() - started) * 1000, compressed, 400,
+                 cache_status=cache_status,
+                 tool_compression_saved=tool_compression_saved,
+                 schema_cache_hit=schema_cache_hit,
+                 schema_bytes_saved=schema_bytes_saved,
+                 provider=provider if s.provider_routing else "legacy",
+                 dose_tier=dose_tier_ctx, grounded_risk=grounded_risk_ctx,
+                 envelope_shape=envelope_shape)
+            error_msg = _error_message_from_body(err_content)
             return JSONResponse(
-                content=json.loads(err_content) if err_content else {},
+                content=_normalized_error(400, error_msg),
                 status_code=400,
                 headers={"x-token-saver-reasoning": "rejected_400_relayed"},
             )
@@ -1482,6 +1490,12 @@ def _normalize_to_openai(data: dict, model: str) -> dict:
         return data
     blocks = data.get("content") or []
     text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+    tool_calls = [{
+        "id": block.get("id", ""),
+        "type": "function",
+        "function": {"name": block.get("name", ""),
+                     "arguments": json.dumps(block.get("input") or {})},
+    } for block in blocks if block.get("type") == "tool_use"]
     u = data.get("usage") or {}
     return {
         "id": data.get("id", ""),
@@ -1490,8 +1504,10 @@ def _normalize_to_openai(data: dict, model: str) -> dict:
         "model": model,
         "choices": [{
             "index": 0,
-            "message": {"role": "assistant", "content": text},
-            "finish_reason": "stop",
+            "message": ({"role": "assistant", "content": text,
+                         "tool_calls": tool_calls} if tool_calls else
+                        {"role": "assistant", "content": text}),
+            "finish_reason": "tool_calls" if tool_calls else "stop",
         }],
         "usage": {
             "prompt_tokens": int(u.get("input_tokens", 0)),

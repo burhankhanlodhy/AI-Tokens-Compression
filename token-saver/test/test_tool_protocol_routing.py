@@ -116,7 +116,7 @@ def test_tool_schema_setting_controls_all_routed_provider_wires(
     assert len(transport.requests) == 1
     raw = transport.requests[0].content
     wire = json.loads(raw)
-    assert wire["tool_choice"] == "auto"
+    assert wire["tool_choice"] == ({"type": "auto"} if provider == "anthropic" else "auto")
     assert wire["tools"]
     if provider == "anthropic":
         assert wire["tools"][0]["name"] == "lookup_weather"

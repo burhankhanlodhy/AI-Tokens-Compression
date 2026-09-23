@@ -153,6 +153,113 @@ def test_openai_model_still_uses_chat_completions(routed_env):
     assert body["messages"][0]["role"] == "system"  # OpenAI keeps system in messages
 
 
+def test_openai_compat_drops_openrouter_reasoning_control():
+    from proxy.main import _to_normalized
+    from proxy.providers.openai_compat import OpenAICompatAdapter
+
+    request = _to_normalized("openai/gpt-4o", json.dumps({
+        "model": "openai/gpt-4o", "messages": [{"role": "user", "content": "hi"}],
+        "reasoning": {"enabled": False},
+    }).encode())
+    body = OpenAICompatAdapter(name="openai").translate_request(request).json_body
+    assert "reasoning" not in body
+
+
+def test_anthropic_string_tool_choice_is_translated():
+    from proxy.main import _to_normalized
+    from proxy.providers.anthropic import AnthropicAdapter
+
+    request = _to_normalized("anthropic/claude-sonnet-5", json.dumps({
+        "model": "anthropic/claude-sonnet-5",
+        "messages": [{"role": "user", "content": "hi"}], "tool_choice": "auto",
+    }).encode())
+    body = AnthropicAdapter().translate_request(request).json_body
+    assert body["tool_choice"] == {"type": "auto"}
+
+
+def test_anthropic_assistant_null_content_is_accepted():
+    from proxy.main import _to_normalized
+    from proxy.providers.anthropic import AnthropicAdapter
+
+    request = _to_normalized("anthropic/claude-sonnet-5", json.dumps({
+        "model": "anthropic/claude-sonnet-5",
+        "messages": [{"role": "assistant", "content": None}],
+    }).encode())
+    body = AnthropicAdapter().translate_request(request).json_body
+    assert body["messages"][0]["content"] == ""
+
+
+def test_anthropic_tool_use_response_becomes_openai_tool_calls():
+    from proxy.main import _normalize_to_openai
+
+    normalized = _normalize_to_openai({
+        "id": "msg_tool", "content": [
+            {"type": "tool_use", "id": "call_1", "name": "lookup",
+             "input": {"city": "Paris"}},
+        ],
+        "usage": {"input_tokens": 7, "output_tokens": 3},
+    }, "anthropic/claude-sonnet-5")
+    message = normalized["choices"][0]["message"]
+    assert message["tool_calls"] == [{
+        "id": "call_1", "type": "function",
+        "function": {"name": "lookup", "arguments": '{"city": "Paris"}'},
+    }]
+    assert normalized["choices"][0]["finish_reason"] == "tool_calls"
+
+
+def test_reasoning_400_relay_is_normalized_and_logged(tmp_path, monkeypatch):
+    monkeypatch.setenv("PROVIDER_ROUTING", "true")
+    monkeypatch.setenv("CACHE_ENABLED", "false")
+    monkeypatch.delenv("TOKEN_SAVER_PG_DSN", raising=False)
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "reasoning.db"))
+    get_settings.cache_clear()
+    from proxy import main as main_mod
+    import proxy.stats as stats_mod
+
+    class ReasoningErrTransport(_CaptureTransport):
+        async def handle_async_request(self, request):
+            self.requests.append(request)
+            return httpx.Response(400, json={"error": {
+                "message": "Unrecognized request argument supplied: reasoning"}})
+
+    err_cap = ReasoningErrTransport()
+    main_mod._client_factory = lambda base_url, timeout: httpx.AsyncClient(
+        base_url=base_url, timeout=timeout, transport=err_cap)
+    seen = []
+    monkeypatch.setattr(stats_mod, "log_request", lambda **kw: seen.append(kw))
+    try:
+        with TestClient(main_mod.app) as client:
+            main_mod.app.state.http_clients = {}
+            r = _post_chat(client, "openai/gpt-4o")
+    finally:
+        main_mod._client_factory = None
+        get_settings.cache_clear()
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == 400
+    assert r.json()["error"]["type"] == "invalid_request"
+    assert seen and seen[-1]["status"] == 400
+
+
+def test_unknown_provider_error_ledger_provider_is_null(tmp_path, monkeypatch):
+    monkeypatch.setenv("PROVIDER_ROUTING", "true")
+    monkeypatch.setenv("CACHE_ENABLED", "false")
+    monkeypatch.delenv("TOKEN_SAVER_PG_DSN", raising=False)
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "unknown-provider.db"))
+    get_settings.cache_clear()
+    from proxy import main as main_mod
+    import proxy.stats as stats_mod
+    seen = []
+    monkeypatch.setattr(stats_mod, "log_request", lambda **kw: seen.append(kw))
+    try:
+        with TestClient(main_mod.app) as client:
+            main_mod.app.state.http_clients = {}
+            r = _post_chat(client, "not-a-provider/model")
+    finally:
+        get_settings.cache_clear()
+    assert r.status_code == 400
+    assert seen and seen[-1]["provider"] is None
+
+
 def test_routing_off_is_legacy_passthrough(monkeypatch):
     monkeypatch.delenv("PROVIDER_ROUTING", raising=False)
     monkeypatch.setenv("DATABASE_PATH", tempfile.mktemp(suffix=".db"))
