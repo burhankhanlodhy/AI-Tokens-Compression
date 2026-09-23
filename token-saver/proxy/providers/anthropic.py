@@ -92,6 +92,17 @@ class AnthropicAdapter:
         }
         return translated
 
+    @staticmethod
+    def _tool_arguments(tool_call: dict[str, Any]) -> dict[str, Any]:
+        """Decode OpenAI function arguments into Anthropic's object input."""
+        args = (tool_call.get("function") or {}).get("arguments", {})
+        if isinstance(args, str):
+            try:
+                args = json.loads(args) if args else {}
+            except json.JSONDecodeError:
+                return {}
+        return args if isinstance(args, dict) else {}
+
     def translate_request(self, req: NormalizedRequest) -> AdapterRequest:
         body: dict[str, Any] = {
             "model": self.normalize_model(req.model),
@@ -109,7 +120,7 @@ class AnthropicAdapter:
                 entry["content"] = [
                     {"type": "tool_use", "id": tc.get("id", ""),
                      "name": tc.get("function", {}).get("name", ""),
-                     "input": tc.get("function", {}).get("arguments", {})}
+                     "input": self._tool_arguments(tc)}
                     for tc in m.tool_calls
                 ]
             if m.tool_call_id:
