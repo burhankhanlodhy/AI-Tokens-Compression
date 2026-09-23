@@ -1,0 +1,4469 @@
+[
+ {
+  "id": "v121-g1-crm-24-tools",
+  "segment": "tool",
+  "upstream_savings_expected": true,
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are an account operations assistant. Use the CRM search tool to find the requested contact without changing records."
+   },
+   {
+    "role": "user",
+    "content": "Find the account contact for customer_id C-1042 and return the email address. Include the first page only."
+   }
+  ],
+  "tools": [
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_00",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_01",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_02",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_03",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_04",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_05",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_06",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_07",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_08",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_09",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_10",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_11",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_12",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_13",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_14",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_15",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_16",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_17",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_18",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_19",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_20",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_21",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_22",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "crm_contacts_search_23",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   }
+  ]
+ },
+ {
+  "id": "v121-g1-mcp-32-tools",
+  "segment": "tool",
+  "upstream_savings_expected": true,
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are an account operations assistant. Use the CRM search tool to find the requested contact without changing records."
+   },
+   {
+    "role": "user",
+    "content": "Find the account contact for customer_id C-1042 and return the email address. Include the first page only."
+   }
+  ],
+  "tools": [
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_00",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_01",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_02",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_03",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_04",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_05",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_06",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_07",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_08",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_09",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_10",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_11",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_12",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_13",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_14",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_15",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_16",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_17",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_18",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_19",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_20",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_21",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_22",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_23",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_24",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_25",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_26",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_27",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_28",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_29",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_30",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_contacts_search_31",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   }
+  ]
+ },
+ {
+  "id": "v121-g1-sales-40-tools",
+  "segment": "tool",
+  "upstream_savings_expected": true,
+  "messages": [
+   {
+    "role": "system",
+    "content": "You are an account operations assistant. Use the CRM search tool to find the requested contact without changing records."
+   },
+   {
+    "role": "user",
+    "content": "Find the account contact for customer_id C-1042 and return the email address. Include the first page only."
+   }
+  ],
+  "tools": [
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_00",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_01",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_02",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_03",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_04",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_05",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_06",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_07",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_08",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_09",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_10",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_11",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_12",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_13",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_14",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_15",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_16",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_17",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_18",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_19",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_20",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_21",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_22",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_23",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_24",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_25",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_26",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_27",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_28",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_29",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_30",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_31",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_32",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_33",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_34",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_35",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_36",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_37",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_38",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "sales_contacts_search_39",
+     "description": "Search CRM contacts using the supplied customer and email criteria, pagination controls, and archive visibility options. Returns matching contact records with account relationships.",
+     "parameters": {
+      "type": "object",
+      "properties": {
+       "account_email": {
+        "description": "Email address",
+        "format": "email",
+        "type": "string"
+       },
+       "contact_email": {
+        "description": "User email address",
+        "format": "email",
+        "type": "string"
+       },
+       "customer_id": {
+        "description": "The customer_id is the unique customer identifier used to look up a customer record.",
+        "type": "string"
+       },
+       "email": {
+        "description": "The user email address",
+        "format": "email",
+        "type": "string"
+       },
+       "include_archived": {
+        "description": "Whether include_archived should include archived records in the returned results.",
+        "type": "boolean"
+       },
+       "page_cursor": {
+        "description": "The page_cursor is the pagination cursor from the prior response, if continuing a search.",
+        "type": "string"
+       },
+       "page_size": {
+        "description": "The page_size is the maximum number of customer records to return in each page.",
+        "type": "integer"
+       }
+      },
+      "required": [
+       "account_email"
+      ]
+     }
+    }
+   }
+  ]
+ }
+]
