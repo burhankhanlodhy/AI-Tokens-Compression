@@ -93,7 +93,12 @@ class OpenAICompatAdapter:
             body["max_tokens"] = req.max_tokens
         if req.temperature is not None:
             body["temperature"] = req.temperature
-        body.update(req.extra)  # provider passthrough (reasoning, etc.)
+        extra = dict(req.extra)
+        # The default reasoning control is OpenRouter-shaped. OpenAI's API
+        # rejects this field outright, so do not forward it to that provider.
+        if self.name == "openai":
+            extra.pop("reasoning", None)
+        body.update(extra)
         return AdapterRequest(path=self.chat_path, headers={}, json_body=body)
 
     # ---- response translation (C4, C8, C9) ----

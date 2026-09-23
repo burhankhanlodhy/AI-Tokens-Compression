@@ -167,7 +167,10 @@ def test_ac_a3_auth_and_request_translation_matrix(provider, model, auth_style, 
     assert wire.json_body["max_tokens"] == 256
     assert wire.json_body["temperature"] == 0.2
     assert wire.json_body["top_p"] == 0.9
-    assert wire.json_body["reasoning"] == {"enabled": False}
+    if provider == "openai":
+        assert "reasoning" not in wire.json_body
+    else:
+        assert wire.json_body["reasoning"] == {"enabled": False}
 
     expected_auth = {
         "bearer": {"Authorization": f"Bearer {RECORDED_CREDENTIAL}"},
