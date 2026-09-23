@@ -29,7 +29,9 @@ configures it in `.env`) and are run from `token-saver/`.
 5. **`migrations/20260922_v121_tool_schema_ledger.sql`** — adds
    `requests.schema_cache_hit` and `requests.schema_bytes_saved`. Apply before
    a v1.2.1 proxy writes tool-schema telemetry; otherwise its fail-open ledger
-   guard would drop the entire request row on an existing volume.
+   guard would drop the entire request row on an existing volume. The proxy
+   applies this idempotently at startup when `TOKEN_SAVER_PG_DSN` is set; it is
+   also mounted into Postgres initdb for fresh Compose volumes.
 6. **`migrations/20260922_t1_tool_compression_ledger.sql`** — adds
    `requests.tool_compression_saved` (INTEGER NOT NULL DEFAULT 0), the
    additive v1.2.1 attribution column for selective tool-protocol
@@ -37,10 +39,9 @@ configures it in `.env`) and are run from `token-saver/`.
    fresh-volume reason as migration 5. Savings are an attribution subset:
    dashboards must never add them to `l1_tokens_stripped`.
 
-Every migration is fire-once and idempotent-hostile by design: they fail
-loudly rather than silently repairing a partially-applied state — **except
-migration 5**, which is intentionally idempotent for the reason above. Apply
-each with:
+Migrations 1–4 fail loudly rather than silently repairing a partially-applied
+state. Migrations 5 and 6 are idempotent to tolerate both canonical fresh
+schemas and re-runs against existing volumes. Apply each with:
 
 ```bash
 psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 \

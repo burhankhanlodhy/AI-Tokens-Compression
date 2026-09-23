@@ -57,11 +57,13 @@ def test_startup_has_no_rate_limiter_code_path():
 # --------------------------------------------------------- release version
 
 def test_v1_release_version_is_exposed_by_health(client):
-    """A deployed v1.2.0 instance identifies the exact release at runtime."""
-    assert app.version == "1.2.0"
+    """The proxy identifies its source-controlled version at runtime."""
+    from proxy.version import __version__
+
+    assert app.version == __version__
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "version": "1.2.0"}
+    assert response.json() == {"status": "ok", "version": __version__}
 
 
 # ---------------------------------------------------------------- T3: embeddings

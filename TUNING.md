@@ -3,6 +3,71 @@
 How to tune the token-saver proxy's savings levers — and which knobs not to
 touch. All defaults below are the shipped values in `proxy/config.py`.
 
+## Codebase-context optimization (v1.2.1 candidate)
+
+The codebase optimizer runs before L1 cleanup and only transforms text-bearing
+message content. It does not edit roles, tool-call metadata, image parts, or
+fenced code during shell filtering. The candidate measured **92.61% as-shipped
+codebase-segment input-token reduction** on the general E2E corpus (20 scenarios
+/ 5 segments, k=2; SHA-256
+`af21ac53e8d1da7f2ab4402a0573ec3709bc5d92513a3ecbc8ce575f6f10a33a`). This
+result is population-specific, not a per-request guarantee, and does not imply
+that every transformed context is semantically interchangeable. Review any
+omission marker and retrieve source context when details matter.
+
+### V1.2.1 measured candidate evidence and status
+
+The v1.2.1 integration recommendation remains **NO-GO**. The following
+population-specific measurements explain the candidate behavior; re-baselined
+gates remain pending re-measurement on the commissioned fixtures. These are
+not per-request guarantees and do not establish release readiness.
+
+- **Tool segment, general E2E corpus** (20 scenarios / 5 segments, k=2;
+  SHA-256 `af21ac53e8d1da7f2ab4402a0573ec3709bc5d92513a3ecbc8ce575f6f10a33a`):
+  **0.55% as-shipped marginal reduction**, ratio-of-sums over the whole prompt
+  (14,682 → 14,601 prompt tokens), alongside **15.51% isolated transformer
+  contribution**, measured as 9,722 `tool_compression_saved` tokens / 62,666
+  baseline tool+schema prompt tokens. The isolated figure is not a customer-bill
+  result. The former 15% general-corpus floor is retired; the new ≥8%
+  as-shipped tool-heavy floor awaits the tool-schema-heavy fixture.
+- **Schema corpus** (92 tools / 5 scenarios; SHA-256
+  `e689f2c7fc8accf6140f2b22dc19bceb0b3e4012d14c0517cb947d40d97d2284`):
+  compact-client end-to-end reduction was **1.22%**; pretty-printed-client
+  end-to-end reduction was **43.9%**. Compact clients claim “never inflates,
+  never breaks validation,” not a percentage floor; the pretty-printed ≥20%
+  gate is retained. Conservation had 0 violations across 92 tools, and schema
+  cache hit rate was **100% (40/40 eligible turns)**. The uniform general-corpus
+  schema scenarios on the general E2E corpus (20 scenarios / 5 segments, k=2;
+  SHA-256 `af21ac53e8d1da7f2ab4402a0573ec3709bc5d92513a3ecbc8ce575f6f10a33a`)
+  measured 3.58–3.71%; re-baselined gates are pending.
+- **Result segment, general E2E corpus** (20 scenarios / 5 segments, k=2;
+  SHA-256 `af21ac53e8d1da7f2ab4402a0573ec3709bc5d92513a3ecbc8ce575f6f10a33a`):
+  **0.00% as-shipped reduction** (55,145 → 55,145 prompt tokens), because the
+  corpus's 4,506-token tool results were below the 5,000-token cap and correctly
+  no-oped. The 25% floor is retained and awaits the commissioned over-cap corpus.
+
+The measurements above describe different corpus populations and must not be
+combined as if they were one benchmark. See `CHANGELOG.md` for the candidate
+summary; no gate is reported as passing based on a retired or re-baselined floor.
+
+- `CODEBASE_OPTIMIZATION_ENABLED` — master switch (default `true`). Set it to
+  `false` to disable all three operations below.
+- `CODEBASE_MAX_FILE_LINES` — maximum source lines retained from oversized
+  fenced file bodies (default `200`, minimum `2`), before the omission marker
+  is added. The first and last portions are kept; lower it only when context
+  budgets justify more aggressive omission.
+- `CODEBASE_DEDUPE_IMPORTS` — remove repeated import lines after their first
+  occurrence (default `true`). A line must occur more than three times across
+  eligible fenced code before later copies are replaced with a marker.
+- `SHELL_OUTPUT_FILTERING` — filter recognizable shell/debug noise from
+  unfenced text (default `true`). Errors, warnings, useful output, and Python
+  traceback frames are retained; fenced code is not filtered. Set it to
+  `false` when exact shell transcripts are important.
+
+The switches are independent: disabling import deduplication does not disable
+shell filtering, and vice versa. All settings are available in
+`token-saver/.env.example`.
+
 ## Semantic cache threshold (`SEMANTIC_CACHE_MAX_COSINE_DISTANCE`)
 
 The threshold is a **cosine distance**: a lookup hits when the nearest

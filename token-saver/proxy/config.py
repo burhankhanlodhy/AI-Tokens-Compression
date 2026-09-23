@@ -64,9 +64,11 @@ class Settings(BaseSettings):
     # 400s on gemini-3.5-flash-lite), and "zero thinking" is unsatisfiable on
     # models whose floor is MINIMAL. So the Gemini family gets the MINIMAL
     # FLOORING control (bounds hidden reasoning to the model's cheapest level;
-    # efficacy is verified by the SD gate's differential probe, never assumed),
-    # while families that accept suppression keep it. A client that explicitly
-    # sets its own `reasoning` or `thinking_level` field is always respected
+    # efficacy is verified by the SD gate's differential probe, never assumed).
+    # Direct Google provider routing skips this proxy injection because the
+    # Google OpenAI-compatible endpoint's support for that extension is not
+    # guaranteed. Other families that accept suppression keep it. A client
+    # that explicitly sets its own `reasoning` or `thinking_level` is respected
     # instead. Keys are BODY-LEVEL keys: the dict is merged into the request
     # body verbatim.
     disable_reasoning_by_default: bool = True

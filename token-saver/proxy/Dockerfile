@@ -6,6 +6,7 @@ COPY proxy/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY proxy/ ./proxy/
+COPY migrations/ ./migrations/
 
 # pricing.json is THE price source (loaded at startup — config.load_pricing);
 # without it the container silently falls back to the hardcoded table and

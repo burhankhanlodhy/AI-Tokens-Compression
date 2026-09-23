@@ -220,9 +220,9 @@ def _replace_repeated_import_lines(content: str, repeated: Counter[str], seen: C
                     # Replace with marker comment
                     indent_match = re.match(r"\s*", line)
                     indent = indent_match.group(0) if indent_match else ""
-                    replacement_lines.append(
-                        f"{indent}# [... import repeated {repeated[stripped]} times ...]"
-                    )
+                    # Keep the marker shorter than even the smallest import
+                    # statement so deduplication never inflates tiny snippets.
+                    replacement_lines.append(f"{indent}# [dup]")
                 else:
                     replacement_lines.append(line)
             else:

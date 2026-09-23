@@ -562,6 +562,49 @@ async def test_gemini_family_gets_minimal_flooring_control(capturing_client):
 
 
 @pytest.mark.asyncio
+async def test_routed_google_does_not_receive_unsupported_injected_thinking_level(
+        capturing_client, monkeypatch):
+    """Direct Google routing must not receive an unverified OpenAI-compat
+    thinking_level extension; explicit client settings remain a separate path."""
+    from proxy import main as main_module
+
+    c, _ = capturing_client
+    monkeypatch.setenv("PROVIDER_ROUTING", "true")
+    get_settings.cache_clear()
+    routed_calls: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        routed_calls.append(json.loads(request.content))
+        if "thinking_level" in routed_calls[-1]:
+            return httpx.Response(400, json={"error": {"message": "unknown field thinking_level"}})
+        return httpx.Response(200, json=UPSTREAM_RESPONSE)
+
+    transport = httpx.MockTransport(handler)
+    monkeypatch.setattr(
+        main_module, "_client_factory",
+        lambda base_url, timeout: httpx.AsyncClient(
+            base_url=base_url, timeout=timeout, transport=transport),
+        raising=False,
+    )
+    main_module.app.state.http_clients = {}
+
+    response = await c.post(
+        "/v1/chat/completions",
+        headers={"Authorization": "Bearer test-key-123"},
+        json={"model": "google/gemini-3.5-flash-lite",
+              "messages": [{"role": "user", "content": "hi"}]},
+    )
+
+    assert response.status_code == 200
+    assert len(routed_calls) == 1
+    assert "thinking_level" not in routed_calls[0]
+    assert "x-token-saver-reasoning" not in response.headers
+    await main_module.app.state.http_clients[
+        "https://generativelanguage.googleapis.com/v1beta/openai"
+    ].aclose()
+
+
+@pytest.mark.asyncio
 async def test_client_supplied_thinking_level_is_respected(capturing_client):
     """A client that explicitly sets thinking_level is never overridden."""
     c, captured = capturing_client

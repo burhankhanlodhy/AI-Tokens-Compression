@@ -65,7 +65,7 @@ def test_deduplicate_import_blocks_after_first_of_four_fenced_files():
     assert "import os" in optimized[0]["content"]
     assert "from pathlib import Path" in optimized[0]["content"]
     for message in optimized[1:]:
-        assert "# [... import repeated 4 times ...]" in message["content"]
+        assert "# [dup]" in message["content"]
         assert "import os" not in message["content"]
         assert "from pathlib import Path" not in message["content"]
         assert "print(Path.cwd())" in message["content"]
@@ -83,7 +83,7 @@ def test_deduplicate_import_blocks_in_openai_text_parts_after_first_of_four():
     assert "import os" in optimized[0]["content"][0]["text"]
     for message in optimized[1:]:
         text = message["content"][0]["text"]
-        assert "# [... import repeated 4 times ...]" in text
+        assert "# [dup]" in text
         assert "import os" not in text
         assert "from pathlib import Path" not in text
         assert "print(Path.cwd())" in text
@@ -115,7 +115,7 @@ def test_deduplicate_marks_repeated_lines_and_preserves_unique_lines_in_interlea
     # Later messages mark the repeated lines but keep their unique import
     for index, message in enumerate(optimized[1:], start=1):
         content = message["content"]
-        assert content.count("# [... import repeated 10 times ...]") == 3
+        assert content.count("# [dup]") == 3
         assert "import os" not in content
         assert "import sys" not in content
         assert "import json" not in content
@@ -135,6 +135,21 @@ def test_deduplicate_leaves_messages_with_few_repeated_lines_untouched():
         assert "import os" in message["content"]
         assert f"import unique_{index}" in message["content"]
         assert "# [... import repeated" not in message["content"]
+
+
+def test_deduplication_does_not_inflate_small_import_heavy_input():
+    messages = [
+        {"role": "user", "content": _fenced(["import a", "import b"])}
+        for _ in range(8)
+    ]
+    original_chars = sum(len(message["content"]) for message in messages)
+
+    optimized = deduplicate_imports(messages)
+
+    optimized_chars = sum(len(message["content"]) for message in optimized)
+    assert optimized_chars <= original_chars
+    assert all("import a" not in message["content"] for message in optimized[1:])
+    assert all("import b" not in message["content"] for message in optimized[1:])
 
 
 def test_filter_shell_output_removes_noise_and_keeps_critical_lines():

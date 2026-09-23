@@ -6,7 +6,7 @@
 BEGIN;
 
 ALTER TABLE requests
-    ADD COLUMN schema_cache_hit BOOLEAN NOT NULL DEFAULT false,
-    ADD COLUMN schema_bytes_saved INTEGER NOT NULL DEFAULT 0;
+    ADD COLUMN IF NOT EXISTS schema_cache_hit BOOLEAN NOT NULL DEFAULT false,
+    ADD COLUMN IF NOT EXISTS schema_bytes_saved INTEGER NOT NULL DEFAULT 0;
 
 COMMIT;

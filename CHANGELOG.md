@@ -5,6 +5,45 @@ All notable changes to **token-saver** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - Unreleased
+
+### Added
+
+- **Codebase-context optimization** — enabled by default for coding-agent
+  prompts: truncates oversized fenced file bodies while keeping their head and
+  tail, deduplicates frequently repeated import lines, and filters recognizable
+  shell noise while preserving errors, warnings, results, and Python traceback
+  frames. The master switch and subfeature settings are documented in
+  `TUNING.md`.
+- **Selective tool-protocol compression** — losslessly compacts validated JSON
+  tool-result content and minifies tool schemas. Tool-call arguments, choices,
+  and message envelopes are not rewritten by these transforms; each feature can
+  be disabled independently.
+- **Measured candidate evidence (not a release verdict):** the general E2E
+  corpus (20 scenarios / 5 segments, k=2; SHA-256
+  `af21ac53e8d1da7f2ab4402a0573ec3709bc5d92513a3ecbc8ce575f6f10a33a`)
+  measured **92.61% as-shipped codebase-segment input-token reduction** and
+  **0.55% as-shipped marginal tool-segment reduction** (14,682 → 14,601).
+  On that same run, the **15.51% isolated transformer contribution** was
+  measured as 9,722 `tool_compression_saved` tokens / 62,666 baseline
+  tool+schema prompt tokens; this is not customer-bill savings and is published only
+  beside the as-shipped result. On the separate schema corpus (92 tools / 5
+  scenarios; SHA-256
+  `e689f2c7fc8accf6140f2b22dc19bceb0b3e4012d14c0517cb947d40d97d2284`),
+  compact-client end-to-end savings were 1.22%, pretty-printed-client savings
+  were 43.9%, and repeated-tool-set cache hit rate was 100% (40/40 eligible
+  turns). On the general E2E corpus, the result segment measured 0.00%
+  (55,145 → 55,145 tokens) because its 4,506-token results were below the
+  5,000-token optimization cap. These are population-specific measurements,
+  not per-request guarantees. V1.2.1 remains **NO-GO**; re-baselined gates are
+  pending measurement on the new fixtures, and no release is claimed.
+
+### Changed
+
+- **Version metadata** — proxy and semantic-cache quality namespace now report
+  `1.2.1` for the unreleased candidate. This entry does not indicate that a
+  release has shipped.
+
 ## [1.1.0] - 2026-09-21
 
 ### Added

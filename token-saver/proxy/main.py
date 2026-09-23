@@ -136,6 +136,8 @@ def _ensure_cache_seed_rows() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> Iterator[None]:
+    if os.environ.get("TOKEN_SAVER_PG_DSN"):
+        _apply_v121_tool_schema_migration()
     stats.init_db()
     s = get_settings()
     _ensure_admin_token(app)
@@ -157,6 +159,15 @@ async def lifespan(app: FastAPI) -> Iterator[None]:
     for client in [app.state.http, *getattr(app.state, "http_clients", {}).values()]:
         if client:
             await client.aclose()
+
+
+def _apply_v121_tool_schema_migration() -> None:
+    """Upgrade legacy Postgres ledgers before the proxy writes request rows."""
+    import psycopg
+
+    migration = Path(__file__).resolve().parents[1] / "migrations" / "20260922_v121_tool_schema_ledger.sql"
+    with psycopg.connect(os.environ["TOKEN_SAVER_PG_DSN"], connect_timeout=3) as conn:
+        conn.execute(migration.read_text(encoding="utf-8"))
 
 
 APP_VERSION = __version__
@@ -453,6 +464,8 @@ def _to_normalized(model: str, payload: bytes):
                 content.append(norm)
         else:
             content = content_src
+        if content is None and m.get("role") == "assistant" and m.get("tool_calls"):
+            content = ""
         messages.append(Message(role=m.get("role", "user"), content=content,
                                 tool_calls=m.get("tool_calls"),
                                 tool_call_id=m.get("tool_call_id"),

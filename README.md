@@ -157,6 +157,21 @@ All settings are env vars (see `.env.example` and `proxy/config.py`):
   `tools` value with compact JSON separators on every provider path (legacy
   and routed). The decoded schema is semantically identical. Set `false` to
   send the schema with the standard spacing.
+- `CODEBASE_OPTIMIZATION_ENABLED` — master switch for deterministic cleanup
+  of coding-agent context (default `true`). The optimizer truncates oversized
+  fenced file bodies, removes repeated imports, and filters recognizable shell
+  noise before the other prompt-cleanup stages; see [Codebase-context tuning](TUNING.md#codebase-context-optimization).
+- `CODEBASE_MAX_FILE_LINES` — maximum source lines retained from a fenced file
+  body (default `200`, minimum `2`). When exceeded, the optimizer keeps the
+  first and last portions and inserts a marker stating how many middle lines
+  were omitted.
+- `CODEBASE_DEDUPE_IMPORTS` — deduplicate repeated import lines across fenced
+  code blocks (default `true`). Only lines repeated more than three times are
+  replaced after their first occurrence.
+- `SHELL_OUTPUT_FILTERING` — remove recognizable shell/debug noise from
+  unfenced text while retaining errors, warnings, results, and Python traceback
+  frames (default `true`). Fenced code is left untouched. Disable it if shell
+  output must be preserved verbatim.
 - `SEMANTIC_CACHE_ENABLED` — pgvector semantic lookup of semantically
   similar prompts, **off by default** (ratified GO as of v1.1 — the C1
   operating point below passed the calibration, tenant-isolation,

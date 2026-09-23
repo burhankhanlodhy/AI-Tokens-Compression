@@ -53,8 +53,9 @@ class _CaptureTransport(httpx.AsyncBaseTransport):
     ("vllm/qwen-72b", "vllm"),
 ])
 @pytest.mark.parametrize("schema_compression_enabled", [True, False])
+@pytest.mark.parametrize("content_mode", ["null", "omitted"])
 def test_tool_schema_setting_controls_all_routed_provider_wires(
-    tmp_path, monkeypatch, model, provider, schema_compression_enabled,
+    tmp_path, monkeypatch, model, provider, schema_compression_enabled, content_mode,
 ):
     """AC-T4: translated provider wire respects the schema setting exactly."""
     monkeypatch.delenv("TOKEN_SAVER_PG_DSN", raising=False)
@@ -98,7 +99,8 @@ def test_tool_schema_setting_controls_all_routed_provider_wires(
                 json={
                     "model": model,
                     "messages": [
-                        {"role": "assistant", "content": "", "tool_calls": [assistant_call]},
+                        ({"role": "assistant", **({"content": None} if content_mode == "null" else {}),
+                          "tool_calls": [assistant_call]}),
                         {"role": "tool", "tool_call_id": "call_1",
                          "content": '{\n  "forecast": "sunny"\n}'},
                     ],
@@ -120,6 +122,7 @@ def test_tool_schema_setting_controls_all_routed_provider_wires(
         assert wire["tools"][0]["name"] == "lookup_weather"
         assert wire["messages"][0]["content"][0]["id"] == "call_1"
     else:
+        assert wire["messages"][0]["content"] == ""
         assert wire["tools"] == tools
         assert wire["messages"][0]["tool_calls"] == [assistant_call]
 
