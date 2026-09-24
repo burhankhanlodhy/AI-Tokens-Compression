@@ -11,11 +11,12 @@ sys.path.insert(0, str(ROOT / "token-saver"))
 from proxy.version import __version__  # noqa: E402
 
 
-def test_v121_candidate_version_and_changelog_are_consistent():
+def test_release_version_and_changelog_are_consistent():
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
     assert __version__ == "1.2.1"
-    assert f"## [{__version__}] - Unreleased" in changelog
+    assert "## [1.2.2] - Unreleased" in changelog
+    assert f"## [{__version__}] - 2026-09-23" in changelog
 
 
 def test_codebase_settings_are_discoverable_in_all_user_docs():

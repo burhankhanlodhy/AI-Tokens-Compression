@@ -5,7 +5,15 @@ All notable changes to **token-saver** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.1] - Unreleased
+## [1.2.2] - Unreleased
+
+### Fixed
+
+- **Tool-schema savings ledger attribution** — reconciles estimated savings
+  with bytes removed and the whole-request input-token delta. This is a
+  schema-only correction to the existing ledger definition; it adds no columns.
+
+## [1.2.1] - 2026-09-23
 
 ### Added
 
