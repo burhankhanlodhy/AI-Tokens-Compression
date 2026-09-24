@@ -37,6 +37,17 @@ class Settings(BaseSettings):
     upstream_timeout_seconds: float = 120.0
 
     # --- Feature flags ---
+    # V2.1 strategy lanes are deployment-only switches. Request headers and
+    # query parameters are never consulted for these controls.
+    v21_deferred_tools_enabled: bool = False
+    v21_tocp_enabled: bool = False
+    v21_idcp_enabled: bool = False
+    v21_atba_enabled: bool = False
+    # ATBA may collect shadow decisions while enabled; enforcement is an
+    # independent switch and remains off unless paired evidence clears QA.
+    v21_atba_enforce: bool = False
+    v21_mtcc_enabled: bool = False
+
     compression_enabled: bool = True
     # Deterministic cleanup for coding-agent contexts. This runs before L1 so
     # its conservative file trimming, repeated-import elision, and shell-log

@@ -43,6 +43,7 @@ from .dashboard import _render_stats_html
 from .dashboard_v2 import render_shell
 from .kpis import kpis_endpoint
 from .tripwire import tripwire_endpoint
+from .strategy_engine import StrategyRegistry
 from . import caching
 from . import semantic_cache
 from .semantic_cache import DEFAULT_TENANT_ID, SemanticLookupKind, SemanticLookupScope
@@ -1645,6 +1646,13 @@ async def embeddings(request: Request):
 
 
 # Metrics & health endpoints for monitoring systems.
+
+
+@app.get("/api/strategies")
+async def strategy_status(request: Request):
+    """Admin-only audit view of V2.1 deployment flags and lane fallbacks."""
+    _require_admin(request)
+    return {"strategies": StrategyRegistry(get_settings()).status()}
 
 
 def _prom_label_escape(value: str) -> str:
