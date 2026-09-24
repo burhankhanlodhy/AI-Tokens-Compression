@@ -127,6 +127,8 @@ def log_request(
     embedding_version: str | None = None,
     quality_version: str | None = None,
     tool_compression_saved: int = 0,
+    provider_cache_read_tokens: int | None = None,
+    provider_cache_write_tokens: int | None = None,
 ) -> None:
     """Append to the request ledger.
 
@@ -168,6 +170,8 @@ def log_request(
             embedding_version=embedding_version,
             quality_version=quality_version,
             tool_compression_saved=tool_compression_saved,
+            provider_cache_read_tokens=provider_cache_read_tokens,
+            provider_cache_write_tokens=provider_cache_write_tokens,
         )
         return
     with _lock, get_conn() as conn:
@@ -212,6 +216,7 @@ def _log_postgres(
     dose_tier=None, grounded_risk=None, envelope_shape=None,
     measurement_tag=None, embedding_version=None, quality_version=None,
     tool_compression_saved=0,
+    provider_cache_read_tokens=None, provider_cache_write_tokens=None,
 ) -> None:
     import psycopg
 
@@ -242,6 +247,7 @@ def _log_postgres(
             latency_ms, compressed, status,
             dose_tier, grounded_risk, envelope_shape, measurement_tag,
             tool_compression_saved,
+            provider_cache_read_tokens, provider_cache_write_tokens,
             *((embedding_version, quality_version) if version_columns else ()),
         )
         conn.execute(
@@ -252,14 +258,15 @@ def _log_postgres(
                 l1_tokens_stripped, l1_savings, schema_cache_hit, schema_bytes_saved,
                 latency_ms, compressed, status,
                 dose_tier, grounded_risk, envelope_shape, measurement_tag,
-                tool_compression_saved
+                tool_compression_saved, provider_cache_read_tokens,
+                provider_cache_write_tokens
                 {version_columns})
             SELECT '00000000-0000-0000-0000-000000000000',
                    COALESCE((SELECT id FROM providers WHERE name = %s),
                             (SELECT id FROM providers WHERE name = 'legacy')),
                    %s, %s, %s, %s, %s, %s::numeric, %s::numeric, %s,
                    %s::numeric, %s, %s::numeric, %s, %s, %s::numeric, %s, %s,
-                   %s, %s, %s, %s, %s{version_values}
+                   %s, %s, %s, %s, %s, %s, %s{version_values}
             """,
             values,
         )

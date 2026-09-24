@@ -44,8 +44,8 @@ class NormalizedRequest:
 class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
-    cache_read_tokens: int = 0  # PA-4: reported separately, never merged
-    cache_write_tokens: int = 0
+    cache_read_tokens: int | None = None  # None means no provider evidence
+    cache_write_tokens: int | None = None
 
 
 @dataclass

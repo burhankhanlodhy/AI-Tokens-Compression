@@ -1253,10 +1253,22 @@ async def _relay(
             and "text/event-stream" in resp.headers.get("content-type", "")
         )
         collected: list[str] = []
+        provider_cache_read_tokens: int | None = None
+        provider_cache_write_tokens: int | None = None
 
         async def raw_streamer():
+            nonlocal provider_cache_read_tokens
             try:
                 async for line in resp.aiter_lines():
+                    if line.startswith("data: ") and line != "data: [DONE]":
+                        try:
+                            chunk = json.loads(line[6:])
+                            usage = chunk.get("usage") or {}
+                            cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens")
+                            if cached is not None:
+                                provider_cache_read_tokens = int(cached)
+                        except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
+                            pass
                     if line.startswith("data: ") and line != "data: [DONE]":
                         try:
                             collected.append(
@@ -1276,6 +1288,8 @@ async def _relay(
                      l1_tokens_stripped=l1_tokens_stripped,
                      l1_savings=l1_savings,
                      tool_compression_saved=tool_compression_saved,
+                     provider_cache_read_tokens=provider_cache_read_tokens,
+                     provider_cache_write_tokens=provider_cache_write_tokens,
                      provider=provider,
                      dose_tier=dose_tier, grounded_risk=grounded_risk,
                      envelope_shape=envelope_shape)
@@ -1290,6 +1304,7 @@ async def _relay(
             echoed in every chunk.
             """
             anthropic = AnthropicAdapter()
+            nonlocal provider_cache_read_tokens, provider_cache_write_tokens
             usage_acc: dict = {}
             done_sent = False
             openai_tool_index = 0  # OpenAI tool_calls index counter
@@ -1352,10 +1367,13 @@ async def _relay(
                             usage_acc["prompt_tokens"] = ev.usage.input_tokens
                         if ev.usage.output_tokens:
                             usage_acc["completion_tokens"] = ev.usage.output_tokens
-                        if ev.usage.cache_read_tokens:
+                        if ev.usage.cache_read_tokens is not None:
+                            provider_cache_read_tokens = ev.usage.cache_read_tokens
                             usage_acc.setdefault("prompt_tokens_details", {})
                             usage_acc["prompt_tokens_details"]["cached_tokens"] = \
                                 ev.usage.cache_read_tokens
+                        if ev.usage.cache_write_tokens is not None:
+                            provider_cache_write_tokens = ev.usage.cache_write_tokens
                     elif ev.kind == "error" and ev.error:
                         # provider error events are surfaced, never dropped (C4/C8)
                         err_chunk = {
@@ -1393,6 +1411,8 @@ async def _relay(
                      l1_tokens_stripped=l1_tokens_stripped,
                      l1_savings=l1_savings,
                      tool_compression_saved=tool_compression_saved,
+                     provider_cache_read_tokens=provider_cache_read_tokens,
+                     provider_cache_write_tokens=provider_cache_write_tokens,
                      provider=provider,
                      dose_tier=dose_tier, grounded_risk=grounded_risk,
                      envelope_shape=envelope_shape)
@@ -1406,6 +1426,25 @@ async def _relay(
 
     content = await resp.aread()
     await resp.aclose()
+    provider_cache_read_tokens = None
+    provider_cache_write_tokens = None
+    if resp.status_code == 200:
+        try:
+            from .providers.model import NormalizedRequest
+            if provider == "anthropic":
+                usage_adapter = AnthropicAdapter()
+            else:
+                from .providers.openai_compat import OpenAICompatAdapter
+                usage_adapter = OpenAICompatAdapter(name=provider or "legacy")
+            normalized_usage = usage_adapter.translate_response(
+                httpx.Response(resp.status_code, content=content),
+                NormalizedRequest(model=model),
+            ).usage
+            if normalized_usage is not None:
+                provider_cache_read_tokens = normalized_usage.cache_read_tokens
+                provider_cache_write_tokens = normalized_usage.cache_write_tokens
+        except Exception:  # noqa: BLE001 — attribution must never break relay
+            logger.exception("provider usage normalization failed")
 
     # --- Response normalization (C4/C8): provider shape -> client shape ---
     # The client always spoke OpenAI shape. Provider-routed responses must be
@@ -1492,6 +1531,8 @@ async def _relay(
          l1_tokens_stripped=l1_tokens_stripped,
          l1_savings=l1_savings,
          tool_compression_saved=tool_compression_saved,
+         provider_cache_read_tokens=provider_cache_read_tokens,
+         provider_cache_write_tokens=provider_cache_write_tokens,
          provider=provider,
          dose_tier=dose_tier, grounded_risk=grounded_risk,
          envelope_shape=envelope_shape)
@@ -1548,6 +1589,7 @@ def _log(model, route, in_before, in_after, output_tokens,
          tool_compression_saved=0,
          schema_cache_hit=False, schema_bytes_saved=0,
          provider=None, dose_tier=None, grounded_risk=None,
+         provider_cache_read_tokens=None, provider_cache_write_tokens=None,
          envelope_shape=None, embedding_version=None, quality_version=None):
     global LEDGER_WRITE_FAILURES
     try:
@@ -1564,6 +1606,8 @@ def _log(model, route, in_before, in_after, output_tokens,
             l1_tokens_stripped=l1_tokens_stripped,
             l1_savings=l1_savings,
             tool_compression_saved=tool_compression_saved,
+            provider_cache_read_tokens=provider_cache_read_tokens,
+            provider_cache_write_tokens=provider_cache_write_tokens,
             provider=provider,
             dose_tier=dose_tier, grounded_risk=grounded_risk,
             envelope_shape=envelope_shape,

@@ -241,7 +241,11 @@ def test_ac_a4_anthropic_request_uses_messages_system_param_and_no_reasoning():
     wire = adapter.translate_request(_request("anthropic/claude-sonnet-5", stream=False))
     assert wire.path == "/v1/messages"
     assert wire.json_body["model"] == "claude-sonnet-5"
-    assert wire.json_body["system"] == "You are a precise assistant."
+    assert wire.json_body["system"] == [{
+        "type": "text",
+        "text": "You are a precise assistant.",
+        "cache_control": {"type": "ephemeral"},
+    }]
     assert all(message["role"] != "system" for message in wire.json_body["messages"])
     assert "reasoning" not in wire.json_body
     assert wire.json_body["max_tokens"] == 256

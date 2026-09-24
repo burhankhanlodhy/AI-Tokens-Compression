@@ -124,8 +124,8 @@ def test_anthropic_model_uses_messages_endpoint(routed_env):
     assert req.url.path == "/v1/messages"
     body = json.loads(req.content)
     assert "messages" in body and body["messages"][0]["role"] == "user"
-    # system is a top-level param, NOT a message
-    assert body.get("system") == "You are helpful"
+    # system is a top-level param, NOT a message; Anthropic stable-prefix shape
+    assert body.get("system") == [{"type": "text", "text": "You are helpful", "cache_control": {"type": "ephemeral"}}]
     assert all(m.get("role") != "system" for m in body["messages"])
     # reasoning override must not leak into Anthropic shape
     assert "reasoning" not in body

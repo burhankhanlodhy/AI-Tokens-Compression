@@ -128,7 +128,8 @@ class OpenAICompatAdapter:
                 usage = Usage(
                     input_tokens=int(u.get("prompt_tokens", 0)),
                     output_tokens=int(u.get("completion_tokens", 0)),
-                    cache_read_tokens=int((u.get("prompt_tokens_details") or {}).get("cached_tokens", 0)),
+                    cache_read_tokens=(int((u.get("prompt_tokens_details") or {})["cached_tokens"])
+                                       if (u.get("prompt_tokens_details") or {}).get("cached_tokens") is not None else None),
                 )
         except (json.JSONDecodeError, AttributeError, KeyError, ValueError):
             pass
@@ -155,7 +156,8 @@ class OpenAICompatAdapter:
             return StreamEvent(kind="usage", usage=Usage(
                 input_tokens=int(u.get("prompt_tokens", 0)),
                 output_tokens=int(u.get("completion_tokens", 0)),
-                cache_read_tokens=int((u.get("prompt_tokens_details") or {}).get("cached_tokens", 0)),
+                cache_read_tokens=(int((u.get("prompt_tokens_details") or {})["cached_tokens"])
+                                   if (u.get("prompt_tokens_details") or {}).get("cached_tokens") is not None else None),
             ), raw_line=line)
 
         choices = data.get("choices") or []

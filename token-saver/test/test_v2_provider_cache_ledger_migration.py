@@ -191,6 +191,52 @@ def test_attribution_dimensions_stay_disjoint(_fresh_db):
     assert row == (640, 1000, 0.5, 0.25, 12)
 
 
+def test_stats_log_request_persists_provider_cache_usage_and_null_evidence(
+    _fresh_db, monkeypatch
+):
+    """The production stats writer preserves explicit zero and separate lanes."""
+    _apply(_fresh_db, BASE_SCHEMA.read_text())
+    # _log_postgres resolves tenant/provider via COALESCE lookups against the
+    # seeded dimension rows; the fixture only creates the database, so seed the
+    # rows the writer needs (same shape as the sibling attribution test above).
+    with psycopg.connect(_fresh_db, autocommit=True) as pg:
+        pg.execute(
+            "INSERT INTO tenants (id, name) VALUES"
+            " ('00000000-0000-0000-0000-000000000000', 'default')"
+        )
+        pg.execute(
+            "INSERT INTO providers (name, base_url, adapter_class, auth_style)"
+            " VALUES ('anthropic', 'https://api.anthropic.com',"
+            " 'AnthropicAdapter', 'x-api-key')"
+        )
+    monkeypatch.setenv("TOKEN_SAVER_PG_DSN", _fresh_db)
+    from proxy import stats
+
+    stats.log_request(
+        model="anthropic/claude-test", route="compress",
+        input_tokens_before=100, input_tokens_after=80, output_tokens=10,
+        est_cost_before=0.2, est_cost_after=0.1, latency_ms=1,
+        compressed=True, status=200, provider="anthropic",
+        cache_savings=0.5, l1_savings=0.25, tool_compression_saved=12,
+        provider_cache_read_tokens=0, provider_cache_write_tokens=3,
+    )
+    stats.log_request(
+        model="anthropic/claude-test", route="passthrough",
+        input_tokens_before=100, input_tokens_after=100, output_tokens=10,
+        est_cost_before=0.2, est_cost_after=0.2, latency_ms=1,
+        compressed=False, status=200, provider="anthropic",
+        provider_cache_read_tokens=None, provider_cache_write_tokens=None,
+    )
+    with psycopg.connect(_fresh_db) as pg:
+        rows = pg.execute(
+            """SELECT provider_cache_read_tokens, provider_cache_write_tokens,
+                      cache_savings, l1_savings, tool_compression_saved
+                 FROM requests ORDER BY id"""
+        ).fetchall()
+
+    assert rows == [(0, 3, 0.5, 0.25, 12), (None, None, 0, 0, 0)]
+
+
 @pytest.fixture()
 def _fresh_db():
     require_pg_base()

@@ -110,8 +110,14 @@ class AnthropicAdapter:
             "max_tokens": req.max_tokens if req.max_tokens is not None else 4096,
         }
         if req.system:
-            # PA-4 hook: static system prefixes become cache_control blocks.
-            body["system"] = req.system
+            # Mark only the stable system prefix for provider-native prompt
+            # caching. Actual hits remain response-usage-derived; this request
+            # control alone is never evidence of a cache hit or savings.
+            body["system"] = [{
+                "type": "text",
+                "text": req.system,
+                "cache_control": {"type": "ephemeral"},
+            }]
         for m in req.messages:
             if m.role == "system":
                 continue  # extracted to body["system"] upstream of this loop
@@ -169,8 +175,10 @@ class AnthropicAdapter:
                 usage = Usage(
                     input_tokens=int(u.get("input_tokens", 0)),
                     output_tokens=int(u.get("output_tokens", 0)),
-                    cache_read_tokens=int(u.get("cache_read_input_tokens", 0)),
-                    cache_write_tokens=int(u.get("cache_creation_input_tokens", 0)),
+                    cache_read_tokens=(int(u["cache_read_input_tokens"])
+                                       if u.get("cache_read_input_tokens") is not None else None),
+                    cache_write_tokens=(int(u["cache_creation_input_tokens"])
+                                        if u.get("cache_creation_input_tokens") is not None else None),
                 )
         except (json.JSONDecodeError, AttributeError, KeyError, ValueError):
             pass
@@ -225,8 +233,10 @@ class AnthropicAdapter:
             return StreamEvent(kind="usage", usage=Usage(
                 input_tokens=int(u.get("input_tokens", 0)),
                 output_tokens=int(u.get("output_tokens", 0)),
-                cache_read_tokens=int(u.get("cache_read_input_tokens", 0)),
-                cache_write_tokens=int(u.get("cache_creation_input_tokens", 0)),
+                cache_read_tokens=(int(u["cache_read_input_tokens"])
+                                   if u.get("cache_read_input_tokens") is not None else None),
+                cache_write_tokens=(int(u["cache_creation_input_tokens"])
+                                    if u.get("cache_creation_input_tokens") is not None else None),
             ), raw_line=line)
         if etype == "message_delta":
             u = data.get("usage") or {}

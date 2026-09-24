@@ -169,7 +169,11 @@ def test_anthropic_system_as_param_and_max_tokens():
     a = AnthropicAdapter()
     w = a.translate_request(_norm())
     assert w.path == "/v1/messages"
-    assert w.json_body["system"] == "be brief"
+    assert w.json_body["system"] == [{
+        "type": "text",
+        "text": "be brief",
+        "cache_control": {"type": "ephemeral"},
+    }]
     assert w.json_body["max_tokens"] == 512
     # system must NOT appear inside messages
     assert all(m["role"] != "system" for m in w.json_body["messages"])
