@@ -631,6 +631,7 @@ async def chat_completions(request: Request):
     schema_cache_hit = False
     schema_bytes_saved = 0
     tools = body.get("tools")
+    original_tools = tools if isinstance(tools, list) else None
     if s.tool_schema_minify and isinstance(tools, list) and all(
         isinstance(tool, dict) for tool in tools
     ):
@@ -648,10 +649,18 @@ async def chat_completions(request: Request):
             # than making an optional optimization alter proxy correctness.
             logger.warning("tool schema minification skipped for invalid schema")
 
-    # Ledger baseline: input_tokens_before = RAW original, counted before
-    # any transform, so compression AND L1 deltas are both visible in the
-    # in_before -> in_after accounting (B2/B3).
-    in_before = count_messages(messages, model)
+    def count_tool_schema_tokens(tool_schemas: list | None) -> int:
+        if not isinstance(tool_schemas, list):
+            return 0
+        serialized = json.dumps(tool_schemas, separators=(",", ":"))
+        return count_text(serialized, model)
+
+    # Ledger baseline covers both prompt messages and tool definitions. The
+    # schema term is required so schema-only minification reconciles against
+    # the request-level input-token delta just like message transformations.
+    in_before = count_messages(messages, model) + count_tool_schema_tokens(
+        original_tools or []
+    )
 
     # --- Phase 4: output-side tool-result optimization ---
     # Assistant tool-call schemas remain protocol data and preserve their
@@ -746,6 +755,7 @@ async def chat_completions(request: Request):
     # total so dashboards can report savings from tool-heavy traffic without
     # adding it to l1_tokens_stripped a second time.
     from .tool_protocol import (
+        estimate_schema_token_savings,
         is_tool_result_compressible,
         is_tool_schema_compressible,
     )
@@ -780,11 +790,11 @@ async def chat_completions(request: Request):
         and is_tool_schema_compressible(tools)
     )
     tool_schema_saved = 0
-    if tool_schema_minified:
-        tool_schema_saved = max(
-            0,
-            count_text(json.dumps(tools), model)
-            - count_text(json.dumps(tools, separators=(",", ":")), model),
+    if tool_schema_minified and original_tools is not None and isinstance(tools, list):
+        # Count the same compact schema serialization the upstream payload uses;
+        # never infer savings from pretty-print whitespace.
+        tool_schema_saved = estimate_schema_token_savings(
+            original_tools, tools, model
         )
     tool_compression_saved = tool_result_saved + tool_schema_saved
 
@@ -991,7 +1001,16 @@ async def chat_completions(request: Request):
             "injected:" + ",".join(sorted(injected_keys))
         )
 
-    in_after = count_messages(body.get("messages") or [], model)
+    in_after = (
+        count_messages(body.get("messages") or [], model)
+        + count_tool_schema_tokens(body.get("tools") or [])
+    )
+    # The tool counter is attribution within the observed whole-request input
+    # delta (messages plus tool schemas); separate estimates can exceed it at
+    # tokenizer boundaries, so persist no more than that reconciled delta.
+    tool_compression_saved = min(
+        tool_compression_saved, max(0, in_before - in_after)
+    )
     # Union of T1 + T3: serialize the entire forwarded envelope compactly
     # after schema minification — whitespace is not JSON semantics and tool
     # definitions can account for many kilobytes of prompt context.

@@ -87,6 +87,31 @@ def compact_schema_bytes(tools: list[dict[str, Any]]) -> int:
     )
 
 
+def estimate_schema_token_savings(
+    original: list[dict[str, Any]], minified: list[dict[str, Any]], model: str
+) -> int:
+    """Estimate schema tokens removed, bounded by bytes actually removed.
+
+    Both sides use the same compact JSON representation sent upstream; the
+    byte bound prevents tokenizer estimates from exceeding physical savings.
+    """
+    from .counting import count_text
+
+    original_json = json.dumps(
+        original, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    minified_json = json.dumps(
+        minified, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    removed_bytes = max(
+        0, compact_schema_bytes(original) - compact_schema_bytes(minified)
+    )
+    estimated_tokens = max(
+        0, count_text(original_json, model) - count_text(minified_json, model)
+    )
+    return min(estimated_tokens, removed_bytes)
+
+
 class SchemaCache:
     """In-process cache of minified schema arrays, isolated from callers."""
 

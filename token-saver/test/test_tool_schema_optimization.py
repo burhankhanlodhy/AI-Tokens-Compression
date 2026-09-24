@@ -208,8 +208,15 @@ async def schema_client(tmp_db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_repeated_schema_requests_hit_cache_and_record_ledger(schema_client):
+async def test_repeated_schema_requests_hit_cache_and_record_ledger(schema_client, monkeypatch):
     client, captured_bodies, captured_payloads = schema_client
+    monkeypatch.setenv("L1_ENABLED", "false")
+    monkeypatch.setenv("CODEBASE_OPTIMIZATION_ENABLED", "false")
+    get_settings.cache_clear()
+    from proxy import main
+    from proxy import l1_clean
+    monkeypatch.setattr(main, "compress_messages", lambda messages: messages)
+    monkeypatch.setattr(l1_clean, "clean_messages", lambda messages, **kwargs: messages)
     payload = {
         "model": "gpt-4o-mini",
         "messages": [{"role": "user", "content": "find this account"}],
@@ -246,6 +253,50 @@ async def test_repeated_schema_requests_hit_cache_and_record_ledger(schema_clien
     assert len(rows) == 10
     assert [row["schema_cache_hit"] for row in rows] == [0] + [1] * 9
     assert all(row["schema_bytes_saved"] > 0 for row in rows)
+    with stats.get_conn() as conn:
+        ledger_rows = conn.execute(
+            "SELECT input_tokens_before, input_tokens_after, tool_compression_saved "
+            "FROM requests ORDER BY id"
+        ).fetchall()
+    from proxy.tool_protocol import estimate_schema_token_savings
+
+    schema_delta = estimate_schema_token_savings(
+        VERBOSE_TOOLS, captured_bodies[0]["tools"], "gpt-4o-mini"
+    )
+    assert all(body["messages"] == payload["messages"] for body in captured_bodies)
+    assert schema_delta > 0
+    assert all(
+        row["input_tokens_before"] > row["input_tokens_after"]
+        for row in ledger_rows
+    )
+    assert all(row["tool_compression_saved"] > 0 for row in ledger_rows)
+    assert all(
+        row["tool_compression_saved"]
+        <= max(0, row["input_tokens_before"] - row["input_tokens_after"])
+        for row in ledger_rows
+    )
+
+
+def test_tool_schema_token_estimate_never_exceeds_removed_utf8_bytes():
+    from proxy.tool_protocol import (
+        compact_schema_bytes,
+        estimate_schema_token_savings,
+        minify_tool_schema,
+    )
+
+    schemas = [VERBOSE_TOOLS] + [
+        [{"type": "function", "function": {"name": "f", "description": "🙂" * n,
+          "parameters": {"type": "object", "properties": {"email": {
+              "type": "string", "description": "Email"}}}}}]
+        for n in range(0, 25)
+    ]
+    for tools in schemas:
+        minified = [minify_tool_schema(tool) for tool in tools]
+        removed_bytes = max(0, compact_schema_bytes(tools) - compact_schema_bytes(minified))
+        estimated_tokens = estimate_schema_token_savings(
+            tools, minified, "gpt-4o-mini"
+        )
+        assert estimated_tokens <= removed_bytes
 
 
 @pytest.mark.asyncio

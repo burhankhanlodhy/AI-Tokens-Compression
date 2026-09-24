@@ -93,7 +93,7 @@ CREATE TABLE requests (
     schema_bytes_saved      INTEGER NOT NULL DEFAULT 0,          -- v1.2.1: compact raw-schema byte delta (not a token estimate)
     l1_tokens_stripped      INTEGER NOT NULL DEFAULT 0,          -- B3: L1 structural-clean savings, separate from cache/compression
     l1_savings              NUMERIC(14,8) NOT NULL DEFAULT 0,    -- B3: est. USD of stripped tokens; 0 on cache-hit rows (never summed with cache_savings)
-    tool_compression_saved  INTEGER NOT NULL DEFAULT 0,           -- T1: tool-result/schema lossless savings; attribution subset, never additive with L1 totals
+    tool_compression_saved INTEGER NOT NULL DEFAULT 0,           -- T1: component-local token estimate for lossless tool-result/schema reductions; bounded by UTF-8 bytes removed and whole-request input-token delta; attribution only, never additive with L1 totals
     latency_ms              NUMERIC(10,2) NOT NULL DEFAULT 0,
     compressed              BOOLEAN NOT NULL DEFAULT false,
     status                  INTEGER NOT NULL DEFAULT 0,          -- HTTP status returned to caller

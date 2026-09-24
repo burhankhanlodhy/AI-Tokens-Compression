@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS requests (
     grounded_risk TEXT,                 -- AC-P6f: discriminator risk ('none'|'bounded'|'fidelity_critical'); NULL = never ran
     envelope_shape INTEGER,             -- AC-P6f: AC-P6j scanner hit on the raw request (1/0); NULL = no content logged
     measurement_tag TEXT,               -- AC-P6f: stamp from a measurement deployment (TOKEN_SAVER_MEASUREMENT_TAG); tripwire excludes tagged rows
-    tool_compression_saved INTEGER NOT NULL DEFAULT 0 -- lossless tool-result/schema savings; attribution subset, never additive with L1 totals
+    tool_compression_saved INTEGER NOT NULL DEFAULT 0 -- component-local token estimate for lossless tool-result/schema reductions, bounded by UTF-8 bytes removed and whole-request input-token delta; attribution only, not additive with L1 totals
 );
 CREATE INDEX IF NOT EXISTS idx_requests_ts ON requests(ts);
 """
