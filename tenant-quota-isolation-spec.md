@@ -56,7 +56,7 @@ Grounded against branch tip `a28ba93cfed05783aee3e4f01a95ad6893e3d21f` (integrat
 - KPI scoping needs no change: `/api/kpis?tenant_id=&api_key_id=` (AC-A7, kpis.py:45-54) starts returning non-degenerate per-tenant/per-key numbers the moment writes carry real identity.
 
 ### D6. Compatibility
-- Default (`PROXY_AUTH_MODE=open`, caps NULL, limiters disabled-by-default via RPM=0? **No — decided: limiters ship with the defaults in D3 active** in `required` mode only; in `open` mode rate limiting is off and quotas are unenforced because everything is the default tenant) → **existing self-host deployments observe zero behavior change**.
+- **Defaults (decided):** `PROXY_AUTH_MODE` defaults to `open`; the rate limiters ship with the D3 defaults (60/240 rpm) **active only in `required` mode** — in `open` mode rate limiting is off and quotas are unenforced because all traffic is the default tenant. Net effect: **existing self-host deployments observe zero behavior change**.
 - OpenAI SDK compatibility: `X-Proxy-Key` is an extra header; SDKs that pass through custom headers work unmodified; bare SDK users keep working in `open` mode.
 - `X-Proxy-Key` never appears in logs, ledger rows, or error payloads (AC-A13 secret-handling discipline; the plaintext is stored nowhere — only hash + last4, per schema).
 - No changes to `/health`, `/dashboard`, `/metrics`, `/api/kpis`, or the key-management endpoints' own auth (they keep the `ADMIN_TOKEN` bearer gate, main.py:190-198).
