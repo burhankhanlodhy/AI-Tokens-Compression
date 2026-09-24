@@ -1,0 +1,16 @@
+{
+  "baseline_repeated_file_tokens": 137700,
+  "corpus_description": "Deterministically generated source-like files with three localized edits per session; no real user/task traces.",
+  "edits": 150,
+  "evidence_kind": "provisional_synthetic",
+  "gate_status": "NOT_EVALUABLE_SYNTHETIC_CORPUS_AND_NO_TASK_OUTCOMES",
+  "idcp_repeated_file_tokens": 17250,
+  "model_tokenizer": "gpt-4o",
+  "repeated_file_context_reduction_pct": 87.4728,
+  "representative_corpus": false,
+  "sessions": 50,
+  "sessions_with_multiple_edits": 50,
+  "silent_stale_applications": 0,
+  "task_success_regression_pp": null,
+  "task_success_status": "not_measured_no_task_outcomes"
+}
