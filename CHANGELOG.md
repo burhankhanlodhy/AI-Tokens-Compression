@@ -5,6 +5,44 @@ All notable changes to **token-saver** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-09-24
+
+### Added
+
+- **Provider-native cache usage attribution** — the ledger now persists the
+  cache-read/cache-write token counts the provider actually returned
+  (Anthropic `cache_read_input_tokens` / `cache_creation_input_tokens`;
+  OpenAI-compatible `prompt_tokens_details.cached_tokens`) in two new
+  nullable `requests` columns (`provider_cache_read_tokens`,
+  `provider_cache_write_tokens`). NULL means the provider returned no cache
+  usage evidence; an explicit 0 is a measured zero. These lanes are disjoint
+  from `cache_savings`, `l1_savings`, and `tool_compression_saved` — measured
+  provider facts are never merged into or double-counted with proxy-computed
+  savings. Dollar attribution derives at read time from measured tokens and
+  provider rates; no assumed vendor discount and no inferred hit.
+- **Anthropic stable system-prefix caching** — the stable system prefix is
+  now emitted as a text block with ephemeral `cache_control` so eligible
+  requests can receive provider-native cache reads.
+- **V2.0 scope and audit records** — `docs/v2.0-scope-ratification.md` (PM
+  scope decision, AC-V2-1..9), `docs/v2.0-token-cost-savings-plan.md`,
+  `docs/v2.0-ledger-audit.md` (DBA), and `docs/v2.0-provider-cache-audit.md`.
+
+### Changed
+
+- **Version metadata** — proxy and semantic-cache quality namespace now
+  report `2.0.0`.
+
+### Unchanged by design (V2.0 is an attribution-and-audit release)
+
+- Routing/cascades remains a server-side, **off-by-default** provider
+  selection capability (`provider_routing=false`); it is ratified as a
+  discovery-only experiment with no V2.0 savings claim, dashboard figure, or
+  production enablement.
+- Semantic caching remains flag-off (`SEMANTIC_CACHE_ENABLED=false`) pending
+  the AC-PC4 calibration gate.
+- L1 lossless and output-conciseness paths, their evidence contracts, and the
+  57.71pp headline are untouched.
+
 ## [1.2.2] - Unreleased
 
 ### Fixed

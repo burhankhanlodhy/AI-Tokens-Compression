@@ -1,3 +1,3 @@
 """Release version shared by the proxy and cache namespaces."""
 
-__version__ = "1.2.1"
+__version__ = "2.0.0"

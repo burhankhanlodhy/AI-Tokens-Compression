@@ -14,9 +14,9 @@ from proxy.version import __version__  # noqa: E402
 def test_release_version_and_changelog_are_consistent():
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
-    assert __version__ == "1.2.1"
+    assert __version__ == "2.0.0"
     assert "## [1.2.2] - Unreleased" in changelog
-    assert f"## [{__version__}] - 2026-09-23" in changelog
+    assert f"## [{__version__}] - 2026-09-24" in changelog
 
 
 def test_codebase_settings_are_discoverable_in_all_user_docs():
