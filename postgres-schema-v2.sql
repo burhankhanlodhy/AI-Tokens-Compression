@@ -94,6 +94,13 @@ CREATE TABLE requests (
     l1_tokens_stripped      INTEGER NOT NULL DEFAULT 0,          -- B3: L1 structural-clean savings, separate from cache/compression
     l1_savings              NUMERIC(14,8) NOT NULL DEFAULT 0,    -- B3: est. USD of stripped tokens; 0 on cache-hit rows (never summed with cache_savings)
     tool_compression_saved INTEGER NOT NULL DEFAULT 0,           -- T1: component-local token estimate for lossless tool-result/schema reductions; bounded by UTF-8 bytes removed and whole-request input-token delta; attribution only, never additive with L1 totals
+    -- V2.0 attribution audit (t_ef7f0f71): provider-returned native-cache
+    -- usage actually observed on the response (AC-V2-6). NULL = provider
+    -- returned no cache usage evidence — an exact_hit or cache_control on the
+    -- request is never evidence. Measured facts only; never merged into
+    -- cache_savings, l1_savings, or tool_compression_saved (no double count).
+    provider_cache_read_tokens  INTEGER NULL,                    -- Anthropic cache_read_input_tokens / OpenAI-compat prompt_tokens_details.cached_tokens
+    provider_cache_write_tokens INTEGER NULL,                    -- Anthropic cache_creation_input_tokens; attribution only
     latency_ms              NUMERIC(10,2) NOT NULL DEFAULT 0,
     compressed              BOOLEAN NOT NULL DEFAULT false,
     status                  INTEGER NOT NULL DEFAULT 0,          -- HTTP status returned to caller

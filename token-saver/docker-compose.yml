@@ -34,6 +34,9 @@ services:
       # v1.2.1 tool-schema ledger columns; IF NOT EXISTS permits canonical
       # fresh schemas and repeated upgrades on legacy volumes.
       - ./migrations/20260922_v121_tool_schema_ledger.sql:/docker-entrypoint-initdb.d/46-v121-tool-schema-ledger.sql:ro
+      # V2.0 provider-native cache usage attribution (AC-V2-6): additive
+      # nullable columns; canonical fresh schemas already declare them.
+      - ./migrations/20260924_v2_provider_cache_usage.sql:/docker-entrypoint-initdb.d/47-v2-provider-cache-usage.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d token_saver"]
       interval: 5s
