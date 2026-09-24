@@ -35,8 +35,8 @@ T1_MIGRATION = (
 # history needed, so this works in any checkout (CI actions/checkout is
 # shallow and has no master ref to `git show`).
 T1_SCHEMA_LINE = (
-    "    tool_compression_saved  INTEGER NOT NULL DEFAULT 0,           "
-    "-- T1: tool-result/schema lossless savings; attribution subset, never additive with L1 totals\n"
+    "    tool_compression_saved INTEGER NOT NULL DEFAULT 0,           "
+    "-- T1: component-local token estimate for lossless tool-result/schema reductions; bounded by UTF-8 bytes removed and whole-request input-token delta; attribution only, never additive with L1 totals\n"
 )
 EXPECTED = "integer|0"
 
