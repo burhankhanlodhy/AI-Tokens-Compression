@@ -37,6 +37,10 @@ services:
       # V2.0 provider-native cache usage attribution (AC-V2-6): additive
       # nullable columns; canonical fresh schemas already declare them.
       - ./migrations/20260924_v2_provider_cache_usage.sql:/docker-entrypoint-initdb.d/47-v2-provider-cache-usage.sql:ro
+      # V2.1 session stores (TOCP/IDCP/MTCC/strategy telemetry): new tables
+      # with tenant/api-key/session binding and TTL columns; idempotent for
+      # canonical fresh schemas and repeated upgrades on legacy volumes.
+      - ./migrations/20260924_v21_session_stores.sql:/docker-entrypoint-initdb.d/48-v21-session-stores.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d token_saver"]
       interval: 5s
