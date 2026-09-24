@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     tool_result_max_tokens: int = Field(default=5000, ge=32)
     tool_result_cache_enabled: bool = True
     tool_result_filtering: bool = True
+    # V2.1 TOCP is opt-in; deployment must provide authenticated tenant/session scope.
+    v21_tocp_enabled: bool = False
+    v21_tocp_ttl_seconds: int = Field(default=900, ge=1)
+    v21_tocp_max_entries: int = Field(default=2048, ge=1)
 
     # Reasoning control (PM v4 ruling): the proxy injects a model-family-
     # specific control by default. The old `{"enabled": false}` suppress

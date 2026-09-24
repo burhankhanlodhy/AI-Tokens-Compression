@@ -29,6 +29,7 @@ from .classifier import has_tool_calling_state
 from .compression import compress_messages, has_compressible_content
 from .config import estimate_cost, get_settings, load_pricing, reasoning_control_for
 from .tool_result_optimizer import optimize_tool_result
+from .tocp import ContinuationNotFound, InvalidRange, build_continuation_result, continuation_store
 from .counting import (
     count_messages,
     count_output,
@@ -671,13 +672,31 @@ async def chat_completions(request: Request):
     # which must continue to protect every other request transform.
     if s.tool_result_optimization:
         call_arguments = _tool_call_arguments(messages)
-        messages = [
-            optimize_tool_result(
+        trusted_tenant = getattr(request.state, "tenant_id", None)
+        trusted_session = getattr(request.state, "session_id", None)
+        full_output = bool(body.get("full_output", False))
+        def optimize_message(message: dict) -> dict:
+            if message.get("role") != "tool":
+                return message
+            content = message.get("content")
+            if (s.v21_tocp_enabled and trusted_tenant and trusted_session and not full_output
+                    and isinstance(content, str)
+                    and count_text(content, model) > s.tool_result_max_tokens):
+                try:
+                    continued = build_continuation_result(
+                        content, trusted_tenant, trusted_session,
+                        metadata={"tool_call_id": message.get("tool_call_id")},
+                    )
+                    return {**message, "content": continued}
+                except ValueError:
+                    logger.warning("TOCP capacity exceeded; using existing truncation fallback")
+            return optimize_tool_result(
                 message,
                 tool_call_args=call_arguments.get(message["tool_call_id"])
                 if isinstance(message.get("tool_call_id"), str) else None,
             )
-            if message.get("role") == "tool" else message
+        messages = [
+            optimize_message(message)
             for message in messages
         ]
         body = {**body, "messages": messages}
@@ -1625,6 +1644,30 @@ def _log(model, route, in_before, in_after, output_tokens,
 
 
 # --- Simple passthroughs for other OpenAI-compatible endpoints ---
+
+@app.get("/v1/tool-results/{continuation_id}")
+async def retrieve_tool_result(continuation_id: str, request: Request,
+                               segment: int | None = Query(default=None, ge=0),
+                               start: int | None = Query(default=None, ge=0),
+                               end: int | None = Query(default=None, ge=1)):
+    """Return a bounded continuation slice for the authenticated session only."""
+    tenant_id = getattr(request.state, "tenant_id", None)
+    session_id = getattr(request.state, "session_id", None)
+    if not tenant_id or not session_id:
+        raise HTTPException(status_code=401, detail="authenticated tenant/session scope required")
+    try:
+        if segment is not None and start is None and end is None:
+            content = continuation_store.get_segment(continuation_id, tenant_id, session_id, segment)
+        elif segment is None and start is not None and end is not None:
+            content = continuation_store.get_range(continuation_id, tenant_id, session_id, start, end)
+        else:
+            raise InvalidRange("provide either segment or both start and end")
+    except ContinuationNotFound:
+        raise HTTPException(status_code=404, detail="continuation not found") from None
+    except InvalidRange as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"continuation_id": continuation_id, "content": content}
+
 
 @app.get("/v1/models")
 async def list_models(request: Request):
