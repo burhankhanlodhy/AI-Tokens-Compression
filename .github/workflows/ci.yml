@@ -14,7 +14,9 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        # Migration 1 creates pgvector/HNSW objects, so the standard fresh-DB
+        # lane must use the same pinned extension image as its schema inventory.
+        image: pgvector/pgvector:0.8.6-pg16-bookworm
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: ci-password
@@ -30,6 +32,36 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update -qq && sudo apt-get install -y postgresql-client
+
+      - name: Bootstrap fresh Postgres schema and migrations
+        working-directory: token-saver
+        env:
+          TOKEN_SAVER_PG_DSN: postgresql://postgres:ci-password@localhost:5432/postgres
+        run: |
+          psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 -f ../postgres-schema-v2.sql
+          # Migration 4 is a fire-once legacy-volume constraint replacement.
+          # postgres-schema-v2.sql already carries its final constraint, so
+          # applying the file here would correctly abort; assert that final
+          # state instead of bypassing the inventory's safety check.
+          cache_status_final=$(psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 -Atc "SELECT pg_get_constraintdef(oid) LIKE '%semantic_threshold_miss%' FROM pg_constraint WHERE conrelid = 'requests'::regclass AND conname = 'chk_cache_status';")
+          [[ "$cache_status_final" == "t" ]] || {
+            printf 'canonical schema is missing the widened chk_cache_status constraint\n' >&2
+            exit 1
+          }
+          migrations=(
+            migrations/20260918_pc1_pgvector.sql
+            migrations/20260919_pc2_semantic_responses.sql
+            migrations/20260920_pc5_request_versions.sql
+            migrations/20260922_v121_tool_schema_ledger.sql
+            migrations/20260922_t1_tool_compression_ledger.sql
+            migrations/20260924_v21_session_stores.sql
+          )
+          for migration in "${migrations[@]}"; do
+            psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 -f "$migration"
+          done
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -61,14 +93,14 @@ jobs:
                     for key in ('tests', 'failures', 'errors', 'skipped')}
           executed = totals['tests'] - totals['skipped']
           print(f"standard suite: executed={executed} passed={totals['tests'] - totals['failures'] - totals['errors'] - totals['skipped']} skipped={totals['skipped']} failures={totals['failures']} errors={totals['errors']}")
-          # Standard/reverse lanes collect at least 710 tests: the 42
+          # Standard/reverse lanes collect at least 904 tests: the 42
           # pgvector-only tests (test_pc_pgvector_gates.py) and the
           # response-store lane gates (test_pc2_response_store_gates.py)
           # are excluded on purpose -- both --ignore flags keep those
           # lanes reserved for pc1-pgvector / the response-store lane.
           # Keep this ratchet synchronized with any test additions/removals.
-          if executed < 710 or totals['skipped']:
-              raise SystemExit('executed test floor violated: expected at least 710 non-skipped tests')
+          if executed < 904 or totals['skipped']:
+              raise SystemExit('executed test floor violated: expected at least 904 non-skipped tests')
           PY
 
       - name: Run reverse-order suite
@@ -90,7 +122,7 @@ jobs:
                     for key in ('tests', 'failures', 'errors', 'skipped')}
           executed = totals['tests'] - totals['skipped']
           print(f"reverse suite: executed={executed} passed={totals['tests'] - totals['failures'] - totals['errors'] - totals['skipped']} skipped={totals['skipped']} failures={totals['failures']} errors={totals['errors']}")
-          # Standard/reverse lanes collect at least 710 tests: the 42
+          # Standard/reverse lanes collect at least 904 tests: the 42
           # pgvector-only tests (test_pc_pgvector_gates.py) and the
           # response-store lane gates (test_pc2_response_store_gates.py)
           # are excluded on purpose -- the explicit path list above is
@@ -98,8 +130,8 @@ jobs:
           # paths), keeping those lanes reserved for pc1-pgvector /
           # the response-store lane.
           # Keep this ratchet synchronized with any test additions/removals.
-          if executed < 710 or totals['skipped']:
-              raise SystemExit('executed test floor violated: expected at least 710 non-skipped tests')
+          if executed < 904 or totals['skipped']:
+              raise SystemExit('executed test floor violated: expected at least 904 non-skipped tests')
           PY
 
   c5-docker-acceptance:
