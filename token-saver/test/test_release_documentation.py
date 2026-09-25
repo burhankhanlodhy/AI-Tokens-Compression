@@ -14,7 +14,7 @@ from proxy.version import __version__  # noqa: E402
 def test_release_version_and_changelog_are_consistent():
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
-    assert __version__ == "2.0.0"
+    assert __version__ == "2.1.0"
     assert "## [1.2.2] - Unreleased" in changelog
     assert f"## [{__version__}] - 2026-09-24" in changelog
 

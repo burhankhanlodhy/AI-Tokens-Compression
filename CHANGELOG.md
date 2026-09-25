@@ -5,6 +5,67 @@ All notable changes to **token-saver** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-09-24
+
+### Added
+
+- **Experimental multi-strategy savings engine (V2.1, all lanes off by
+  default)** — six server-side feature-flagged lanes ratified in
+  `docs/v2.1-scope-ratification.md`, each disabled by default with no
+  client-request enablement path (`v21_*` flags in
+  `token-saver/proxy/config.py`, all `False`; no request header or query
+  parameter can enable a lane):
+  - **Deferred tool loading** (`v21_deferred_tools_enabled`) — provider-gated
+    compact tool catalog so eligible requests do not ship every tool schema
+    up front.
+  - **Tool Output Continuation Protocol / TOCP** (`v21_tocp_enabled`) —
+    TTL-bounded, tenant/api-key/session-scoped continuation store for
+    truncated tool output with explicit bounded retrieval; capacity
+    pressure rejects a new continuation rather than evicting an unexpired
+    one (plan §3 retention guarantee), falling back to standard truncation.
+    Continuation retrieval is an authorized, scoped read of an
+    already-accounted provider tool result, not a new provider request or
+    savings event (NO_LOG, rationale in `proxy/tocp.py`).
+  - **Incremental Diff Context Protocol / IDCP** (`v21_idcp_enabled`) —
+    session-scoped file-version ledger: full content on first read,
+    explicit unchanged notice, versioned diff, full-content fallback ladder;
+    never applies a stale diff silently. Provisional synthetic replay
+    evidence only (`docs/v2.1-idcp-implementation.md`): explicitly
+    `NOT_EVALUABLE` against the ratified acceptance gate; no savings claim
+    is made.
+  - **Adaptive Turn-Budget Allocator / ATBA** (`v21_atba_enabled`,
+    `v21_atba_enforce`) — conservative shadow policies; enforcement stays
+    off until paired evidence meets the ratified gate.
+  - **Multi-Turn Conversation Compression / MTCC** (`v21_mtcc_enabled`) —
+    verbatim recent turns + exact-source retrieval; highest-risk lane,
+    stays off unless its gate passes.
+  - **Strategy orchestration registry** — shared registry reporting status,
+    evidence, fallback, and per-strategy attribution without merging
+    overlapping denominators. `/api/strategies` is an admin-only read-only
+    deployment audit view (NO_LOG; it is not an inference request or
+    savings event).
+- **V2.1 session stores** — `migrations/20260924_v21_session_stores.sql`
+  (migration 7): additive-only `tocp_continuations`, `idcp_file_versions`,
+  `mtcc_turns`, `strategy_telemetry` tables with tenant/api-key/session
+  binding, DB-enforced sha256/length checks, and TTL columns with expiry
+  purge indexes. Retention and rollback documented in `MIGRATIONS.md`
+  ("V2.1 session stores"); derived session state is expiry-safe, the
+  `requests` audit ledger is untouched.
+
+### Notes
+
+- **No savings claims ship with this release.** All lanes are off by
+  default and none has met its ratified empirical acceptance gate; the
+  synthetic IDCP figure in the docs is labeled not-evaluable and is not a
+  product guarantee. Per the ratified scope: no market/research/vendor
+  percentage is an acceptance criterion or product constant (extends
+  AC-V2-2 to all V2.1 lanes).
+- **Release quality gate**: independent QA GO at candidate
+  `682a2f1430f5b96f6ac6f3bd5c8f405383919fca` (t_d66781dd) on the real
+  Postgres DSN — standard lane 904/904 (0 skipped), reverse-order lane
+  904/904 (0 skipped), PG lane 64/64 (0 skipped); AC-A12 route-accounting
+  mutation test fails as required with both NO_LOG entries removed.
+
 ## [2.0.0] - 2026-09-24
 
 ### Added
