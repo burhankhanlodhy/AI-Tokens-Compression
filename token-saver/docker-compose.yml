@@ -41,6 +41,10 @@ services:
       # with tenant/api-key/session binding and TTL columns; idempotent for
       # canonical fresh schemas and repeated upgrades on legacy volumes.
       - ./migrations/20260924_v21_session_stores.sql:/docker-entrypoint-initdb.d/48-v21-session-stores.sql:ro
+      # V2.2 runtime settings (t_d86fe22b): app_settings override table;
+      # idempotent for canonical fresh schemas and repeated upgrades on
+      # legacy volumes.
+      - ./migrations/20260925_v22_runtime_settings.sql:/docker-entrypoint-initdb.d/50-v22-runtime-settings.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d token_saver"]
       interval: 5s

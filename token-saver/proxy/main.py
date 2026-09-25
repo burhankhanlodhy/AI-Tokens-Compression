@@ -43,6 +43,13 @@ from .grounded import grounded_answer_risk
 from .dashboard import _render_stats_html
 from .dashboard_v2 import render_shell
 from .kpis import kpis_endpoint
+from .settings import (
+    NotRuntimeConfigurableError,
+    RUNTIME_ALLOWED,
+    SettingsStore,
+    UnknownSettingError,
+    get_settings_store,
+)
 from .tripwire import tripwire_endpoint
 from .strategy_engine import StrategyRegistry
 from . import caching
@@ -368,6 +375,66 @@ def _upstream_credential(request: Request) -> str:
     return request.headers.get("x-api-key", "")
 
 
+def _resolve_proxy_key_scope(request: Request) -> tuple[str, str] | None:
+    """G1 wiring (PM §5.4, t_d86fe22b): authenticate the caller's proxy key.
+
+    When the request carries a ``Bearer tsk_…`` proxy key that resolves to
+    an active api_keys row, populate ``request.state.tenant_id`` and
+    ``request.state.session_id`` so the trusted-scope paths (TOCP
+    continuation, /v1/tool-results, strategy PolicyContext) become reachable
+    with REAL isolation on live traffic. Returns (tenant_id, session_id).
+
+    Scope rules:
+    - The proxy key hash is sha256 over the presented plaintext — exactly the
+      api_keys.key_hash convention (C10). A lookup miss or a non-active key
+      yields None: we never guess a tenant, and we never fail the request
+      here (BYOK passthrough credentials are not proxy keys; unknown callers
+      keep today's behavior).
+    - Session identity comes from the caller's X-Session-Id header (the
+      conversation the key is acting within); without it there is no session
+      scope, so the trusted lanes stay 401 (fail closed, never a wildcard).
+    - Only Postgres-backed deployments can resolve keys (api_keys lives in
+      the PG tenant model); SQLite single-user mode keeps benchmark-only
+      labeling, which the Settings surface shows.
+    """
+    auth = request.headers.get("authorization", "")
+    if not auth.lower().startswith("bearer "):
+        return None
+    candidate = auth[7:]
+    if not candidate.startswith("tsk_"):
+        # Not a proxy key (BYOK upstream credential or an admin token) —
+        # leave the trusted scope unpopulated.
+        return None
+    dsn = os.environ.get("TOKEN_SAVER_PG_DSN")
+    if not dsn:
+        return None
+    key_hash = hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+    session_id = (request.headers.get("x-session-id") or "").strip()
+    try:
+        import psycopg
+
+        with psycopg.connect(dsn, connect_timeout=3) as conn:
+            row = conn.execute(
+                """SELECT k.tenant_id::text
+                   FROM api_keys k
+                   WHERE k.key_hash = %s AND k.status = 'active'
+                   LIMIT 1""",
+                (key_hash,),
+            ).fetchone()
+    except Exception as exc:  # noqa: BLE001 — scope resolution never breaks traffic
+        logger.warning("proxy-key scope resolution failed: %s", exc)
+        return None
+    if row is None:
+        return None
+    tenant_id, session_final = row[0], session_id
+    if not tenant_id or not session_final:
+        return None
+    request.state.tenant_id = tenant_id
+    request.state.session_id = session_final
+    return tenant_id, session_final
+
+
+
 async def acquire_embedding(
     request: Request, model: str, canonical_input: str
 ) -> list[float] | None:
@@ -610,6 +677,11 @@ async def chat_completions(request: Request):
     s = get_settings()
     raw = await request.body()
 
+    # G1 (PM §5.4): resolve a proxy-key caller to its tenant/session scope
+    # BEFORE any trusted-scope lane reads request.state. BYOK credentials
+    # and anonymous callers are untouched (scope stays unpopulated).
+    _resolve_proxy_key_scope(request)
+
     # --- Parse; on parse failure just forward untouched ---
     try:
         body = json.loads(raw)
@@ -626,6 +698,12 @@ async def chat_completions(request: Request):
     body = {**body, "messages": messages}
     streaming = bool(body.get("stream"))
 
+    # V2.2 (PM §3.2 / B4): the request reads the runtime-override snapshot
+    # ONCE here. A dashboard flip mid-flight never alters this request;
+    # the snapshot only relaxes what the static config allows — precedence
+    # stays headers (§3.2.1, below) > runtime override > env > default.
+    runtime_flags = get_settings_store().snapshot()
+
     # v1.2.1: tool definitions are protocol data, but their redundant
     # parameter descriptions are safe prompt overhead to remove. Work on a
     # deep-copied cache result so a caller's parsed request and subsequent
@@ -634,13 +712,20 @@ async def chat_completions(request: Request):
     schema_bytes_saved = 0
     tools = body.get("tools")
     original_tools = tools if isinstance(tools, list) else None
-    if s.tool_schema_minify and isinstance(tools, list) and all(
+    # Runtime override wins over the static config (PM §3.2 source order);
+    # the snapshot was taken once at request start (B4).
+    schema_minify_on = runtime_flags["tool_schema_minify"]
+    if schema_minify_on and isinstance(tools, list) and all(
         isinstance(tool, dict) for tool in tools
     ):
         try:
             minified_tools, schema_cache_hit = schema_cache.get_or_compress(
                 tools,
-                use_cache=s.cache_enabled and s.tool_schema_cache_enabled,
+                # Sub-switch of the master cache switch (config.py contract):
+                # a runtime override can only ever disable, never enable
+                # past a cache_enabled=false deployment.
+                use_cache=s.cache_enabled
+                and runtime_flags["tool_schema_cache_enabled"],
             )
             schema_bytes_saved = max(
                 0, compact_schema_bytes(tools) - compact_schema_bytes(minified_tools)
@@ -670,7 +755,7 @@ async def chat_completions(request: Request):
     # content, however, and is bounded before upstream forwarding.  This runs
     # after recording the raw baseline and before the hard tool-protocol gate,
     # which must continue to protect every other request transform.
-    if s.tool_result_optimization:
+    if runtime_flags["tool_result_optimization"]:
         call_arguments = _tool_call_arguments(messages)
         trusted_tenant = getattr(request.state, "tenant_id", None)
         trusted_session = getattr(request.state, "session_id", None)
@@ -722,7 +807,9 @@ async def chat_completions(request: Request):
     # tool-call marker. The L1 path below is more granular: it may clean only
     # eligible tool-result content while preserving every protocol envelope.
     tool_calling = has_tool_calling_state(body)
-    classify_needed = s.compression_enabled or s.l1_enabled
+    # classify_needed honors the runtime L1 override too: with compression
+    # off and L1 overridden off, classification is pointless work.
+    classify_needed = s.compression_enabled or runtime_flags["l1_enabled"]
     route = (
         "passthrough"
         if tool_calling
@@ -756,11 +843,11 @@ async def chat_completions(request: Request):
 
     l1_tokens_stripped = 0
     l1_applied = False
-    if s.l1_enabled and _l1_eligible(messages, route):
+    if runtime_flags["l1_enabled"] and _l1_eligible(messages, route):
         l1_before = count_messages(messages, model)
         l1_messages = _l1_clean_messages(
             messages,
-            tool_result_compression_enabled=s.tool_result_compression_enabled,
+            tool_result_compression_enabled=runtime_flags["tool_result_compression_enabled"],
             tool_calling=tool_calling,
         )
         l1_after = count_messages(l1_messages, model)
@@ -802,11 +889,14 @@ async def chat_completions(request: Request):
     tool_result_after = count_tool_result_content(messages)
     tool_result_saved = (
         max(0, tool_result_before - tool_result_after)
-        if s.tool_result_compression_enabled else 0
+        if runtime_flags["tool_result_compression_enabled"] else 0
     )
     tools = body.get("tools")
+    # Schema-wire minification for the ATTRIBUTION path (schema_cache_hit /
+    # schema_bytes_saved): gated by the runtime snapshot so a dashboard flip
+    # changes attribution in the same request it changes the wire shape.
     tool_schema_minified = (
-        s.tool_schema_compression_enabled
+        runtime_flags["tool_schema_minify"]
         and is_tool_schema_compressible(tools)
     )
     tool_schema_saved = 0
@@ -843,7 +933,8 @@ async def chat_completions(request: Request):
     semantic_prompt_hash: str | None = None
     semantic_lookup_result = None
     if (
-        s.semantic_cache_enabled
+        runtime_flags["semantic_cache_enabled"]
+        and s.semantic_cache_max_cosine_distance is not None
         and not streaming
         and cache_status == "miss"
     ):
@@ -856,8 +947,6 @@ async def chat_completions(request: Request):
             ) or semantic_cache.derive_quality_version()
             if s.provider_routing and provider is None:
                 raise ValueError("semantic cache requires a routed provider")
-            if s.semantic_cache_max_cosine_distance is None:
-                raise ValueError("semantic cache threshold is not ratified")
             effective_provider = provider if s.provider_routing else "legacy"
             semantic_scope = SemanticLookupScope(
                 tenant_id=DEFAULT_TENANT_ID,
@@ -927,10 +1016,11 @@ async def chat_completions(request: Request):
             semantic_lookup_result = semantic_cache.SemanticLookupResult.not_attempted()
 
     # --- Output-conciseness control (P1-1) ---
-    # Precedence: per-request header (benchmark A/B arms) > config default.
-    # The benchmark arms MUST be able to force baseline (off) vs treatment (on)
-    # regardless of the deployment default; the header never leaks upstream.
-    conciseness_on = s.output_conciseness_enabled
+    # Precedence (PM §3.2): per-request header (benchmark A/B arms) >
+    # runtime override > config default. The benchmark arms MUST be able to
+    # force baseline (off) vs treatment (on) regardless of any persisted
+    # override; the header never leaks upstream.
+    conciseness_on = runtime_flags["output_conciseness_enabled"]
     hdr = request.headers.get("x-token-saver-conciseness")
     if hdr is not None:
         conciseness_on = hdr.strip().lower() in ("1", "true", "yes", "on")
@@ -1651,6 +1741,9 @@ async def retrieve_tool_result(continuation_id: str, request: Request,
                                start: int | None = Query(default=None, ge=0),
                                end: int | None = Query(default=None, ge=1)):
     """Return a bounded continuation slice for the authenticated session only."""
+    # G1: a live proxy-key caller now resolves to real tenant/session scope;
+    # the benchmark harness keeps its injected test scope (test_tocp.py).
+    _resolve_proxy_key_scope(request)
     tenant_id = getattr(request.state, "tenant_id", None)
     session_id = getattr(request.state, "session_id", None)
     if not tenant_id or not session_id:
@@ -1696,6 +1789,165 @@ async def strategy_status(request: Request):
     """Admin-only audit view of V2.1 deployment flags and lane fallbacks."""
     _require_admin(request)
     return {"strategies": StrategyRegistry(get_settings()).status()}
+
+
+# --- V2.2 runtime settings (PM §5.2, t_d86fe22b) ---------------------------
+# GET is unauthenticated (G2 ruling: reads stay open for self-host; PM §3.4).
+# PUT/DELETE are ADMIN_TOKEN-gated. The allowlist lives in proxy/settings.py
+# and is enforced SERVER-SIDE here (B2) — the UI is never the gate.
+
+
+def _semantic_cache_lock_reason() -> str | None:
+    """Server-computed lock state for the semantic-cache toggle (D-3).
+
+    The AC-PC4/PC5 calibration gate is green only when the deployment has a
+    ratified cosine threshold AND a committed calibration artifact (the same
+    facts /api/tripwire reports as pending_calibration). The UI renders this
+    reason verbatim and never derives gate state itself (design-system
+    principle 1.1.4); null/absent = writable.
+    """
+    s = get_settings()
+    if s.semantic_cache_max_cosine_distance is None:
+        return (
+            "Semantic cache stays locked until the AC-PC4/PC5 calibration "
+            "gate is green: no ratified cosine threshold is configured for "
+            "this deployment."
+        )
+    try:
+        from .tripwire import load_calibration_band
+
+        band = load_calibration_band()
+    except Exception:  # noqa: BLE001 — a broken artifact read is a lock, not a crash
+        return (
+            "Semantic cache stays locked until the AC-PC4/PC5 calibration "
+            "gate is green: no readable calibration artifact."
+        )
+    if not band:
+        return (
+            "Semantic cache stays locked until the AC-PC4/PC5 calibration "
+            "gate is green: no committed calibration artifact."
+        )
+    return None
+
+
+def _settings_item(store: SettingsStore, name: str) -> dict:
+    item = store.effective(name)
+    if name == "semantic_cache_enabled":
+        item["locked_reason"] = _semantic_cache_lock_reason()
+    return item
+
+
+@app.get("/api/settings")
+async def api_settings_get():
+    """Full settings surface: runtime controls + read-only deployment
+    inventory (PM §5.2, D-1). Items carry {name, value, source, category,
+    updated_at?, locked_reason?}. 503 follows the shared ledger-unavailable
+    envelope when the settings store (PG) is down."""
+    store = get_settings_store()
+    try:
+        store.read_overrides_strict()
+    except Exception as exc:  # noqa: BLE001 — shared 503 envelope (kpis.py convention)
+        return JSONResponse(
+            {"error": "settings store unavailable", "detail": str(exc)},
+            status_code=503,
+        )
+    return {"settings": [_settings_item(store, name) for name in RUNTIME_ALLOWED]
+            + store.inventory()[len(RUNTIME_ALLOWED):]}
+
+
+@app.put("/api/settings/{name}")
+async def api_settings_put(name: str, request: Request):
+    """Write one runtime override (ADMIN_TOKEN). 400 unknown/not-runtime/
+    bad-value (field-named, B-10); 401 bearer failure; 503 store down."""
+    _require_admin(request)
+    try:
+        payload = json.loads((await request.body()) or b"{}")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="body must be a JSON object.")
+    if not isinstance(payload, dict) or "value" not in payload:
+        raise HTTPException(status_code=400, detail="value is required.")
+    store = get_settings_store()
+    try:
+        store.write_override(name, payload["value"], updated_by="admin")
+    except UnknownSettingError as exc:
+        raise HTTPException(status_code=400, detail=f"name: {exc}") from exc
+    except NotRuntimeConfigurableError as exc:
+        raise HTTPException(status_code=400, detail=f"name: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 — store outage is 503, not a crash
+        return JSONResponse(
+            {"error": "settings store unavailable", "detail": str(exc)},
+            status_code=503,
+        )
+    return _settings_item(store, name)
+
+
+@app.delete("/api/settings/{name}")
+async def api_settings_delete(name: str, request: Request):
+    """Revert one runtime override to env/default (ADMIN_TOKEN). Idempotent:
+    deleting a name that was never overridden is still 200 with the
+    effective (non-runtime) item."""
+    _require_admin(request)
+    store = get_settings_store()
+    try:
+        store.delete_override(name)
+    except UnknownSettingError as exc:
+        raise HTTPException(status_code=400, detail=f"name: {exc}") from exc
+    except NotRuntimeConfigurableError as exc:
+        raise HTTPException(status_code=400, detail=f"name: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(
+            {"error": "settings store unavailable", "detail": str(exc)},
+            status_code=503,
+        )
+    return _settings_item(store, name)
+
+
+# --- V2.2 provider registry read (PM §5.3 / D-2) ----------------------------
+# Registry facts are configuration, not secrets (PM §2.3): base_url,
+# adapter_class, enabled are displayable. No credential field exists on the
+# providers row (BYOK invariant, PM §3.4) — nothing here can leak one.
+
+
+@app.get("/api/providers")
+async def api_providers():
+    """Registry rows (name, base_url, adapter_class, enabled) + per-provider
+    KPIs in ONE response (design-preferred single-fetch shape, design-system
+    §6.3 join rule). Unauthenticated per the G2 ruling (PM §3.4)."""
+    import psycopg
+
+    try:
+        with psycopg.connect(_keys_dsn()) as conn:
+            rows = conn.execute(
+                """SELECT name, base_url, adapter_class, enabled
+                   FROM providers ORDER BY name"""
+            ).fetchall()
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 — shared 503 ledger envelope
+        return JSONResponse(
+            {"error": "ledger unavailable", "detail": str(exc)}, status_code=503
+        )
+    kpi_response = await kpis_endpoint(bucket="day")
+    if kpi_response.status_code != 200:
+        # Registry facts are still returned; KPIs degrade independently
+        # (design-system §6.3 degraded rule — registry without KPI beats
+        # a blank tab).
+        kpis_by_name: dict[str, dict] = {}
+    else:
+        data = json.loads(kpi_response.body)
+        kpis_by_name = {p["provider"]: p for p in data.get("by_provider", [])}
+    return {
+        "providers": [
+            {
+                "name": row[0],
+                "base_url": row[1],
+                "adapter_class": row[2],
+                "enabled": bool(row[3]),
+                "kpis": kpis_by_name.get(row[0]),
+            }
+            for row in rows
+        ]
+    }
 
 
 def _prom_label_escape(value: str) -> str:

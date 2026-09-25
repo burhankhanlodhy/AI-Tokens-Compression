@@ -58,6 +58,7 @@ jobs:
             migrations/20260922_v121_tool_schema_ledger.sql
             migrations/20260922_t1_tool_compression_ledger.sql
             migrations/20260924_v21_session_stores.sql
+            migrations/20260925_v22_runtime_settings.sql
           )
           for migration in "${migrations[@]}"; do
             psql "$TOKEN_SAVER_PG_DSN" -v ON_ERROR_STOP=1 -f "$migration"

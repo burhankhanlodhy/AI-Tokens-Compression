@@ -5,7 +5,7 @@ Single source of truth for both the dashboard and the Prometheus path
 over `requests` — no rollup table (AC-A12), no client-side aggregation.
 
 Contract: GET /api/kpis?bucket=minute|hour|day&from=<iso>&to=<iso>
-          -> {overview, series, by_model, by_provider, latency}
+          -> {overview, series, by_model, by_provider, by_route, latency}
 """
 from __future__ import annotations
 
@@ -235,6 +235,51 @@ def _fetch_kpis(
             for r in cur.fetchall()
         ]
 
+        # ---- V2.2 additions (PM §5.3 / D-2) ----
+        # by_route: window-global array (F2 window-global-percentile
+        # precedent — no per-bucket route fabrication). The column exists in
+        # both ledgers; the GROUP BY is the whole feature.
+        cur.execute(
+            f"""
+            SELECT route, COUNT(*),
+                   SUM(est_cost_before) - SUM(est_cost_after)
+            FROM requests WHERE TRUE {where}
+            GROUP BY route ORDER BY route
+            """,
+            params,
+        )
+        by_route = [
+            {"route": r[0], "requests": int(r[1]), "cost_saved": float(r[2] or 0)}
+            for r in cur.fetchall()
+        ]
+
+        # provider-native cache usage (AC-V2-6 measured evidence; design
+        # system §6.3 P2 row): SUM ignores NULLs, so a provider with no
+        # cache-evidence rows drops out of the response entirely — the UI
+        # omits the row when the field is absent (legacy-fallback pattern).
+        # Never merged into cache_savings/l1_savings (no double count).
+        cur.execute(
+            f"""
+            SELECT p.name,
+                   SUM(r.provider_cache_read_tokens),
+                   SUM(r.provider_cache_write_tokens)
+            FROM requests r JOIN providers p ON p.id = r.provider_id
+            WHERE TRUE {where}
+              AND (r.provider_cache_read_tokens IS NOT NULL
+                   OR r.provider_cache_write_tokens IS NOT NULL)
+            GROUP BY p.name
+            """,
+            params,
+        )
+        native_cache = {
+            r[0]: {"provider_cache_read_tokens": int(r[1] or 0),
+                   "provider_cache_write_tokens": int(r[2] or 0)}
+            for r in cur.fetchall()
+        }
+        for row in by_provider:
+            if row["provider"] in native_cache:
+                row.update(native_cache[row["provider"]])
+
         # ---- latency percentiles (continuous percentiles, Postgres-native) ----
         cur.execute(
             f"""
@@ -256,6 +301,7 @@ def _fetch_kpis(
         "series": series,
         "by_model": by_model,
         "by_provider": by_provider,
+        "by_route": by_route,
         "latency": latency,
     }
 
