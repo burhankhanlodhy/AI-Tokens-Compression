@@ -5,6 +5,91 @@ All notable changes to **token-saver** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-09-25
+
+### Added
+
+- **Five-tab operator dashboard** — the single-page shell gains a new
+  **Settings** tab (below) and evolves Overview/Traffic/Providers/Keys &
+  Tenants per the V2.2 product spec
+  (`docs/v2.2-ui-ux-overhaul-spec.md`) and the UI/UX design contract
+  (`docs/v2.2-ui-ux-design-system.md`):
+  - **Traffic** gains a window-global `by_route` route-mix card
+    (compress vs passthrough), backed by a new SQL-side `by_route` series
+    on `/api/kpis`.
+  - **Providers** gains provider **registry facts** (name, base_url,
+    adapter_class, enabled) via a new read-only `GET /api/providers`,
+    joined with per-provider KPIs; a registry outage degrades to
+    KPI-cards-only. Provider-native cache usage stays labeled measured
+    evidence and is never merged into savings.
+  - **Design system**: new tokens (`--panel-raised`, `--overlay`,
+    `--violet`, `--cyan`), `:focus-visible` ring on every interactive
+    element, `prefers-reduced-motion` skeleton-freeze, min-44px touch
+    targets, scrollable tab strip below 900px (no hamburger), brand
+    collapse to "ts" below 560px. All numbers remain 1:1 API-field
+    renders; zero client-side aggregation is preserved (render-harness
+    fixtures in `test/test_v22_dashboard_render.py`).
+- **Runtime settings persistence** (`app_settings`, migration 8,
+  `migrations/20260925_v22_runtime_settings.sql`): a new **Settings** tab
+  exposes exactly seven server-side-allowlisted runtime switches
+  (`l1_enabled`, `tool_schema_minify`, `tool_schema_cache_enabled`,
+  `tool_result_optimization`, `tool_result_compression_enabled`,
+  `output_conciseness_enabled`, `semantic_cache_enabled` — the latter
+  visible-but-locked pending the AC-PC4 calibration gate). Precedence is
+  per-request control headers > runtime override > environment variable >
+  built-in default. Writes are `PUT /api/settings/{name}` behind
+  `ADMIN_TOKEN`; unknown/not-runtime names are rejected 400; deletes
+  revert to env/default immediately; overrides survive a proxy restart;
+  each request reads the snapshot once at request start, so a dashboard
+  flip cannot alter an in-flight request. Every override records
+  `updated_at`/`updated_by` (never a token fragment). Deployment-only
+  settings (lossy compressor, routing, dose-calibration instruments,
+  credentials) are structurally excluded from runtime writes and rendered
+  read-only with component-level redaction — no key material, hash, or
+  credential field appears in any settings payload.
+- **G1 proxy-key scope resolution** (`_resolve_proxy_key_scope`,
+  `proxy/main.py`): a `Bearer tsk_…` proxy key that resolves to an active
+  `api_keys` row (sha256 key-hash convention) plus an `X-Session-Id`
+  header populates tenant/session context on the live request path, so
+  TOCP continuations, `/v1/tool-results`, and strategy PolicyContext
+  become reachable with real isolation. Unknown or missing keys fail
+  closed (401); SQLite single-user deployments keep benchmark-only
+  labeling.
+- **V2.2 scope and design records** — `docs/v2.2-ui-ux-overhaul-spec.md`
+  (PM contract: IA, runtime/deployment-only ruling, data contracts, AC) and
+  `docs/v2.2-ui-ux-design-system.md` (UI/UX binding design contract).
+
+### Changed
+
+- **Version metadata** — proxy and semantic-cache quality namespace now
+  report `2.2.0`.
+- **CI** — test workflow bootstraps the fresh Postgres schema plus all
+  migrations before the test lane; the collected-test floor is raised to
+  953.
+
+### Unchanged by design
+
+- The compression pipeline itself, pipeline order, and the ledger schema
+  are untouched beyond the `app_settings` table and G1 wiring (V2.2 is a
+  UI/UX + configuration-persistence release).
+- `/stats`, `/metrics`, `/health`, and the existing `/api/kpis` contract
+  shapes are pinned unchanged (additive `by_route` only).
+- L1 lossless posture, semantic-cache flag-off default, provider-native
+  cache attribution, and routing off-by-default carry forward from V2.1.
+
+### Release quality gate
+
+- Independent QA **GO** at candidate
+  `05c8ed8f46930b9989c981e6c020cb4f8e29fe7b` (t_819088ac): live-path
+  runtime + real-browser verification of all five tabs; settings API
+  negative paths (401/400/503, precedence, restart persistence);
+  ledger-reconciled A/B proof that a runtime toggle alters proxy behavior
+  on real `/v1/chat/completions` traffic (L1 1336→731 vs 1336→1336);
+  G1 fail-closed scope resolution; by_route vs independent SQL truth;
+  secret masking verified item-by-item; full regression **997 passed /
+  0 failed / 0 skipped** in both standard and reverse order on the real
+  Postgres DSN.
+
 ## [2.1.0] - 2026-09-24
 
 ### Added

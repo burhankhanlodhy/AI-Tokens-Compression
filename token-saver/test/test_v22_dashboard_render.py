@@ -254,11 +254,11 @@ def test_settings_strategies_401_prompt(tmp_path):
     pre = _run(tmp_path, fx)
     assert "Enter the admin token to view strategy flags." in pre["html"]
     assert "V2.1 strategy lanes (deferred_tools, tocp, idcp, atba, mtcc)" in pre["html"]
-    assert "live traffic is unaffected" in pre["html"]
+    assert "Without both, live requests are unaffected" in pre["html"]
     # after saving the token the card re-fetches and renders the table
     assert "Admin token entered for this session." in html
     assert "V2.1 strategy lanes (deferred_tools, tocp, idcp, atba, mtcc)" in html
-    assert "live traffic is unaffected" in html
+    assert "Without both, live requests are unaffected" in html
     strat = html.split("Strategy flags", 1)[1].split("Tripwire", 1)[0]
     assert "deferred_tools" in strat and "existing_behavior" in strat
     assert '<span class="badge green">on</span>' in strat

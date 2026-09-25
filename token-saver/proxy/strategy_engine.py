@@ -83,7 +83,7 @@ class _StrategySpec:
     fallback: str
     requires_session: bool = True
     full_context_escape: bool = True
-    version: str = "v2.1.0"
+    version: str = "v2.2.0"
     dimensions: tuple[str, ...] = ()
 
 

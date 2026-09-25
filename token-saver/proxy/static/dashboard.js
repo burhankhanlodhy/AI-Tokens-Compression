@@ -1051,12 +1051,14 @@
 
   /* §6.5.4 Card A — strategy flags. The G1 banner is permanent (non-
    * dismissible): the V2.1 lanes govern benchmark harnesses only until
-   * authenticated tenant/session scope is wired on the live request path. */
+   * their flags are enabled, which requires authenticated tenant/session
+   * scope (proxy key + X-Session-Id) on live traffic. */
   function strategiesCardHtml() {
     var head = '<div class="card span6"><h3>Strategy flags</h3>' +
       '<div class="banner warn">V2.1 strategy lanes (deferred_tools, tocp, idcp, atba, mtcc) ' +
-      "require authenticated tenant/session scope, which is not wired on the live request " +
-      "path today. These flags govern benchmark harnesses only — live traffic is unaffected.</div>";
+      "govern benchmark harnesses only. Enabling them on live traffic requires " +
+      "authenticated scope: a proxy key (Bearer tsk_…) plus an X-Session-Id header. " +
+      "Without both, live requests are unaffected.</div>";
     if (!strategiesState) {
       return head + '<div class="skel-row"></div></div>';
     }

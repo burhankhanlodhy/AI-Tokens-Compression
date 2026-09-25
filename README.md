@@ -78,8 +78,11 @@ uvicorn proxy.main:app --port 8000
 | `POST /v1/embeddings` | Passthrough to upstream `/embeddings` |
 | `GET /v1/models` | Passthrough to upstream model list |
 | `GET /stats[?format=text]` | Savings aggregates from the **SQLite** stats DB |
-| `GET /dashboard` | Four-tab dashboard; data sourced from `/api/kpis` |
-| `GET /api/kpis[?bucket=…&tenant_id=…]` | Time-bucketed ledger KPIs |
+| `GET /dashboard` | Five-tab dashboard; data sourced from `/api/kpis` |
+| `GET /api/kpis[?bucket=…&tenant_id=…]` | Time-bucketed ledger KPIs (incl. `by_route`) |
+| `GET /api/providers` | Provider registry facts + per-provider KPIs |
+| `GET /api/settings` | Runtime + read-only deployment settings inventory |
+| `PUT /api/settings/{name}` / `DELETE …` | Runtime override write/revert; require `ADMIN_TOKEN` |
 | `GET /api/tenants` | List tenants known to the ledger (Keys & Tenants tab) |
 | `GET /api/keys` | List API keys; unauthenticated reads (see `ADMIN_TOKEN`) |
 | `POST /api/keys`, `…/rotate`, `…/revoke` | Key writes; require `ADMIN_TOKEN` |
@@ -92,7 +95,8 @@ uvicorn proxy.main:app --port 8000
 - **Dashboard (recommended):** open `http://localhost:8000/dashboard` in a
   browser. It aggregates the **Postgres ledger** via `/api/kpis`, so it shows
   everything the proxy recorded — cache hits, L1 savings, per-route and
-  per-day breakdowns — in four tabs.
+  per-day breakdowns — in five tabs (Overview, Traffic, Providers,
+  Keys & Tenants, Settings).
 - **JSON/text KPIs:** `curl "http://localhost:8000/api/kpis?bucket=day"` for
   the same Postgres-backed aggregates without a browser (`from=`/`to=` bound
   the window, `tenant_id=`/`api_key_id=` scope the aggregates).
@@ -120,6 +124,34 @@ uvicorn proxy.main:app --port 8000
 ## Configuration
 
 All settings are env vars (see `.env.example` and `proxy/config.py`):
+
+### Runtime settings (V2.2)
+
+A subset of feature switches can be changed at runtime — no restart — from
+the dashboard **Settings** tab (or `PUT /api/settings/{name}` with the
+`ADMIN_TOKEN` bearer). Exactly these are runtime-writable (allowlist is
+enforced server-side in `proxy/settings.py`):
+
+| Runtime setting | Env var | Default | Notes |
+| --- | --- | --- | --- |
+| `l1_enabled` | `L1_ENABLED` | `true` | Lossless L1 structural cleanup |
+| `tool_schema_minify` | `TOOL_SCHEMA_MINIFY` | `true` | Lossless on validated schemas |
+| `tool_schema_cache_enabled` | `TOOL_SCHEMA_CACHE_ENABLED` | `true` | Sub-switch of exact-result caching |
+| `tool_result_optimization` | `TOOL_RESULT_OPTIMIZATION` | `true` | Output-side only |
+| `tool_result_compression_enabled` | `TOOL_RESULT_COMPRESSION_ENABLED` | `true` | Lossless tool-result class only |
+| `output_conciseness_enabled` | `OUTPUT_CONCISENESS_ENABLED` | `false` | Benchmark: net-negative on short prompts |
+| `semantic_cache_enabled` | `SEMANTIC_CACHE_ENABLED` | `false` | Visible-but-locked pending the calibration gate |
+
+Precedence (highest wins): per-request control headers (benchmark-only) >
+runtime override (persisted in the `app_settings` Postgres table; a JSON
+file next to the SQLite DB in SQLite mode) > environment variable >
+built-in default. A runtime override survives a proxy restart; deleting it
+reverts to env/default immediately. Every other setting is
+deployment-only: set it via environment at boot. Overrides are audited
+(`updated_at`/`updated_by`, never a token fragment); secrets and
+credential-bearing settings are never writable or displayed at runtime.
+
+### Environment variables
 
 - `UPSTREAM_BASE_URL` — any OpenAI-compatible provider (default: OpenRouter)
 - `COMPRESSION_ENABLED` / `OUTPUT_CONCISENESS_ENABLED` /
