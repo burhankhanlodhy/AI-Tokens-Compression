@@ -22,6 +22,10 @@ class InvalidRange(ValueError):
     pass
 
 
+class StoreCapacityExceeded(ValueError):
+    """The store is full; unexpired continuations are never evicted."""
+
+
 @dataclass(frozen=True)
 class ContinuationPreview:
     continuation_id: str
@@ -77,14 +81,15 @@ class ContinuationStore:
         if not tenant_id or not session_id or not isinstance(content, str):
             raise ValueError("trusted tenant_id, session_id, and string content are required")
         if len(content) > self.max_total_chars:
-            raise ValueError("continuation exceeds store capacity")
+            raise StoreCapacityExceeded("continuation exceeds store capacity")
         with self._lock:
             self._purge_expired()
             total_chars = sum(len(entry.content) for entry in self._entries.values())
-            while (len(self._entries) >= self.max_entries
-                   or total_chars + len(content) > self.max_total_chars):
-                _, removed = self._entries.popitem(last=False)
-                total_chars -= len(removed.content)
+            if (len(self._entries) >= self.max_entries
+                    or total_chars + len(content) > self.max_total_chars):
+                raise StoreCapacityExceeded(
+                    "continuation store full; existing unexpired entries were retained"
+                )
             continuation_id = secrets.token_urlsafe(24)
             self._entries[continuation_id] = _Entry(
                 tenant_id, session_id, content, self._clock() + self.ttl_seconds,

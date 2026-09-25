@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from proxy.tocp import (ContinuationStore, ContinuationNotFound, InvalidRange,
-                        build_continuation_result)
+                        StoreCapacityExceeded, build_continuation_result)
 
 
 def test_continuation_returns_bounded_segments_and_exact_range():
@@ -45,25 +45,24 @@ def test_malformed_ranges_and_cleanup():
     assert store.cleanup() >= 0
 
 
-def test_entry_limit_evicts_oldest_and_ids_are_opaque():
+def test_entry_limit_fails_closed_without_evicting_unexpired_entries():
     clock = [1.0]
     store = ContinuationStore(ttl_seconds=10, max_entries=1, segment_chars=4, clock=lambda: clock[0])
     first = store.save("t", "s", "first result")
     clock[0] += 1
-    second = store.save("t", "s", "second result")
-    assert first.continuation_id != second.continuation_id
-    with pytest.raises(ContinuationNotFound):
-        store.get_segment(first.continuation_id, "t", "s", 0)
+    with pytest.raises(StoreCapacityExceeded):
+        store.save("t", "s", "second result")
+    assert store.get_segment(first.continuation_id, "t", "s", 0) == "firs"
 
 
 def test_total_store_capacity_is_bounded():
     store = ContinuationStore(ttl_seconds=10, max_entries=10, segment_chars=2,
                               max_total_chars=5)
     first = store.save("t", "s", "abcd")
-    second = store.save("t", "s", "efgh")
+    with pytest.raises(StoreCapacityExceeded):
+        store.save("t", "s", "efgh")
     assert store.size == 1
-    with pytest.raises(ContinuationNotFound):
-        store.get_segment(first.continuation_id, "t", "s", 0)
+    assert store.get_segment(first.continuation_id, "t", "s", 0) == "ab"
     with pytest.raises(ValueError):
         store.save("t", "s", "123456")
 
@@ -128,14 +127,19 @@ def test_retrieval_route_requires_trusted_scope_and_returns_only_scoped_segment(
 
     continuation_store._entries.clear()
     record = continuation_store.save("tenant-route", "session-route", "first segment second")
-    @main.app.middleware("http")
-    async def server_scope(request, call_next):
-        if request.headers.get("x-test-trusted") == "yes":
-            request.state.tenant_id = "tenant-route"
-            request.state.session_id = "session-route"
-        return await call_next(request)
+    class TrustedScopeTestApp:
+        """Supply trusted server state without mutating a possibly-started app."""
 
-    client = TestClient(main.app)
+        async def __call__(self, scope, receive, send):
+            if scope["type"] == "http":
+                headers = dict(scope.get("headers", ()))
+                if headers.get(b"x-test-trusted") == b"yes":
+                    scope.setdefault("state", {}).update(
+                        tenant_id="tenant-route", session_id="session-route"
+                    )
+            await main.app(scope, receive, send)
+
+    client = TestClient(TrustedScopeTestApp())
     denied = client.get(f"/v1/tool-results/{record.continuation_id}?segment=0")
     assert denied.status_code == 401
     allowed = client.get(f"/v1/tool-results/{record.continuation_id}?segment=0")

@@ -31,6 +31,14 @@ NO_LOG_ROUTES = {
     ("GET", "/dashboard"),
     ("GET", "/static/dashboard.js"),
     ("GET", "/api/kpis"),
+    # Scoped continuation retrieval reads a previously logged provider tool
+    # result; it is not a provider request and must not create a second savings
+    # or usage ledger fact. Access authorization is enforced by trusted scope.
+    ("GET", "/v1/tool-results/{continuation_id}"),
+    # Admin-only strategy status is a read-only deployment audit view, not an
+    # inference request or savings event; it has no financial ledger row.
+    ("GET", "/api/strategies"),
+
     # C-2 management reads/writes operate on api_keys metadata; they are never
     # proxy inference requests and must not create financial ledger facts.
     ("GET", "/api/tenants"),
