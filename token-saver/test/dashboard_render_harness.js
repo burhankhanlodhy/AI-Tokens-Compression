@@ -9,6 +9,9 @@
  *   mode = "fail-fetch" — every fetch resolves !ok (503) to exercise the
  *          error state; the harness then clicks the rendered Retry button and
  *          reports each fetch URL so the test can assert the refire.
+ *        "fail-route:<path>" — only fetches whose path starts with <path>
+ *          resolve 503 (per-card degradation gates, I-10); other routes use
+ *          the fixture normally.
  *
  * Fixture extensions (all optional, backward compatible):
  *   _routes  — map of route key → {status?, body} | [step, ...] (a sequence:
@@ -99,13 +102,17 @@ const seqCount = {};   // route key → calls consumed from a _routes sequence
 
 function routeFor(url, method) {
   if (mode === "fail-fetch") return { status: 503, body: {} };
+  if (mode.indexOf("fail-route:") === 0 &&
+      String(url).split("?")[0].indexOf(mode.slice("fail-route:".length)) === 0) {
+    return { status: 503, body: {} };
+  }
   const routes = fixture._routes;
   if (!routes) return { status: 200, body: fixture };
   const urlStr = String(url);
   const pathOnly = urlStr.split("?")[0];
   const keys = Object.keys(routes);
   const isQueryKey = (k) => k.indexOf("?") >= 0;
-  const hasMethod = (k) => k.indexOf(" ") > 0 && /^(GET|POST)$/.test(k.slice(0, k.indexOf(" ")));
+  const hasMethod = (k) => k.indexOf(" ") > 0 && /^(GET|POST|PUT|DELETE)$/.test(k.slice(0, k.indexOf(" ")));
   // precedence: method-specific, then query-style (substring) so
   // "/api/kpis?tenant_id=" beats "/api/kpis", then plain path keys — so a
   // "POST /api/keys" route is never shadowed by the "/api/keys" read route.
@@ -116,12 +123,20 @@ function routeFor(url, method) {
       let m = key;
       let wantMethod = null;
       const sp = key.indexOf(" ");
-      if (sp > 0 && /^(GET|POST)$/.test(key.slice(0, sp))) {
+      if (sp > 0 && /^(GET|POST|PUT|DELETE)$/.test(key.slice(0, sp))) {
         wantMethod = key.slice(0, sp);
         m = key.slice(sp + 1);
       }
       if (wantMethod && wantMethod !== method) continue;
-      const hit = isQueryKey(m) ? urlStr.indexOf(m) !== -1 : pathOnly === m;
+      // prefix matching is opt-in via a trailing '*' (V2.2 path-parameter
+      // writes like DELETE /api/settings/<name>); a plain method key still
+      // requires the full exact path — relaxing it to prefix would shadow
+      // sibling read keys ("/api/keys" GET vs "POST /api/keys" → POST would
+      // resolve to the read's 200 body instead of its own fixture).
+      const hit = isQueryKey(m) ? urlStr.indexOf(m) !== -1 :
+        pathOnly === m ||
+        (wantMethod && m.charAt(m.length - 1) === "*" &&
+         pathOnly.indexOf(m.slice(0, -1)) === 0);
       if (!hit) continue;
       let entry = routes[key];
       if (Array.isArray(entry)) {

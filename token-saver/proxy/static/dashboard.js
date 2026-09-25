@@ -15,6 +15,10 @@
   }
   function money(n) { return n === null || n === undefined ? "—" : "$" + Number(n).toFixed(4); }
 
+  function currentTab() {
+    return location.hash.replace("#", "") || "overview";
+  }
+
   function destroyCharts() {
     charts.forEach(function (c) { try { c.destroy(); } catch (e) {} });
     charts = [];
@@ -275,6 +279,32 @@
       ["#4f8cff", "#35c28f", "#d9a53f", "#e5484d", "#9b7bff", "#5ac8fa"]);
   }
 
+  /* §6.2 Route mix (D-2): `by_route` is a window-global array of
+   * {route, requests, cost_saved} — two verbatim rows plus one stacked bar
+   * whose widths are geometry only. Absent field (pre-V2.2 backend) → the
+   * card is omitted entirely; route data is NEVER synthesized from other
+   * fields. A passthrough-only window renders a one-row table, not an error. */
+  function routeMixCard(d) {
+    var rows = d.by_route;
+    if (!rows || !rows.length) return "";
+    var total = 0;
+    rows.forEach(function (r) { total = total + (r.requests || 0); });
+    var bar = rows.map(function (r, i) {
+      var w = total > 0 ? Math.min(100, 100 * (r.requests || 0) / total) : 0;
+      var colors = ["var(--accent)", "var(--gold)"];
+      return '<div style="position:absolute;left:0;top:0;bottom:0;width:' + w +
+        '%;background:' + colors[i % 2] + '"></div>';
+    }).join("");
+    return '<div class="card span6"><h3>Route mix</h3>' +
+      '<div class="table-scroll"><table><thead><tr><th>Route</th><th>Requests</th><th>Cost saved</th></tr></thead><tbody>' +
+      rows.map(function (r) {
+        return "<tr><td>" + escapeHtml(r.route) + "</td><td>" + fmt(r.requests) +
+          "</td><td>" + money(r.cost_saved) + "</td></tr>";
+      }).join("") + "</tbody></table></div>" +
+      '<div class="bar-total" title="request share by route">' + bar + "</div>" +
+      '<div class="muted-note">Bar widths show each route\'s share of requests; route counts are window-global.</div></div>';
+  }
+
   function renderTraffic(d) {
     var ov = d.overview;
     var labels = d.series.map(function (s) { return s.bucket; });
@@ -293,6 +323,7 @@
       chartCard("Errors per bucket", "span6", '<div class="chart-wrap"><canvas id="c-err"></canvas></div>') +
       kpiCard("Error rate", errBadge, null, null, null) +
       kpiCard("Cache hit rate", ov.cache_hit_pct + "%", null, null, null) +
+      routeMixCard(d) +
       cacheStatusCard(cacheOf(d)) +
       "</div>";
     content.innerHTML = html;
@@ -300,26 +331,88 @@
     lineChart("c-err", labels, d.series.map(function (s) { return s.errors; }), "errors", "#e5484d");
   }
 
-  function renderProviders(d) {
+  function renderProvidersKpis(d, registry, registryNote) {
+    var byName = {};
+    if (registry) registry.forEach(function (r) { byName[r.name] = r; });
     var rows = d.by_provider.map(function (p) {
-      var errBadge = p.error_pct > 0 ? '<span class="badge red">' + p.error_pct + "%</span>"
-                                     : '<span class="badge green">0%</span>';
-      var l1Line = p.l1_tokens_stripped
-        ? "L1 structural: <strong>" + fmt(p.l1_tokens_stripped) + " tokens</strong>, " +
-          money(p.l1_cost_saved) + ' <span class="muted-note">portion of cost saved</span>'
-        : 'L1 structural: <span class="zero-dash">—</span>';
-      return '<div class="card span6"><h3>' + p.provider + "</h3>" +
-        '<div class="kpi-num">' + fmt(p.requests) + ' <span style="font-size:.9rem;color:var(--muted)">requests</span></div>' +
-        "<p>Tokens saved: <strong>" + fmt(p.tokens_saved) + "</strong><br>" +
-        "Cost saved: <strong>" + money(p.cost_saved) + "</strong><br>" +
-        l1Line + "<br>" +
-        "Cache hits: <strong>" + p.cache_hits + "</strong> (" + p.cache_hit_pct + "%) " +
-        "Errors: " + errBadge +
-        "</p></div>";
+      var reg = byName[p.provider] || null;
+      return providerCardHtml(p, reg, registryNote);
     });
     content.innerHTML = '<div class="grid">' +
       (rows.length ? rows.join("") : '<div class="card span12"><div class="empty">No provider traffic yet.</div></div>') +
       "</div>";
+  }
+
+  /* §6.3: one card per KPI provider row, joined name-keyed with the registry
+   * row (a join, not aggregation — no number is computed). Registry facts:
+   * adapter chip, monospace base_url, enabled/disabled badge. `base_url` is
+   * configuration and displayable (PM §2.3); no credential field exists on
+   * the registry row (BYOK invariant, PM §3.4). Provider-native cache usage
+   * renders ONLY when the provider's KPI object carries the fields. */
+  function providerCardHtml(p, reg, registryNote) {
+    var errBadge = p.error_pct > 0 ? '<span class="badge red">' + p.error_pct + "%</span>"
+                                   : '<span class="badge green">0%</span>';
+    var l1Line = p.l1_tokens_stripped
+      ? "L1 structural: <strong>" + fmt(p.l1_tokens_stripped) + " tokens</strong>, " +
+        money(p.l1_cost_saved) + ' <span class="muted-note">portion of cost saved</span>'
+      : 'L1 structural: <span class="zero-dash">—</span>';
+    var html = '<div class="card span6"><h3>' + escapeHtml(p.provider) + " " +
+      (reg
+        ? (reg.enabled
+          ? '<span class="badge green">enabled</span>'
+          : '<span class="badge neutral">disabled</span>') +
+          ' <span class="chip">' + escapeHtml(reg.adapter_class) + "</span>"
+        : "") + "</h3>";
+    if (reg && reg.base_url) {
+      html += '<div class="muted-note mono">' + escapeHtml(reg.base_url) + "</div>";
+    }
+    if (registryNote) {
+      html += '<div class="muted-note">' + registryNote + "</div>";
+    }
+    html += '<div class="kpi-num">' + fmt(p.requests) +
+      ' <span style="font-size:.9rem;color:var(--muted)">requests</span></div>' +
+      "<p>Tokens saved: <strong>" + fmt(p.tokens_saved) + "</strong><br>" +
+      "Cost saved: <strong>" + money(p.cost_saved) + "</strong><br>" +
+      l1Line + "<br>" +
+      "Cache hits: <strong>" + p.cache_hits + "</strong> (" + p.cache_hit_pct + "%) " +
+      "Errors: " + errBadge + "</p>";
+    if (p.provider_cache_read_tokens !== undefined ||
+        p.provider_cache_write_tokens !== undefined) {
+      html += '<div class="subrow"><span>Provider-native cache</span><span>' +
+        "read <strong>" + fmt(p.provider_cache_read_tokens) + "</strong> · " +
+        "write <strong>" + fmt(p.provider_cache_write_tokens) + "</strong>" +
+        "</span></div>" +
+        '<div class="muted-note">provider-native cache — measured evidence, never merged into savings</div>';
+    }
+    return html + "</div>";
+  }
+
+  /* §5.3: the Providers tab issues TWO fetches — /api/kpis (existing) and
+   * /api/providers (D-2 registry). Either failing degrades only its own
+   * facts: registry down renders KPI cards + a card-level note; KPIs down
+   * renders the shared error block with Retry. */
+  function loadProvidersTab() {
+    content.innerHTML = '<div class="skel-row"></div><div class="skel-row"></div>';
+    fetchJson("/api/providers").then(function (regBody) {
+      // a 200 without the expected {providers:[…]} envelope is "registry
+      // facts unavailable" too — the degraded-note path, not a silent
+      // render. An empty array is a real inventory and renders facts.
+      var registry = (regBody && regBody.providers && regBody.providers.slice
+                      && regBody.providers.length !== undefined)
+        ? regBody.providers : null;
+      var regNote = registry
+        ? (registry.length
+          ? null
+          : "registry facts unavailable — Retry")
+        : "registry facts unavailable — Retry";
+      fetchKpis().then(function (d) {
+        renderProvidersKpis(d, registry, regNote);
+      }).catch(showError);
+    }).catch(function () {
+      fetchKpis().then(function (d) {
+        renderProvidersKpis(d, null, "registry facts unavailable — Retry");
+      }).catch(showError);
+    });
   }
 
   // ---------------- Keys & Tenants tab (C6 — keys-tenants-tab-spec.md) ------
@@ -347,7 +440,32 @@
   }
   function escDate(s) { return escapeHtml(String(s || "").slice(0, 10)); }
 
-  function keysFetch(url) {
+  /* §8.2/I-12 (G2): when any tenant row carries a non-self_host plan, Keys
+   * and Settings render this warning verbatim — management/KPI reads are
+   * unauthenticated by the self-host ruling, and a hosted plan drifts from
+   * that threat model. Dismissal is visual only and resets on reload. */
+  var hostedBannerDismissed = false;
+  function hostedBannerHtml(tenants) {
+    if (hostedBannerDismissed) return "";
+    var hosted = (tenants || []).some(function (t) {
+      return t && t.plan && t.plan !== "self_host";
+    });
+    if (!hosted) return "";
+    return '<div class="banner warn" id="hosted-banner">' +
+      "Management and KPI reads are unauthenticated (self-host threat model). " +
+      "This deployment has a non-self-host tenant plan — restrict network " +
+      "access or front the proxy with an auth layer." +
+      '<button id="hosted-dismiss" type="button" class="btn ghost">Dismiss</button></div>';
+  }
+  function bindHostedBanner() {
+    bindClick("hosted-dismiss", function () {
+      hostedBannerDismissed = true;
+      var el = document.getElementById("hosted-banner");
+      if (el) el.innerHTML = "";
+    });
+  }
+
+  function fetchJson(url) {
     return fetch(url).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (b) {
         if (!r.ok) {
@@ -359,6 +477,7 @@
       });
     });
   }
+  var keysFetch = fetchJson;
 
   /* Scoped KPI url: selector first so a filtered url is distinguishable from
    * the unscoped /api/kpis?bucket=… fetch the other tabs make. */
@@ -370,7 +489,7 @@
   }
 
   function onKeysTab() {
-    return (location.hash.replace("#", "") || "overview") === "keys";
+    return currentTab() === "keys";
   }
 
   function loadKeys() {
@@ -435,7 +554,8 @@
     var scopes = (k.scopes && k.scopes.length)
       ? k.scopes.map(function (s) { return '<span class="chip">' + escapeHtml(s) + "</span>"; }).join("")
       : "—";
-    return '<tr id="keyrow-' + id + '">' +
+    return '<tr id="keyrow-' + id + '" tabindex="0" role="button" aria-label="Key ending ' +
+      escapeHtml(k.key_last4) + ' — open usage">' +
       '<td><span class="key-dot">••••</span> ' + escapeHtml(k.key_last4) + "</td>" +
       "<td>" + scopes + "</td>" +
       "<td>" + (k.spend_cap_usd === null || k.spend_cap_usd === undefined
@@ -490,7 +610,7 @@
     var msg = tokenPrompt.msg || "Printed once to the proxy's startup log at boot.";
     return '<div class="card span12"><h3>Admin token</h3>' +
       '<p class="form-hint">' + escapeHtml(msg) + "</p>" +
-      '<div class="form-row"><input id="token-input" type="password" class="form-input" autocomplete="off"></div>' +
+      '<div class="form-row"><input id="token-input" type="password" class="form-input" autocomplete="off" aria-label="Admin token"></div>' +
       '<button id="token-save" class="btn">Save</button></div>';
   }
 
@@ -501,6 +621,7 @@
     var ov = (keysCtx.tkpis && keysCtx.tkpis.overview) || {};
     var keys = keysCtx.keys || [];
     var html = '<div id="token-slot">' + (tokenPrompt ? tokenPromptHtml() : "") + "</div>" +
+      hostedBannerHtml([keysCtx.tenant]) +
       '<div class="grid">' +
       '<div class="card span6"><h3>Tenant</h3>' +
       '<div class="kpi-num">' + escapeHtml(t.name) + "</div>" +
@@ -518,9 +639,9 @@
         "<p>Create a key so your applications can authenticate to the proxy.</p>" +
         '<button id="keys-empty-create" class="btn">Create key</button></div>';
     } else {
-      html += "<table><thead><tr><th>Key</th><th>Scopes</th><th>Spend cap</th><th>Status</th>" +
+      html += '<div class="table-scroll"><table><thead><tr><th>Key</th><th>Scopes</th><th>Spend cap</th><th>Status</th>' +
         "<th>Created</th><th>Revoked</th><th>Actions</th></tr></thead><tbody>" +
-        keys.map(keyRow).join("") + "</tbody></table>";
+        keys.map(keyRow).join("") + "</tbody></table></div>";
     }
     html += "</div>" +
       '<div id="keys-inline">' +
@@ -530,6 +651,7 @@
       "</div>";
     content.innerHTML = html;
     bindKeysUI();
+    bindHostedBanner();
   }
 
   function bindKeysUI() {
@@ -571,6 +693,14 @@
             String(ev.target.tagName).toLowerCase() === "button") return;
         openKeyDrawer(k);
       });
+      /* §6.4/I-9: Enter/Space on a focused row opens the drawer (keyboard
+       * parity with the row's click target). */
+      bindKeydown("keyrow-" + id, function (ev) {
+        if (ev && (ev.key === "Enter" || ev.key === " ")) {
+          if (ev.preventDefault) ev.preventDefault();
+          openKeyDrawer(k);
+        }
+      });
       if (k.status !== "active") return;
       bindClick("rot-" + id, function () {
         if (pendingConfirm && pendingConfirm.keyId === id && pendingConfirm.type === "rotate") executeRotate(k);
@@ -589,19 +719,49 @@
     var el = document.getElementById(id);
     if (el && el.addEventListener) el.addEventListener("click", fn);
   }
+  function bindKeydown(id, fn) {
+    var el = document.getElementById(id);
+    if (el && el.addEventListener) el.addEventListener("keydown", fn);
+  }
+
+  /* §7.5: an untouched two-tap confirm reverts after 5s, but the timer must
+   * NOT fire while focus is inside the confirm group (pause-on-focus — a
+   * keyboard user tabbing to Confirm must not have it vanish). Sub-900ms
+   * scheduling keeps the visual deadline intact for pointer users. */
+  var confirmFocusDepth = 0;
+  function updateConfirmFocus(e) {
+    var row = e && e.target && e.target.closest
+      ? e.target.closest("tr, .setting-row, form") : null;
+    var inConfirm = !!(row && row.querySelector &&
+        row.querySelector('[id$="cancel-' + (pendingConfirm ? pendingConfirm.keyId : "__none__") + '"], [id^="rev-"], [id^="rot-"], [id="setrevert-"]'));
+    if (e.type === "focusin" && inConfirm) confirmFocusDepth++;
+    else if (e.type === "focusout" && inConfirm) confirmFocusDepth = Math.max(0, confirmFocusDepth - 1);
+  }
+  if (typeof document !== "undefined" && document.addEventListener) {
+    document.addEventListener("focusin", updateConfirmFocus);
+    document.addEventListener("focusout", updateConfirmFocus);
+  }
+
+  function confirmRevertTick(expected) {
+    if (!pendingConfirm ||
+        pendingConfirm.keyId !== expected.keyId ||
+        pendingConfirm.type !== expected.type) return;
+    if (confirmFocusDepth > 0) {
+      confirmTimer = setTimeout(function () { confirmRevertTick(expected); }, 500);
+      return;
+    }
+    confirmTimer = null;
+    if (!onKeysTab()) return;
+    pendingConfirm = null;
+    renderKeysUI();
+  }
 
   function setConfirm(type, keyId) {
     if (confirmTimer) clearTimeout(confirmTimer);
     pendingConfirm = { type: type, keyId: keyId };
     renderKeysUI();
-    confirmTimer = setTimeout(function () {   // §4.3: untouched confirm reverts after 5s
-      confirmTimer = null;
-      if (!onKeysTab()) return;
-      if (pendingConfirm && pendingConfirm.keyId === keyId && pendingConfirm.type === type) {
-        pendingConfirm = null;
-        renderKeysUI();
-      }
-    }, 5000);
+    var expected = { type: type, keyId: keyId };
+    confirmTimer = setTimeout(function () { confirmRevertTick(expected); }, 5000);
   }
 
   function cancelConfirm() {
@@ -618,28 +778,28 @@
   /* Every write goes through here: bearer attached only when a token has been
    * entered (§4.5); 401 clears the token and prompts, preserving the pending
    * action; any other failure surfaces inline WITHOUT re-rendering (§4.4).
-   * §4.5.4: a 401 must not cost the user their confirm state — the action's
-   * confirm (rotate/revoke) is restored on the prompt render so the row still
-   * reads "Confirm rotate/revoke?" while the token form is up; the operator
-   * re-enters the token once, not the whole flow. createKey's inline form is
-   * preserved separately (keyFormOpen stays true across the 401 re-render). */
-  function doWrite(url, body, errId, ok, onFail, confirm) {
+   * This core is tab-agnostic: `ok` returns its render-state and the caller's
+   * `render()` paints it; `on401` restores whatever state the caller needs
+   * preserved across the prompt (keys: the confirm; settings: the switch's
+   * prior value). */
+  function doWriteCore(url, opts, errId, ok, onFail, render, on401) {
     var headers = { "Content-Type": "application/json" };
     if (adminToken) headers["Authorization"] = "Bearer " + adminToken;
-    return fetch(url, { method: "POST", headers: headers, body: JSON.stringify(body || {}) })
+    return fetch(url, { method: opts.method || "POST", headers: headers,
+                        body: JSON.stringify(opts.body || {}) })
       .then(function (r) {
         return r.json().catch(function () { return {}; }).then(function (b) {
           if (r.status === 401) {
             var rejected = !!adminToken;
             adminToken = null;   // §4.5.3: any 401 clears the stored token
             tokenPrompt = {
-              retry: function () { doWrite(url, body, errId, ok, onFail, confirm); },
+              retry: function () { doWriteCore(url, opts, errId, ok, onFail, render, on401); },
               msg: rejected
                 ? "Token rejected — the proxy may have restarted. Enter the current startup-log token."
                 : null,
             };
-            if (confirm) pendingConfirm = confirm;   // §4.5.4: confirm survives the re-prompt
-            renderKeysUI();
+            if (on401) on401();
+            render();
             return null;
           }
           if (!r.ok) {
@@ -647,13 +807,22 @@
             if (onFail) onFail();
             return null;
           }
-          return ok(b);
+          return typeof ok === "function" ? ok(b) : null;
         });
       })
       .catch(function () {
         writeError(errId, "Request failed — network error.");
         if (onFail) onFail();
       });
+  }
+
+  /* Keys-tab wrapper (§4.5.4): a 401 restores the pending rotate/revoke
+   * confirm so the row still reads "Confirm rotate/revoke?" while the token
+   * form is up; the operator re-enters the token once, not the whole flow. */
+  function doWrite(url, body, errId, ok, onFail, confirm) {
+    return doWriteCore(url, { method: "POST", body: body }, errId, ok, onFail,
+      renderKeysUI,
+      confirm ? function () { pendingConfirm = confirm; } : null);
   }
 
   function writeError(errId, msg) {
@@ -727,7 +896,474 @@
       .catch(function () { drawerState = { key: k, error: true }; renderKeysUI(); });
   }
 
-  // ---------------- data + routing ----------------
+  // ---------------- Settings tab (V2.2 §6.5) ----------------
+  /* The Settings tab is NOT bucket-scoped and is NOT gated by the zero-
+   * traffic empty state — a fresh deployment with zero traffic must still be
+   * able to open Settings and flip controls (§5.3). Three independent
+   * fetches (/api/settings, /api/strategies, /api/tripwire) feed their own
+   * cards with their own skeleton/error/retry; one failing endpoint never
+   * blanks the tab (I-10). Values always render from the SERVER RESPONSE,
+   * never from the click (pessimistic writes, §5.2). */
+
+  var settingsState = null;       // {runtime:[], deploy:[], updatedAt:{}, banners:[tenants]}
+  var strategiesState = null;     // {data:[...]} | {error:true} | {unauthorized:true}
+  var tripwireState = null;       // {data:{...}} | {error:true}
+  var settingSaveState = {};      // name -> {saving, saved, error, value, source, locked, revertConfirm}
+  var saveNoteTimers = {};
+  var settingsConfirmTimer = null;
+
+  var RUNTIME_CONTROLS = [
+    ["l1_enabled", "L1 structural cleanup",
+     "Lossless deterministic cleanup of coding-agent context, runs before caching.",
+     "Saves tokens on structural noise; an entire-message pretty-printed JSON body gets whitespace-compacted (documented caveat)."],
+    ["tool_schema_minify", "Tool-schema minification",
+     "Minifies validated tool schemas before forwarding.",
+     "Lossless on validated schemas; unvalidatable schemas forward verbatim."],
+    ["tool_schema_cache_enabled", "Tool-schema cache",
+     "Reuses minified schemas across requests; subordinate to the master cache switch.",
+     "No wire-shape risk; disabling costs repeat tokens on schema-heavy traffic."],
+    ["tool_result_optimization", "Tool-result optimization",
+     "Filters/truncates completed tool results before upstream forwarding.",
+     "Output-side only; assistant envelopes stay byte-preserved."],
+    ["tool_result_compression_enabled", "Tool-result compression",
+     "Lossless compression for the tool-result class only.",
+     "Savings on verbose tool output; never touches assistant message envelopes."],
+    ["output_conciseness_enabled", "Output conciseness",
+     "Injects a conciseness instruction on long user prompts.",
+     "Benchmarked NET-NEGATIVE on short prompts; a per-request header override keeps precedence over this default."],
+    ["semantic_cache_enabled", "Semantic cache",
+     "Serves repeated-meaning prompts from the vector cache.",
+     "Gated: writable only while the AC-PC4/PC5 calibration gate is green."],
+  ];
+
+  function sourceChip(source) {
+    var cls = source === "runtime" ? "chip source-runtime" : "chip source-" + source;
+    return '<span class="' + cls + '">' + escapeHtml(source) + "</span>";
+  }
+
+  function saveNoteHtml(name) {
+    var st = settingSaveState[name];
+    if (!st) return "";
+    if (st.saving) return "Saving…";
+    if (st.error) return '<span class="inline-err">' + escapeHtml(st.error) + "</span>";
+    if (st.saved) return "Saved — effective immediately";
+    return "";
+  }
+
+  /* §6.5.2: one row per runtime item, in API order. The switch state is the
+   * item's `value`; the source chip is verbatim `source`; `updated_at` (when
+   * present) renders muted as "overridden YYYY-MM-DD". A server-supplied
+   * `locked_reason` renders the control disabled + `locked` badge + verbatim
+   * reason (I-6 — the UI never derives lock state). */
+  function runtimeRowHtml(item) {
+    var meta = null;
+    for (var i = 0; i < RUNTIME_CONTROLS.length; i++) {
+      if (RUNTIME_CONTROLS[i][0] === item.name) { meta = RUNTIME_CONTROLS[i]; break; }
+    }
+    var label = meta ? meta[1] : item.name;
+    var desc = meta ? meta[2] : "";
+    var impact = meta ? meta[3] : "";
+    var st = settingSaveState[item.name] || {};
+    var value = st.value !== undefined ? st.value : item.value;
+    var source = st.source !== undefined ? st.source : item.source;
+    var locked = st.locked !== undefined ? st.locked : (item.locked_reason ? item.locked_reason : null);
+    var disabled = st.saving || !!locked;
+    var errId = "seterr-" + item.name;
+    var html = '<div class="setting-row">' +
+      '<label class="switch">' +
+      '<input type="checkbox" role="switch" id="setsw-' + item.name + '"' +
+      (value ? " checked" : "") + (disabled ? " disabled" : "") +
+      ' aria-label="' + escapeHtml(label) + '">' +
+      '<span class="track"></span><span class="thumb"></span></label>' +
+      '<div class="setting-body">' +
+      '<div class="setting-label">' + escapeHtml(label) +
+      ' <span class="badge ' + (value ? "green" : "neutral") + '">' +
+      (value ? "on" : "off") + "</span>" + sourceChip(source) +
+      (locked ? '<span class="badge neutral">locked</span>' : "") +
+      (source === "runtime" && !locked
+        ? (st.revertConfirm
+          ? '<button id="setrevert-' + item.name + '" class="btn danger">Confirm revert?</button> ' +
+            '<button id="setrevertcancel-' + item.name + '" class="btn ghost">Cancel</button>'
+          : '<button id="setrevert-' + item.name + '" class="btn ghost">Revert</button>')
+        : "") +
+      "</div>" +
+      (desc ? '<div class="setting-desc">' + escapeHtml(desc) + "</div>" : "") +
+      (impact ? '<div class="setting-impact">' + escapeHtml(impact) + "</div>" : "") +
+      (locked
+        ? '<div class="setting-impact">' + escapeHtml(locked) +
+          ' <span class="muted-note">Gate status: see Pipeline health below.</span></div>'
+        : "") +
+      (st.revertConfirm
+        ? '<div class="form-hint">Reverting removes the runtime override; the setting returns to its env/default value.</div>'
+        : "") +
+      (item.updated_at
+        ? '<div class="muted-note">overridden ' + escDate(item.updated_at) + "</div>"
+        : "") +
+      '<div class="save-note" id="savenote-' + item.name + '">' + saveNoteHtml(item.name) + "</div>" +
+      '<span class="inline-err" id="' + errId + '"></span>' +
+      "</div></div>";
+    return html;
+  }
+
+  /* §6.5.3: deployment-only inventory. Values whose name contains
+   * token/secret/key render •••• regardless of the payload (component-level
+   * redaction, I-7). Booleans render on/off neutral badges; dicts/lists
+   * render monospace one-line JSON; strings/numbers monospace. */
+  function deployRowHtml(item) {
+    var name = String(item.name || "");
+    var value = item.value;
+    var secretish = /token|secret|key/i.test(name);
+    var rendered;
+    if (secretish) {
+      rendered = '<span class="key-dot">••••</span>' +
+        (name === "admin_token"
+          ? ' <span class="muted-note">managed at boot</span>' : "");
+    } else if (typeof value === "boolean") {
+      rendered = '<span class="badge neutral onoff">' + (value ? "on" : "off") + "</span>";
+    } else if (value === null || value === undefined) {
+      rendered = '<span class="muted-note">—</span>';
+    } else if (typeof value === "object") {
+      rendered = '<span class="mono value-scroll">' + escapeHtml(JSON.stringify(value)) + "</span>";
+    } else {
+      rendered = '<span class="mono">' + escapeHtml(String(value)) + "</span>";
+    }
+    return "<tr><td class=\"mono\">" + escapeHtml(name) + "</td><td>" + rendered + "</td></tr>";
+  }
+
+  function adminTokenCardHtml() {
+    if (tokenPrompt) {
+      return '<div class="card span12"><h3>Admin token</h3>' +
+        '<p class="form-hint">' + escapeHtml(tokenPrompt.msg ||
+          "The admin token is set at proxy boot — printed once to the startup log when not configured via env. Paste it here to change settings. It is kept in memory only and never stored.") + "</p>" +
+        '<div class="form-row"><input id="token-input" type="password" class="form-input" autocomplete="off" aria-label="Admin token"></div>' +
+        '<button id="token-save" class="btn">Save</button></div>';
+    }
+    if (adminToken) {
+      return '<div class="card span12"><h3>Admin token</h3>' +
+        '<p class="form-hint">Admin token entered for this session.</p>' +
+        '<button id="token-forget" class="btn ghost">Forget token</button></div>';
+    }
+    return '<div class="card span12"><h3>Admin token</h3>' +
+      '<p class="form-hint">The admin token is set at proxy boot — printed once to the startup log when not configured via env. Paste it here to change settings. It is kept in memory only and never stored.</p>' +
+      '<div class="form-row"><input id="token-input" type="password" class="form-input" autocomplete="off" aria-label="Admin token"></div>' +
+      '<button id="token-save" class="btn">Save</button></div>';
+  }
+
+  /* §6.5.4 Card A — strategy flags. The G1 banner is permanent (non-
+   * dismissible): the V2.1 lanes govern benchmark harnesses only until
+   * authenticated tenant/session scope is wired on the live request path. */
+  function strategiesCardHtml() {
+    var head = '<div class="card span6"><h3>Strategy flags</h3>' +
+      '<div class="banner warn">V2.1 strategy lanes (deferred_tools, tocp, idcp, atba, mtcc) ' +
+      "require authenticated tenant/session scope, which is not wired on the live request " +
+      "path today. These flags govern benchmark harnesses only — live traffic is unaffected.</div>";
+    if (!strategiesState) {
+      return head + '<div class="skel-row"></div></div>';
+    }
+    if (strategiesState.error) {
+      return head + '<div class="error-box">Couldn\'t load strategy flags.' +
+        '<button id="strategies-retry" type="button">Retry</button></div></div>';
+    }
+    if (strategiesState.unauthorized) {
+      return head +
+        '<p class="form-hint">Enter the admin token to view strategy flags.</p>' +
+        '<div class="form-row"><input id="token-input" type="password" class="form-input" autocomplete="off" aria-label="Admin token"></div>' +
+        '<button id="token-save" class="btn">Save</button></div>';
+    }
+    var rows = (strategiesState.data || []).map(function (s) {
+      return "<tr><td>" + escapeHtml(s.strategy) + "</td><td>" + escapeHtml(s.version) + "</td>" +
+        "<td>" + (s.flag_enabled
+          ? '<span class="badge green">on</span>'
+          : '<span class="badge neutral">off</span>') + "</td>" +
+        "<td>" + (s.default_off ? '<span class="badge neutral">default_off</span>' : "") +
+          (s.enforcement_enabled ? ' <span class="badge green">enforcing</span>' : "") + "</td>" +
+        '<td class="muted-note">' + escapeHtml(s.fallback) + "</td></tr>";
+    }).join("");
+    return head +
+      '<div class="table-scroll"><table><thead><tr><th>Strategy</th><th>Version</th><th>Flag</th>' +
+      "<th>Default-off</th><th>Fallback</th></tr></thead><tbody>" + rows +
+      "</tbody></table></div></div>";
+  }
+
+  /* §6.5.4 Card B — tripwire. All status strings render VERBATIM (I-4):
+   * unknown future statuses render as neutral badges with the raw text. The
+   * flagged count is the array length of `flagged` (sanctioned array math). */
+  function tripwireBadge(status) {
+    var cls = "neutral";
+    if (status === "green" || status === "clear") cls = "green";
+    else if (status === "red" || status === "alert") cls = "red";
+    else if (status === "pending" || status === "pending_calibration" ||
+             status === "pending_metric_ruling" ||
+             status === "insufficient_live_rows" ||
+             status === "semantic_threshold_miss") cls = "gold";
+    else if (status === "not_applicable_grounded_off") cls = "neutral";
+    return '<span class="badge ' + cls + '">' + escapeHtml(status) + "</span>";
+  }
+
+  function tripwireRuleRow(label, rule) {
+    var flagged = (rule.flagged || []).length;
+    return '<div class="subrow"><span>' + label + "</span>" +
+      tripwireBadge(rule.status) +
+      ' <span class="muted-note">' + flagged + " flagged rows</span></div>";
+  }
+
+  function tripwireCardHtml() {
+    var head = '<div class="card span6"><h3>Tripwire</h3>';
+    if (!tripwireState) {
+      return head + '<div class="skel-row"></div></div>';
+    }
+    if (tripwireState.error) {
+      return head + '<div class="error-box">Couldn\'t load tripwire status.' +
+        '<button id="tripwire-retry" type="button">Retry</button></div></div>';
+    }
+    var t = tripwireState.data || {};
+    var html = head +
+      '<div class="subrow"><span>Status</span>' + tripwireBadge(t.status || "unknown") + "</div>" +
+      (t.dose_drift ? tripwireRuleRow("Dose drift", t.dose_drift) : "") +
+      (t.missed_grounding ? tripwireRuleRow("Missed grounding", t.missed_grounding) : "");
+    if (t.rows_scanned !== null && t.rows_scanned !== undefined) {
+      html += '<div class="muted-note">' + t.rows_scanned + " rows scanned</div>";
+    }
+    if (t.calibration_artifact) {
+      html += '<div class="muted-note">calibration: <span class="mono">' +
+        escapeHtml(t.calibration_artifact) + "</span></div>";
+    }
+    return html + "</div>";
+  }
+
+  function renderSettingsUI() {
+    destroyCharts();
+    if (!settingsState) return;
+    var html = '<div id="token-slot">' + adminTokenCardHtml() + "</div>" +
+      hostedBannerHtml(settingsState.tenants || []) +
+      '<h2 class="section-title" tabindex="-1">Runtime controls</h2>' +
+      '<p class="section-note">Changes persist across restarts and take effect without one. ' +
+      "Per-request benchmark headers always win.</p>" +
+      '<div class="card span12">' +
+      (settingsState.runtime.length
+        ? settingsState.runtime.map(runtimeRowHtml).join("")
+        : '<div class="error-box">Settings endpoint returned no items — the proxy may be running a pre-V2.2 backend.</div>') +
+      "</div>" +
+      '<h2 class="section-title">Deployment configuration (read-only)</h2>' +
+      '<p class="section-note">Set via environment at boot. Changing these requires a redeploy; ' +
+      "they are never writable from this UI. Values are env/default-sourced.</p>" +
+      '<div class="card span12"><div class="table-scroll"><table><thead>' +
+      "<tr><th>Setting</th><th>Value</th></tr></thead><tbody>" +
+      settingsState.deploy.map(deployRowHtml).join("") +
+      "</tbody></table></div></div>" +
+      '<h2 class="section-title">Pipeline health</h2>' +
+      '<div class="grid">' +
+      strategiesCardHtml() +
+      tripwireCardHtml() +
+      "</div>";
+    content.innerHTML = html;
+    bindSettingsUI();
+    bindHostedBanner();
+  }
+
+  function applyItemToState(item) {
+    for (var i = 0; i < settingsState.runtime.length; i++) {
+      if (settingsState.runtime[i].name === item.name) {
+        settingsState.runtime[i] = item;
+        break;
+      }
+    }
+    var st = settingSaveState[item.name];
+    if (st) {
+      st.value = item.value;
+      st.source = item.source;
+      st.locked = item.locked_reason || null;
+    }
+  }
+
+  /* §5.2 settings write lifecycle: flip → disabled + Saving… → PUT → the
+   * RENDERED value comes from the server response (pessimistic). 400 reverts
+   * the switch to the prior value with the field-named message inline; 401
+   * prompts and replays (pending action preserved, I-8); 503 reverts with a
+   * Retry-scoped inline error. */
+  function flipSetting(name) {
+    var item = null;
+    for (var i = 0; i < settingsState.runtime.length; i++) {
+      if (settingsState.runtime[i].name === name) { item = settingsState.runtime[i]; break; }
+    }
+    if (!item) return;
+    var priorValue = !!item.value;
+    var nextValue = !priorValue;
+    var st = settingSaveState[name] = settingSaveState[name] || {};
+    st.saving = true;
+    st.error = null;
+    st.saved = false;
+    st.revertConfirm = false;
+    renderSettingsUI();
+    doWriteCore("/api/settings/" + name, { method: "PUT", body: { value: nextValue } },
+      "seterr-" + name,
+      function (b) {          // 200: render the server-returned effective item
+        st.saving = false;
+        st.saved = true;
+        applyItemToState(b);
+        renderSettingsUI();
+        if (saveNoteTimers[name]) clearTimeout(saveNoteTimers[name]);
+        saveNoteTimers[name] = setTimeout(function () {
+          if (settingSaveState[name]) settingSaveState[name].saved = false;
+          if (currentTab() === "settings" && settingsState) renderSettingsUI();
+        }, 2000);
+      },
+      function () {           // non-401 failure: revert to prior value
+        st.saving = false;
+        st.value = priorValue;
+        st.source = item.source;
+        st.locked = item.locked_reason || null;
+        renderSettingsUI();
+      },
+      renderSettingsUI,
+      function () {           // 401: pending PUT replays; keep prior value
+        st.saving = false;
+        st.value = priorValue;
+      });
+  }
+
+  function revertSetting(name) {
+    var st = settingSaveState[name] = settingSaveState[name] || {};
+    st.saving = true;
+    st.revertConfirm = false;
+    st.error = null;
+    renderSettingsUI();
+    doWriteCore("/api/settings/" + name, { method: "DELETE", body: {} },
+      "seterr-" + name,
+      function (b) {
+        st.saving = false;
+        st.saved = true;
+        applyItemToState(b);
+        renderSettingsUI();
+      },
+      function () {
+        st.saving = false;
+        renderSettingsUI();
+      },
+      renderSettingsUI,
+      function () {
+        st.saving = false;
+        st.revertConfirm = true;   // confirm state survives the prompt (I-8)
+      });
+  }
+
+  function armRevert(name) {
+    var st = settingSaveState[name] = settingSaveState[name] || {};
+    st.revertConfirm = true;
+    renderSettingsUI();
+    if (settingsConfirmTimer) clearTimeout(settingsConfirmTimer);
+    settingsConfirmTimer = setTimeout(function () {
+      settingsConfirmTimer = null;
+      if (currentTab() !== "settings") return;
+      if (settingSaveState[name] && settingSaveState[name].revertConfirm) {
+        settingSaveState[name].revertConfirm = false;
+        renderSettingsUI();
+      }
+    }, 5000);
+  }
+
+  function disarmRevert(name) {
+    if (settingsConfirmTimer) { clearTimeout(settingsConfirmTimer); settingsConfirmTimer = null; }
+    if (settingSaveState[name]) settingSaveState[name].revertConfirm = false;
+    renderSettingsUI();
+  }
+
+  function bindSettingsUI() {
+    settingsState.runtime.forEach(function (item) {
+      var st = settingSaveState[item.name] || {};
+      if (!st.locked && !item.locked_reason && !st.saving) {
+        bindClick("setsw-" + item.name, function () { flipSetting(item.name); });
+      }
+      if (st.revertConfirm) {
+        bindClick("setrevert-" + item.name, function () { revertSetting(item.name); });
+        bindClick("setrevertcancel-" + item.name, function () { disarmRevert(item.name); });
+      } else {
+        bindClick("setrevert-" + item.name, function () { armRevert(item.name); });
+      }
+    });
+    if (tokenPrompt || (strategiesState && strategiesState.unauthorized)) {
+      bindClick("token-save", saveAdminTokenSettings);
+    }
+    bindClick("token-forget", function () {
+      adminToken = null;   // clears the module variable only (§8.2.3)
+      renderSettingsUI();
+    });
+    bindClick("strategies-retry", function () { loadStrategiesCard(); });
+    bindClick("tripwire-retry", function () { loadTripwireCard(); });
+  }
+
+  /* Token save on the Settings tab: replay a pending write if one exists,
+   * otherwise re-fetch the strategies card (a 401 on /api/strategies renders
+   * a card-local prompt — §6.5.4 — that clears once the bearer works). */
+  function saveAdminTokenSettings() {
+    var input = document.getElementById("token-input");
+    var v = input ? input.value : "";
+    if (!v) return;
+    adminToken = v;        // §4.5.2: module variable only
+    var retry = tokenPrompt && tokenPrompt.retry;
+    var wasStrategies401 = !!(strategiesState && strategiesState.unauthorized);
+    tokenPrompt = null;
+    renderSettingsUI();
+    if (retry) retry();
+    if (wasStrategies401) loadStrategiesCard();
+  }
+
+  function loadSettingsTab() {
+    settingsState = null;
+    strategiesState = null;
+    tripwireState = null;
+    content.innerHTML = '<div class="skel-row"></div><div class="skel-row"></div><div class="skel-row short" style="width:60%"></div>';
+    fetchJson("/api/settings").then(function (body) {
+      var items = (body && body.settings) || [];
+      var runtime = items.filter(function (i) { return i.category === "runtime_configurable"; });
+      var deploy = items.filter(function (i) { return i.category === "deployment_only"; });
+      settingsState = { runtime: runtime, deploy: deploy, tenants: [] };
+      renderSettingsUI();
+      // the G2 banner needs the tenant plan; it degrades silently to absent
+      fetchJson("/api/tenants").then(function (ts) {
+        if (settingsState) {
+          settingsState.tenants = ts || [];
+          if (currentTab() === "settings") renderSettingsUI();
+        }
+      }).catch(function () {});
+      loadStrategiesCard();
+      loadTripwireCard();
+    }).catch(function () {
+      settingsState = { runtime: [], deploy: [], tenants: [] };
+      renderSettingsUI();
+    });
+  }
+
+  function loadStrategiesCard() {
+    /* /api/strategies is ADMIN_TOKEN-gated — the only READ that carries the
+     * bearer (PM §1.1); a 401 degrades just this card to a local prompt. */
+    var headers = {};
+    if (adminToken) headers["Authorization"] = "Bearer " + adminToken;
+    return fetch("/api/strategies", { headers: headers }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (b) {
+        if (!r.ok) {
+          var e = new Error(b && b.detail ? b.detail : "bad status " + r.status);
+          e.status = r.status;
+          throw e;
+        }
+        strategiesState = { data: (b && b.strategies) || [] };
+        if (currentTab() === "settings" && settingsState) renderSettingsUI();
+      });
+    }).catch(function (e) {
+      strategiesState = e && e.status === 401 ? { unauthorized: true } : { error: true };
+      if (currentTab() === "settings" && settingsState) renderSettingsUI();
+    });
+  }
+
+  function loadTripwireCard() {
+    fetchJson("/api/tripwire").then(function (body) {
+      tripwireState = { data: body || {} };
+      if (currentTab() === "settings" && settingsState) renderSettingsUI();
+    }).catch(function () {
+      tripwireState = { error: true };
+      if (currentTab() === "settings" && settingsState) renderSettingsUI();
+    });
+  }
 
   function fetchKpis() {
     var url = "/api/kpis?bucket=" + state.bucket;
@@ -741,31 +1377,64 @@
 
   function render(d) {
     destroyCharts();
-    var tab = location.hash.replace("#", "") || "overview";
+    var tab = currentTab();
     // C6 (§4.1): the keys tab's states are its own (skel/error/"No proxy keys
     // yet") — a zero-traffic KPI window must not hijack it with emptyState().
     if (tab === "keys") { loadKeys(); return; }
     if (!d.overview || !d.overview.requests) { emptyState(); return; }
     if (tab === "overview") renderOverview(d);
     else if (tab === "traffic") renderTraffic(d);
-    else if (tab === "providers") renderProviders(d);
-    else if (tab === "keys") loadKeys();
     else renderOverview(d);
   }
 
+  /* V2.2 routing (§4.1, §5.3): hash change re-renders the active nav anchor,
+   * hides the bucket selector on the Settings tab (its data is not bucket-
+   * scoped — a dead control is a disconnected-toggle violation), and moves
+   * focus into `#content` so screen-reader users land on the new content
+   * (I-9 §7.3). Unknown hashes fall back to overview. */
   function load() {
+    var tab = currentTab();
+    var selEl = document.getElementById("bucket-sel");
+    if (selEl) selEl.style.display = (tab === "settings") ? "none" : "";
+    if (tab === "settings") { loadSettingsTab(); return; }
+    if (tab === "providers") { loadProvidersTab(); return; }
     content.innerHTML = '<div class="skel-row"></div><div class="skel-row"></div><div class="skel-row short" style="width:60%"></div>';
     fetchKpis().then(render).catch(showError);
   }
 
-  window.addEventListener("hashchange", load);
+  function focusContent(e) {
+    if (!e) return;
+    var el = e.querySelector ? e.querySelector("h2, h3") : null;
+    if (el) {
+      if (!el.getAttribute || !el.getAttribute("tabindex")) el.tabIndex = -1;
+      if (el.focus) el.focus();
+    } else if (e.focus) e.focus();
+  }
+
+  window.addEventListener("hashchange", function () {
+    var tab = currentTab();
+    var valid = { overview: 1, traffic: 1, providers: 1, keys: 1, settings: 1 };
+    var navLinks = document.querySelectorAll ? document.querySelectorAll("nav a") : [];
+    for (var i = 0; i < navLinks.length; i++) {
+      var a = navLinks[i];
+      var wanted = (valid[tab] ? tab : "overview");
+      if (a.classList && a.getAttribute && a.getAttribute("data-tab")) {
+        if (a.getAttribute("data-tab") === wanted) a.classList.add("active");
+        else a.classList.remove("active");
+      }
+    }
+    load();
+    focusContent(content);
+  });
 
   // bucket selector (client-side control, not aggregation)
   var sel = document.createElement("select");
+  sel.id = "bucket-sel";
+  sel.setAttribute("aria-label", "KPI time bucket");
   sel.innerHTML = '<option value="minute">Minute</option><option value="hour">Hour</option><option value="day" selected>Day</option>';
-  sel.style.cssText = "background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:.3rem";
   sel.addEventListener("change", function () { state.bucket = sel.value; load(); });
-  document.querySelector("nav").insertBefore(sel, document.getElementById("prov-status"));
+  var bucketSlot = document.getElementById("bucket-slot");
+  if (bucketSlot && bucketSlot.appendChild) bucketSlot.appendChild(sel);
 
   load();
 })();

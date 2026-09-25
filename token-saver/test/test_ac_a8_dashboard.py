@@ -93,7 +93,13 @@ def _allowed_money(fixture: dict) -> set[str]:
 def test_m1_tab_renders_expected_surface(tmp_path, tab):
     out = _render(tmp_path, _fixture(), tab)
     assert out["html"].strip(), f"{tab} rendered an empty surface"
-    assert out["url"].startswith("/api/kpis?"), out["url"]
+    if tab != "providers":
+        # V2.2 §5.3: the providers tab now fetches /api/providers first and
+        # /api/kpis second (D-2 registry join); the KPI-first tabs keep the
+        # single-fetch contract.
+        assert out["url"].startswith("/api/kpis?"), out["url"]
+    else:
+        assert out["url"].startswith("/api/providers"), out["url"]
 
 
 def test_m1_four_tabs_are_distinct_and_complete(tmp_path):
@@ -108,6 +114,10 @@ def test_m1_four_tabs_are_distinct_and_complete(tmp_path):
     assert "Recent buckets" in htmls["overview"]
     assert "Latency p50" in htmls["traffic"] and "Latency p99" in htmls["traffic"]
     assert "Requests per bucket" in htmls["traffic"]
+    # V2.2 §6.3: with no registry fixture the providers tab degrades to KPI
+    # cards carrying the registry-note, rather than the pre-V2.2 verbatim
+    # empty state (D-2 changed this tab's fetch contract).
+    assert "registry facts unavailable" in htmls["providers"]
     assert "openrouter" in htmls["providers"] and "anthropic" in htmls["providers"]
     # C6: the Phase C placeholder is gone (spec gate 5). The keys tab now
     # renders the real management surface; with this KPI-only fixture it
@@ -154,6 +164,11 @@ def _aggregation_scan(src: str) -> str | None:
     if ".reduce(" in src:
         return "uses .reduce("
     for i, line in enumerate(src.splitlines(), 1):
+        # html += string-concatenation is markup assembly, not arithmetic on
+        # a ledger field — the FIELD_RE catches the field NAME inside the
+        # string literal, which is what a naive line-scan can't tell apart.
+        if "html +=" in line:
+            continue
         if ACCUMULATE_LINE.search(line) and FIELD_RE.search(line):
             return f"line {i} accumulates a contract field: {line.strip()}"
     m = ADDITIVE_DOUBLE_COUNT.search(src)
@@ -294,12 +309,16 @@ def test_m9_only_fetch_is_api_kpis(tmp_path):
     fx = _fixture()
     # C6: the keys tab now issues its own management fetches (/api/tenants,
     # /api/keys, tenant/key-scoped /api/kpis) by design — its single-source
-    # 1:1 contract is gated in test_keys_tab_render.py. The read-only tabs
-    # remain strictly one-fetch.
-    for tab in ("overview", "traffic", "providers"):
+    # 1:1 contract is gated in test_keys_tab_render.py. V2.2 §5.3: the
+    # providers tab now fetches /api/providers first, then /api/kpis
+    # (registry + KPIs are two independent reads — the empty window must not
+    # blank the tab). The KPI-first tabs remain strictly one-fetch.
+    for tab in ("overview", "traffic"):
         out = _render(tmp_path, fx, tab)
         assert out["url"] == "/api/kpis?bucket=day", out["url"]
         assert len(out["urls"]) == 1, f"{tab} issued {len(out['urls'])} fetches"
+    out = _render(tmp_path, fx, "providers")
+    assert out["urls"] == ["/api/providers", "/api/kpis?bucket=day"], out["urls"]
 
 
 # ------------------------------------------------- 10: states
@@ -307,11 +326,18 @@ def test_m9_only_fetch_is_api_kpis(tmp_path):
 def test_m10_zero_requests_renders_empty_state_no_charts(tmp_path):
     fx = _fixture()
     fx["overview"]["requests"] = 0
-    for tab in ("overview", "traffic", "providers"):
+    for tab in ("overview", "traffic"):
         out = _render(tmp_path, fx, tab)
         assert "No traffic yet" in out["html"]
         assert "Send a prompt through the proxy" in out["html"]
         assert out["charts"] == [], f"{tab} padded zeros under empty state"
+    # V2.2 §5.3/I-10: the providers tab renders with a zero-traffic KPI window
+    # — registry facts degrade to the card-level note and the provider cards
+    # keep their KPI-zero guard ("No provider traffic yet." requires NO
+    # by_provider rows at all, which is a different state than requests==0).
+    out = _render(tmp_path, fx, "providers")
+    assert "registry facts unavailable" in out["html"]
+    assert "openrouter" in out["html"]
 
 
 def test_m10_fetch_failure_shows_error_and_retry_refires(tmp_path):

@@ -40,7 +40,9 @@ def test_standard_ci_bootstraps_canonical_schema_and_migration_inventory_before_
     assert f"migrations/{CANONICALIZED_MIGRATION}" not in job
     assert "chk_cache_status" in job
     assert "semantic_threshold_miss" in job
-    assert job.count("if executed < 937 or totals['skipped']:") == 2
+    assert job.count("if executed < 953 or totals['skipped']:") == 2
+    # the floor must match the committed suite's non-skipped test count
+    # exactly (V2.2 dashboard render gates added 16 to the 937 floor).
 
     bootstrap_offset = job.index("- name: Bootstrap fresh Postgres schema and migrations")
     pytest_offset = job.index("python -m pytest -q")
