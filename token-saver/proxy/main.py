@@ -44,6 +44,7 @@ from .dashboard import _render_stats_html
 from .dashboard_v2 import render_shell
 from .kpis import kpis_endpoint
 from .settings import (
+    InvalidSettingValueError,
     NotRuntimeConfigurableError,
     RUNTIME_ALLOWED,
     SettingsStore,
@@ -893,10 +894,14 @@ async def chat_completions(request: Request):
     )
     tools = body.get("tools")
     # Schema-wire minification for the ATTRIBUTION path (schema_cache_hit /
-    # schema_bytes_saved): gated by the runtime snapshot so a dashboard flip
-    # changes attribution in the same request it changes the wire shape.
+    # schema_bytes_saved): gated by BOTH the deployment-only T1 switch
+    # (TOOL_SCHEMA_COMPRESSION_ENABLED, unchanged contract) and the runtime
+    # snapshot (PM §3.2 source order), so a dashboard flip changes
+    # attribution in the same request it changes the wire shape and an
+    # env-disabled deployment can never be re-enabled from the dashboard.
     tool_schema_minified = (
-        runtime_flags["tool_schema_minify"]
+        s.tool_schema_compression_enabled
+        and runtime_flags["tool_schema_minify"]
         and is_tool_schema_compressible(tools)
     )
     tool_schema_saved = 0
@@ -1873,6 +1878,10 @@ async def api_settings_put(name: str, request: Request):
         raise HTTPException(status_code=400, detail=f"name: {exc}") from exc
     except NotRuntimeConfigurableError as exc:
         raise HTTPException(status_code=400, detail=f"name: {exc}") from exc
+    except InvalidSettingValueError as exc:
+        # client-side validation (non-boolean value, blank updated_by) is a
+        # 400, NOT a store outage — it must never reach the 503 envelope.
+        raise HTTPException(status_code=400, detail=f"value: {exc}") from exc
     except Exception as exc:  # noqa: BLE001 — store outage is 503, not a crash
         return JSONResponse(
             {"error": "settings store unavailable", "detail": str(exc)},

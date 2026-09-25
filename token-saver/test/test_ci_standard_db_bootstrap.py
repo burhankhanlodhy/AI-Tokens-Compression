@@ -12,6 +12,7 @@ MIGRATIONS = (
     "20260922_v121_tool_schema_ledger.sql",
     "20260922_t1_tool_compression_ledger.sql",
     "20260924_v21_session_stores.sql",
+    "20260925_v22_runtime_settings.sql",
 )
 
 # The canonical fresh schema already has the widened cache-status constraint.
@@ -39,7 +40,7 @@ def test_standard_ci_bootstraps_canonical_schema_and_migration_inventory_before_
     assert f"migrations/{CANONICALIZED_MIGRATION}" not in job
     assert "chk_cache_status" in job
     assert "semantic_threshold_miss" in job
-    assert job.count("if executed < 904 or totals['skipped']:") == 2
+    assert job.count("if executed < 937 or totals['skipped']:") == 2
 
     bootstrap_offset = job.index("- name: Bootstrap fresh Postgres schema and migrations")
     pytest_offset = job.index("python -m pytest -q")

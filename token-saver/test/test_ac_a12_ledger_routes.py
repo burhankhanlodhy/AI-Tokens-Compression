@@ -24,6 +24,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from pg_test_support import drop_database, ledger_count, make_database, unique_db_name  # noqa: E402
 from proxy.config import get_settings  # noqa: E402
 
+# CI bootstraps every committed migration onto the standard-lane database
+# before pytest runs; the route fixture mirrors that so /api/settings sees
+# the app_settings table exactly as it exists in the CI lane.
+V22_SETTINGS_MIGRATION = (
+    Path(__file__).resolve().parents[2]
+    / "token-saver/migrations/20260925_v22_runtime_settings.sql"
+)
+
 
 DB_NAME = unique_db_name("ts_ac_a12_routes")
 NO_LOG_ROUTES = {
@@ -38,6 +46,15 @@ NO_LOG_ROUTES = {
     # Admin-only strategy status is a read-only deployment audit view, not an
     # inference request or savings event; it has no financial ledger row.
     ("GET", "/api/strategies"),
+    # V2.2 configuration/registry reads (PM §5.2/§5.3): settings surface and
+    # provider registry are operator configuration reads — never inference
+    # requests or savings events, so they must not create ledger facts.
+    # PUT/DELETE settings writes persist into app_settings (own migration),
+    # not the savings ledger, for the same reason.
+    ("GET", "/api/settings"),
+    ("PUT", "/api/settings/{name}"),
+    ("DELETE", "/api/settings/{name}"),
+    ("GET", "/api/providers"),
 
     # C-2 management reads/writes operate on api_keys metadata; they are never
     # proxy inference requests and must not create financial ledger facts.
@@ -100,6 +117,8 @@ def _request(client: TestClient, method: str, path: str):
 @pytest.fixture()
 def route_env(monkeypatch):
     dsn = make_database(DB_NAME)
+    with psycopg.connect(dsn, autocommit=True) as pg:
+        pg.execute(V22_SETTINGS_MIGRATION.read_text(encoding="utf-8"))
     monkeypatch.setenv("TOKEN_SAVER_PG_DSN", dsn)
     monkeypatch.setenv("DATABASE_PATH", tempfile.mktemp(suffix=".db"))
     monkeypatch.delenv("PROVIDER_ROUTING", raising=False)

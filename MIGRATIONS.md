@@ -51,9 +51,26 @@ configures it in `.env`) and are run from `token-saver/`.
    Idempotent (`CREATE TABLE IF NOT EXISTS`) for fresh-Compose initdb and
    existing volumes alike; mounted as
    `/docker-entrypoint-initdb.d/48-v21-session-stores.sql`.
+8. **`migrations/20260925_v22_runtime_settings.sql`** — V2.2 runtime
+   settings persistence (task t_d86fe22b, PM spec §3.2): the
+   `app_settings` override table — `name TEXT PRIMARY KEY`,
+   `value BOOLEAN NOT NULL`, `updated_at TIMESTAMPTZ NOT NULL`, and
+   `updated_by TEXT NOT NULL` (CHECK non-empty; records "admin" or the
+   proxy-key id, never a token fragment). Exactly one allowlisted
+   deployment switch per row; the writer allowlist lives in
+   `proxy/settings.py` (`RUNTIME_ALLOWED`, the seven PM §3.1 controls)
+   and is enforced server-side — deployment-only, secret, numeric, and
+   infrastructure settings are structurally unwritable at runtime.
+   Precedence: runtime override -> environment -> built-in default;
+   deleting a row reverts immediately. No `requests`/ledger columns and
+   no tenant scoping change (overrides are per-deployment operator
+   state). Idempotent (`CREATE TABLE IF NOT EXISTS`) for the fresh
+   Compose initdb mount (`50-v22-runtime-settings.sql`) and re-runs on
+   existing volumes alike. Rollback: `DROP TABLE app_settings` — the
+   proxy degrades to env/default precedence and keeps serving.
 
 Migrations 1–4 fail loudly rather than silently repairing a partially-applied
-state. Migrations 5, 6, and 7 are idempotent to tolerate both canonical fresh
+state. Migrations 5, 6, 7, and 8 are idempotent to tolerate both canonical fresh
 schemas and re-runs against existing volumes. Apply each with:
 
 ```bash
@@ -155,7 +172,19 @@ psql "$TOKEN_SAVER_PG_DSN" -Atc \
      FROM requests;"
 ```
 
-## Known traps
+- **`chk_app_settings_updated_by` is part of the V2.2 contract.** The
+  `app_settings.updated_by` audit column must never hold an empty string;
+  the CHECK (migration 8) rejects it, and the settings writer normalizes
+  to a non-empty identity ("admin" or the proxy-key id) before INSERT.
+
+```bash
+psql "$TOKEN_SAVER_PG_DSN" -Atc \
+  "SELECT column_name, data_type, is_nullable FROM information_schema.columns
+    WHERE table_name = 'app_settings' ORDER BY ordinal_position;"
+# Expected (V2.2 runtime settings, migration 8): name/text/NO,
+# value/boolean/NO, updated_at/timestamp with time zone/NO,
+# updated_by/text/NO.
+```
 
 - **initdb scripts run only when the data directory is empty.** The Compose
   initdb bridge verifies the canonical schema on a fresh volume but cannot

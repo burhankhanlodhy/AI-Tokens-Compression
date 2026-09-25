@@ -94,14 +94,14 @@ jobs:
                     for key in ('tests', 'failures', 'errors', 'skipped')}
           executed = totals['tests'] - totals['skipped']
           print(f"standard suite: executed={executed} passed={totals['tests'] - totals['failures'] - totals['errors'] - totals['skipped']} skipped={totals['skipped']} failures={totals['failures']} errors={totals['errors']}")
-          # Standard/reverse lanes collect at least 904 tests: the 42
+          # Standard/reverse lanes collect at least 937 tests: the 42
           # pgvector-only tests (test_pc_pgvector_gates.py) and the
           # response-store lane gates (test_pc2_response_store_gates.py)
           # are excluded on purpose -- both --ignore flags keep those
           # lanes reserved for pc1-pgvector / the response-store lane.
           # Keep this ratchet synchronized with any test additions/removals.
-          if executed < 904 or totals['skipped']:
-              raise SystemExit('executed test floor violated: expected at least 904 non-skipped tests')
+          if executed < 937 or totals['skipped']:
+              raise SystemExit('executed test floor violated: expected at least 937 non-skipped tests')
           PY
 
       - name: Run reverse-order suite
@@ -123,7 +123,7 @@ jobs:
                     for key in ('tests', 'failures', 'errors', 'skipped')}
           executed = totals['tests'] - totals['skipped']
           print(f"reverse suite: executed={executed} passed={totals['tests'] - totals['failures'] - totals['errors'] - totals['skipped']} skipped={totals['skipped']} failures={totals['failures']} errors={totals['errors']}")
-          # Standard/reverse lanes collect at least 904 tests: the 42
+          # Standard/reverse lanes collect at least 937 tests: the 42
           # pgvector-only tests (test_pc_pgvector_gates.py) and the
           # response-store lane gates (test_pc2_response_store_gates.py)
           # are excluded on purpose -- the explicit path list above is
@@ -131,8 +131,8 @@ jobs:
           # paths), keeping those lanes reserved for pc1-pgvector /
           # the response-store lane.
           # Keep this ratchet synchronized with any test additions/removals.
-          if executed < 904 or totals['skipped']:
-              raise SystemExit('executed test floor violated: expected at least 904 non-skipped tests')
+          if executed < 937 or totals['skipped']:
+              raise SystemExit('executed test floor violated: expected at least 937 non-skipped tests')
           PY
 
   c5-docker-acceptance:

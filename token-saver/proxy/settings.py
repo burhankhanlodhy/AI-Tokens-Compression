@@ -319,12 +319,23 @@ class SettingsStore:
           - ``default`` — the built-in config default applies
         """
         name = _validate_name(name)
-        settings = get_settings()
-        default = bool(getattr(settings, name))
         env_raw = _runtime_env(name)
         env_value: bool | None = None
         if env_raw is not None:
             env_value = _parse_bool(env_raw, name)
+        # The settings model can fail to construct when a post-boot env
+        # mutation injects an unparseable literal (pydantic-settings rejects
+        # at boot; only tests/shells can create this state afterwards). The
+        # settings layer must degrade loudly to its own parsing, never raise
+        # out of effective() — a bad env literal must not take down reads.
+        try:
+            default = bool(getattr(get_settings(), name))
+        except Exception as exc:  # noqa: BLE001 — degrade with a loud log
+            logger.error(
+                "settings model unavailable for %s (%s); using env parse/false",
+                name, exc,
+            )
+            default = False
         overrides = self.load_overrides()
         if name in overrides:
             value, updated_at, updated_by = overrides[name]
