@@ -1,0 +1,82 @@
+{
+  "_meta": {
+    "suite": "release-a-fixed-task-suite",
+    "version": 1,
+    "base_commit": "0c7a595b7a4a555209ade8e62dbf2c7a43c1d4e8",
+    "workdir": "token-saver",
+    "purpose": "Fixed agent task set for the Phase 2 live A/B test (docs/v2.3-savings-validation-plan.md §3.2, §6). Every arm runs every task >= 5 times from a fresh worktree at base_commit with setup applied.",
+    "completion_rule": "A run counts as completed only if (a) every command in `check` exits 0 and (b) the regression guard `guard` also exits 0. The agent never sees `check`, `hidden_test` or `reference_fix`.",
+    "limits": "Per run: at most 40 agent turns and 20 minutes wall time; exceeding either = not completed (the cost is still counted)."
+  },
+  "guard": [".venv/bin/python -m pytest -q test/test_tocp.py test/test_l1_clean.py test/test_tool_protocol_routing.py test/test_pricing.py"],
+  "tasks": [
+    {
+      "id": "fix-01-l1-null-dropped",
+      "kind": "bugfix",
+      "prompt": "In the token-saver proxy, RAG JSON passed through the L1 cleaner is losing fields whose value is null (for example {\"text\": \"hi\", \"author\": null} comes out without `author`). Null is a real value and must be kept; only empty strings, empty arrays and empty objects may be dropped. Find and fix the cause. Do not change the tests.",
+      "setup": [
+        {"file": "proxy/l1_clean.py",
+         "old": "    return v == \"\" or v == [] or v == {}",
+         "new": "    return v is None or v == \"\" or v == [] or v == {}"}
+      ],
+      "reference_fix": "revert_setup",
+      "check": [".venv/bin/python -m pytest -q test/test_l1_clean.py"]
+    },
+    {
+      "id": "fix-02-empty-tool-calls-not-protocol",
+      "kind": "bugfix",
+      "prompt": "In the token-saver proxy, an assistant message with an empty `tool_calls: []` list is no longer being treated as tool-protocol state, so it can be routed into lossy transforms. The intended rule: any message whose role is `tool`, or that has a `tool_calls` key at all (even empty or malformed), is protocol state. Find and fix the cause. Do not change the tests.",
+      "setup": [
+        {"file": "proxy/tool_protocol.py",
+         "old": "    return message.get(\"role\") == \"tool\" or \"tool_calls\" in message",
+         "new": "    return message.get(\"role\") == \"tool\" or bool(message.get(\"tool_calls\"))"}
+      ],
+      "reference_fix": "revert_setup",
+      "check": [".venv/bin/python -m pytest -q test/test_suite_hidden_fix02.py test/test_tool_protocol_routing.py"],
+      "hidden_test": {
+        "path": "test/test_suite_hidden_fix02.py",
+        "content": "import sys\nfrom pathlib import Path\nsys.path.insert(0, str(Path(__file__).resolve().parent.parent))\nfrom proxy.tool_protocol import is_tool_protocol_message, has_tool_calling_state\n\n\ndef test_empty_tool_calls_is_protocol():\n    assert is_tool_protocol_message({\"role\": \"assistant\", \"tool_calls\": []})\n    assert is_tool_protocol_message({\"role\": \"assistant\", \"tool_calls\": None})\n\n\ndef test_plain_assistant_is_not_protocol():\n    assert not is_tool_protocol_message({\"role\": \"assistant\", \"content\": \"hi\"})\n\n\ndef test_body_with_empty_tool_calls_bypasses():\n    body = {\"messages\": [{\"role\": \"user\", \"content\": \"x\"}, {\"role\": \"assistant\", \"tool_calls\": []}]}\n    assert has_tool_calling_state(body)\n"
+      }
+    },
+    {
+      "id": "fix-03-cost-rates-swapped",
+      "kind": "bugfix",
+      "prompt": "The token-saver proxy's cost estimates look wrong: output-heavy requests come out far too cheap and input-heavy ones too expensive. Prices in pricing.json are [input_per_1M, output_per_1M]. Find and fix the cause in the cost calculation. Do not change the tests or pricing.json.",
+      "setup": [
+        {"file": "proxy/config.py",
+         "old": "    return (input_tokens * in_price + output_tokens * out_price) / 1_000_000",
+         "new": "    return (input_tokens * out_price + output_tokens * in_price) / 1_000_000"}
+      ],
+      "reference_fix": "revert_setup",
+      "check": [".venv/bin/python -m pytest -q test/test_pricing.py"]
+    },
+    {
+      "id": "fix-04-tocp-range-off-by-one",
+      "kind": "bugfix",
+      "prompt": "In the token-saver proxy, fetching a character range from a stored tool-result continuation (TOCP) returns one character too few: asking for [2, 4) of \"abcdef\" gives \"c\" instead of \"cd\". Ranges are half-open. Find and fix the cause. Do not change the tests.",
+      "setup": [
+        {"file": "proxy/tocp.py",
+         "old": "        return entry.content[start:end]",
+         "new": "        return entry.content[start:end - 1]"}
+      ],
+      "reference_fix": "revert_setup",
+      "check": [".venv/bin/python -m pytest -q test/test_tocp.py"]
+    },
+    {
+      "id": "feat-05-tocp-delete",
+      "kind": "feature",
+      "prompt": "Add a `delete(continuation_id, tenant_id, session_id) -> bool` method to `ContinuationStore` in token-saver/proxy/tocp.py. It removes the entry and returns True only when the entry exists, is unexpired, and belongs to that tenant and session; otherwise it returns False and leaves the store unchanged (never raise for a missing or foreign id). It must be thread-safe like the other methods. Add tests for it in test/test_tocp.py.",
+      "setup": [],
+      "reference_fix": [
+        {"file": "proxy/tocp.py",
+         "old": "    def get_segment(self, continuation_id: str, tenant_id: str, session_id: str,",
+         "new": "    def delete(self, continuation_id: str, tenant_id: str, session_id: str) -> bool:\n        try:\n            self._authorized(continuation_id, tenant_id, session_id)\n        except ContinuationNotFound:\n            return False\n        with self._lock:\n            return self._entries.pop(continuation_id, None) is not None\n\n    def get_segment(self, continuation_id: str, tenant_id: str, session_id: str,"}
+      ],
+      "check": [".venv/bin/python -m pytest -q test/test_suite_hidden_feat05.py"],
+      "hidden_test": {
+        "path": "test/test_suite_hidden_feat05.py",
+        "content": "import sys\nfrom pathlib import Path\nimport pytest\nsys.path.insert(0, str(Path(__file__).resolve().parent.parent))\nfrom proxy.tocp import ContinuationStore, ContinuationNotFound\n\n\ndef test_delete_owned_entry():\n    s = ContinuationStore(ttl_seconds=30, max_entries=4, segment_chars=4)\n    r = s.save(\"t\", \"s\", \"abcdefgh\")\n    assert s.delete(r.continuation_id, \"t\", \"s\") is True\n    assert s.size == 0\n    with pytest.raises(ContinuationNotFound):\n        s.get_segment(r.continuation_id, \"t\", \"s\", 0)\n    assert s.delete(r.continuation_id, \"t\", \"s\") is False\n\n\ndef test_delete_foreign_scope_is_refused():\n    s = ContinuationStore(ttl_seconds=30, max_entries=4, segment_chars=4)\n    r = s.save(\"t\", \"s\", \"abcdefgh\")\n    assert s.delete(r.continuation_id, \"other\", \"s\") is False\n    assert s.delete(r.continuation_id, \"t\", \"other\") is False\n    assert s.get_segment(r.continuation_id, \"t\", \"s\", 0) == \"abcd\"\n\n\ndef test_delete_unknown_and_expired():\n    now = [0.0]\n    s = ContinuationStore(ttl_seconds=10, max_entries=4, segment_chars=4, clock=lambda: now[0])\n    assert s.delete(\"nope\", \"t\", \"s\") is False\n    r = s.save(\"t\", \"s\", \"abcd\")\n    now[0] = 11.0\n    assert s.delete(r.continuation_id, \"t\", \"s\") is False\n"
+      }
+    }
+  ]
+}
