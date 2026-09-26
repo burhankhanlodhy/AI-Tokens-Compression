@@ -1,12 +1,13 @@
 """Tenant/session-scoped, TTL-bounded in-process TOCP continuation store.
 
 The API accepts only trusted scope values supplied by the authenticated caller.
-IDs are random capabilities but scope checks remain mandatory.
+IDs are opaque deterministic hashes of trusted scope plus content; scope checks
+remain mandatory and prevent cross-tenant/session retrieval.
 """
 from __future__ import annotations
 
+import hashlib
 import math
-import secrets
 import threading
 import time
 from collections import OrderedDict
@@ -76,6 +77,16 @@ class ContinuationStore:
         with self._lock:
             return self._purge_expired()
 
+    @staticmethod
+    def _continuation_id(tenant_id: str, session_id: str, content: str) -> str:
+        """Return a stable, length-delimited ID for one scoped output body."""
+        digest = hashlib.sha256()
+        for value in (tenant_id, session_id, content):
+            encoded = value.encode("utf-8")
+            digest.update(len(encoded).to_bytes(8, "big"))
+            digest.update(encoded)
+        return digest.hexdigest()
+
     def save(self, tenant_id: str, session_id: str, content: str,
              metadata: Mapping[str, object] | None = None) -> ContinuationPreview:
         if not tenant_id or not session_id or not isinstance(content, str):
@@ -84,13 +95,18 @@ class ContinuationStore:
             raise StoreCapacityExceeded("continuation exceeds store capacity")
         with self._lock:
             self._purge_expired()
+            continuation_id = self._continuation_id(tenant_id, session_id, content)
+            existing = self._entries.get(continuation_id)
             total_chars = sum(len(entry.content) for entry in self._entries.values())
-            if (len(self._entries) >= self.max_entries
-                    or total_chars + len(content) > self.max_total_chars):
+            if existing is None and (
+                len(self._entries) >= self.max_entries
+                or total_chars + len(content) > self.max_total_chars
+            ):
                 raise StoreCapacityExceeded(
                     "continuation store full; existing unexpired entries were retained"
                 )
-            continuation_id = secrets.token_urlsafe(24)
+            # Identical scoped output is the same continuation: refresh it
+            # rather than consuming another entry or failing at capacity.
             self._entries[continuation_id] = _Entry(
                 tenant_id, session_id, content, self._clock() + self.ttl_seconds,
                 dict(metadata or {}),

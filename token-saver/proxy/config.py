@@ -11,6 +11,7 @@ import logging
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Mapping
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -349,20 +350,41 @@ def get_settings() -> Settings:
     return Settings()
 
 
+def _price_for_model(table: Mapping[str, tuple[float, float]], model: str) -> tuple[float, float] | None:
+    """Resolve a provider-returned model spelling without guessing ambiguity.
+
+    Providers commonly return ``openrouter/vendor/model`` while pricing files
+    use ``vendor/model``.  A bare model name is accepted only when it matches
+    exactly one vendor-qualified pricing key, so adding another vendor can
+    never silently choose the wrong rate.
+    """
+    candidates = [model]
+    if model.startswith("openrouter/"):
+        candidates.append(model.removeprefix("openrouter/"))
+    for candidate in candidates:
+        if candidate in table:
+            return table[candidate]
+
+    bare_name = candidates[-1].rsplit("/", 1)[-1]
+    matches = [price for key, price in table.items() if key.rsplit("/", 1)[-1] == bare_name]
+    return matches[0] if len(matches) == 1 else None
+
+
 def estimate_cost(model: str, input_tokens: int, output_tokens: float) -> float:
     """Estimated USD cost for a request.
 
-    Prices come from pricing.json (startup-loaded). A routed model with no
-    file entry falls back to the hardcoded table / defaults AND logs a
-    one-time warning per model so stale-rate drift is visible, not silent.
+    Prices come from pricing.json (startup-loaded). Provider prefixes and an
+    unambiguous bare model alias resolve to the same configured rate. A model
+    with no file entry falls back to the hardcoded table / defaults AND logs a
+    one-time warning so stale-rate drift is visible, not silent.
     """
     table = load_pricing()
-    prices = table.get(model)
+    prices = _price_for_model(table, model)
     if prices is None:
         s = get_settings()
-        prices = s.model_prices_per_m.get(
-            model, (s.default_input_price_per_m, s.default_output_price_per_m)
-        )
+        prices = _price_for_model(s.model_prices_per_m, model)
+        if prices is None:
+            prices = (s.default_input_price_per_m, s.default_output_price_per_m)
         if model not in _pricing_warned:
             _pricing_warned.add(model)
             in_file = bool(table)

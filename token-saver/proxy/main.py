@@ -893,6 +893,11 @@ async def chat_completions(request: Request):
         if runtime_flags["tool_result_compression_enabled"] else 0
     )
     tools = body.get("tools")
+    # V2.3: response caches are bypassed when a request carries tool schemas.
+    # An exact/semantic replay cannot safely stand in for a tool-capable turn:
+    # tool availability and execution state are part of the agent protocol.
+    # Schema minification's in-process transform cache remains independent.
+    response_cache_eligible = not (isinstance(tools, list) and tools)
     # Schema-wire minification for the ATTRIBUTION path (schema_cache_hit /
     # schema_bytes_saved): gated by BOTH the deployment-only T1 switch
     # (TOOL_SCHEMA_COMPRESSION_ENABLED, unchanged contract) and the runtime
@@ -920,7 +925,7 @@ async def chat_completions(request: Request):
     provider = _provider_for_model(model)
     cache_status = "miss"
     try:
-        if s.cache_enabled and s.provider_routing and provider:
+        if response_cache_eligible and s.cache_enabled and s.provider_routing and provider:
             if caching.lookup(provider, model, body):
                 cache_status = "exact_hit"
             else:
@@ -938,7 +943,8 @@ async def chat_completions(request: Request):
     semantic_prompt_hash: str | None = None
     semantic_lookup_result = None
     if (
-        runtime_flags["semantic_cache_enabled"]
+        response_cache_eligible
+        and runtime_flags["semantic_cache_enabled"]
         and s.semantic_cache_max_cosine_distance is not None
         and not streaming
         and cache_status == "miss"
